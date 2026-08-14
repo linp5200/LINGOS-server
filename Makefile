@@ -19,6 +19,9 @@ CFLAGS = -Wall -Wextra -O1 -g -std=gnu11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE
 CFLAGS += -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function
 CFLAGS += -Wno-format-truncation -Wno-sign-compare
 
+# 【0.2.1 全捆】rpath=$ORIGIN/../lib——主二进制从包内 lib/ 找动态库（便携解压即用）
+LDFLAGS += -Wl,-rpath,'$$ORIGIN/../lib'
+
 NOTCURSES_CFLAGS := $(shell pkg-config --cflags notcurses 2>/dev/null)
 NOTCURSES_LIBS   := $(shell pkg-config --libs notcurses 2>/dev/null)
 ifeq ($(NOTCURSES_CFLAGS),)
@@ -32,7 +35,7 @@ CFLAGS += $(NOTCURSES_CFLAGS)
 # ================================================================
 # 链接库
 # ================================================================
-BASE_LDFLAGS = -lpthread -lm -lcurl -lseccomp -lsqlite3 -lmosquitto
+BASE_LDFLAGS = $(LDFLAGS) -lpthread -lm -lcurl -lseccomp -lsqlite3 -lmosquitto
 
 # 主程序（含 TUI）
 TUI_LDFLAGS = $(BASE_LDFLAGS) $(NOTCURSES_LIBS) -lmicrohttpd

@@ -17,10 +17,12 @@
 #include "../common/data_path.h"
 #include "../lib/log_extra.h"
 #include "../common/lang.h"
+#include "../health/repair/active_repair.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <dlfcn.h>
 #include <sys/stat.h>
 #include <errno.h>
 
@@ -53,17 +55,183 @@ int check_item_language(void) {
 }
 
 /* ============================================================
- * 检查项：依赖
+ * 修复触发（A2 裁决：不新建 fix_func 链——失败走 active_repair 现有引擎）
  * ============================================================ */
+static void deps_trigger_repair(const char *msg) {
+    repair_result_t result;
+    memset(&result, 0, sizeof(result));
+    int ret = active_repair_trigger(msg, "self_check_dependencies", &result);
+    if (ret == 0 && result.success) {
+        LOG_INFO_T("CheckItems", "Dependencies", "RepairOK", "repair succeeded: %s", result.action_used);
+    } else {
+        LOG_WARN_T("CheckItems", "Dependencies", "RepairFail",
+                   "repair failed (ret=%d): %s", ret,
+                   result.error_msg[0] ? result.error_msg : "engine unavailable");
+    }
+}
+
+/* ============================================================
+ * 检查项：依赖
+ * 【0.2.1 全捆优化】捆绑形态（包内 lib/+python/ 存在）：
+ *   查 lib/manifest.json 齐全性 + dlopen 试加载 + venv import 验证
+ *   传统形态（依赖宿主）：保留原逻辑兜底
+ * ============================================================ */
+static int check_bundled_form(void) {
+    /* 捆绑形态判定：二进制同目录 ../lib/manifest.json 存在（/proc/self/exe 定位——任意解压路径可靠） */
+    char exe[512];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n <= 0) return 0;
+    exe[n] = '\0';
+    /* 取 dirname */
+    char *slash = strrchr(exe, '/');
+    if (!slash) return 0;
+    *slash = '\0';
+    char manifest[512];
+    safe_snprintf(manifest, sizeof(manifest), "%s/../lib/manifest.json", exe);
+    if (access(manifest, F_OK) != 0) {
+        /* 也检查 /LINGOS/lib（解压到数据根形态） */
+        safe_snprintf(manifest, sizeof(manifest), "/LINGOS/lib/manifest.json");
+        if (access(manifest, F_OK) != 0) {
+            return 0;  /* 非捆绑形态 */
+        }
+    }
+    return 1;
+}
+
+static int check_bundled_libs(void) {
+    /* 捆绑形态：解析 manifest.json 逐个检查 .so 存在 + dlopen 试加载
+       依赖 RPATH（$ORIGIN/../lib）或 LD_LIBRARY_PATH 指向包内 lib/ */
+    char exe[512];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n <= 0) return CHECK_RESULT_FAIL;
+    exe[n] = '\0';
+    char *slash = strrchr(exe, '/');
+    if (!slash) return CHECK_RESULT_FAIL;
+    *slash = '\0';
+    char manifest[512];
+    safe_snprintf(manifest, sizeof(manifest), "%s/../lib/manifest.json", exe);
+    if (access(manifest, F_OK) != 0) {
+        safe_snprintf(manifest, sizeof(manifest), "/LINGOS/lib/manifest.json");
+    }
+    FILE *fp = fopen(manifest, "r");
+    if (!fp) {
+        check_cache_set("dependencies",
+                        tr("Bundle manifest not found", "捆绑清单未找到"),
+                        CHECK_RESULT_FAIL);
+        deps_trigger_repair("bundle manifest not found");
+        return CHECK_RESULT_FAIL;
+    }
+    /* 解析 {"libs": [{"name": "libcurl.so.4", ...}]} */
+    char buf[8192];
+    size_t rd = fread(buf, 1, sizeof(buf) - 1, fp);
+    fclose(fp);
+    buf[rd] = '\0';
+    if (strstr(buf, "\"libs\"") == NULL) {
+        check_cache_set("dependencies",
+                        tr("Bundle manifest invalid", "捆绑清单格式无效"),
+                        CHECK_RESULT_FAIL);
+        deps_trigger_repair("bundle manifest invalid");
+        return CHECK_RESULT_FAIL;
+    }
+    int missing = 0;
+    const char *p = buf;
+    while ((p = strstr(p, "\"name\"")) != NULL) {
+        const char *q = strchr(p + 7, '"');
+        if (!q) break;
+        const char *r = strchr(q + 1, '"');
+        if (!r) break;
+        size_t len = (size_t)(r - q - 1);
+        if (len == 0 || len > 255) { p = r + 1; continue; }
+        char libname[256];
+        memcpy(libname, q + 1, len);
+        libname[len] = '\0';
+        /* dlopen 试加载（RTLD_NOLOAD 语义——只看能否解析，不执行） */
+        void *h = dlopen(libname, RTLD_LAZY | RTLD_LOCAL);
+        if (!h) {
+            /* 尝试从 lib/ 目录显式加载（RPATH 未命中时的兜底） */
+            char libpath[512];
+            safe_snprintf(libpath, sizeof(libpath), "%s/../lib/%s", exe, libname);
+            if (access(libpath, F_OK) != 0) {
+                safe_snprintf(libpath, sizeof(libpath), "/LINGOS/lib/%s", libname);
+            }
+            void *h2 = dlopen(libpath, RTLD_LAZY | RTLD_LOCAL);
+            if (!h2) {
+                LOG_WARN_T("CheckItems", "Dependencies", "LibMissing", "%s load failed: %s", libname, dlerror());
+                missing++;
+            } else {
+                dlclose(h2);
+            }
+        } else {
+            dlclose(h);
+        }
+        p = r + 1;
+    }
+    if (missing > 0) {
+        check_cache_set("dependencies",
+                        tr("Bundled libraries incomplete", "捆绑库缺失"),
+                        CHECK_RESULT_FAIL);
+        deps_trigger_repair("bundled libraries incomplete");
+        return CHECK_RESULT_FAIL;
+    }
+    return CHECK_RESULT_PASS;
+}
+
+static int check_bundled_python(void) {
+    /* 捆绑形态：venv 解释器可执行 + requests 可导入 */
+    char exe[512];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n <= 0) return CHECK_RESULT_FAIL;
+    exe[n] = '\0';
+    char *slash = strrchr(exe, '/');
+    if (!slash) return CHECK_RESULT_FAIL;
+    *slash = '\0';
+    char pybin[512];
+    safe_snprintf(pybin, sizeof(pybin), "%s/../python/bin/python3", exe);
+    if (access(pybin, X_OK) != 0) {
+        safe_snprintf(pybin, sizeof(pybin), "/LINGOS/python/bin/python3");
+        if (access(pybin, X_OK) != 0) {
+            check_cache_set("dependencies",
+                            tr("Bundled venv missing", "捆绑 venv 缺失"),
+                            CHECK_RESULT_FAIL);
+            deps_trigger_repair("bundled venv missing");
+            return CHECK_RESULT_FAIL;
+        }
+    }
+    char cmd[640];
+    safe_snprintf(cmd, sizeof(cmd), "%s -c 'import requests' >/dev/null 2>&1", pybin);
+    if (system(cmd) != 0) {
+        check_cache_set("dependencies",
+                        tr("Bundled venv broken (requests missing)", "捆绑 venv 异常（缺 requests）"),
+                        CHECK_RESULT_FAIL);
+        deps_trigger_repair("bundled venv broken");
+        return CHECK_RESULT_FAIL;
+    }
+    return CHECK_RESULT_PASS;
+}
+
 int check_item_dependencies(void) {
     LOG_DEBUG_T("CheckItems", "Dependencies", "Enter", "checking dependencies");
 
+    /* 【0.2.1】捆绑形态优先（全捆包自包含——不依赖宿主安装） */
+    if (check_bundled_form()) {
+        int lib_ok = check_bundled_libs();
+        if (lib_ok != CHECK_RESULT_PASS) return lib_ok;
+        int py_ok = check_bundled_python();
+        if (py_ok != CHECK_RESULT_PASS) return py_ok;
+        check_cache_set("dependencies",
+                        tr("Bundled dependencies OK", "捆绑依赖正常"),
+                        CHECK_RESULT_PASS);
+        return CHECK_RESULT_PASS;
+    }
+
+    /* 传统形态：宿主 python3（保留原逻辑） */
     if (system("command -v python3 >/dev/null 2>&1") != 0) {
         check_cache_set("dependencies",
                         tr("Python3 not found, AI features may be unavailable",
                            "未找到 Python3，AI 功能可能不可用"),
                         CHECK_RESULT_FAIL);
         LOG_WARN_T("CheckItems", "Dependencies", "PythonMissing", "python3 not found");
+        deps_trigger_repair("python3 not found");
         return CHECK_RESULT_FAIL;
     }
 

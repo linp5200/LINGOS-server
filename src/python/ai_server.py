@@ -31,6 +31,7 @@ import memory_retrieval  # 【批次1】双模式记忆检索（语义/关键词
 import agent_orchestrator  # 【批次3】子 AI 对话协作编排器（Hub 模式）
 import llm_unified  # 【0.2.0】统一 LLM 调用层（openai/anthropic 原生直连 + 错误分类 + 调试落盘）
 import voice_service  # 【0.2.0】语音服务（TTS/STT + 降级链 + 用量 + 清理）
+import ha_integration  # 【0.2.1】Home Assistant 集成（AI-AGENT#10：B REST 控制 + C WS 实时事件）
 
 # 【批次C】本地技能商店：已启用技能目录加入模块搜索路径
 for _skill_dir in ("/LINGOS/skills/enabled",):
@@ -124,6 +125,21 @@ AUTH_SOCKET_PATH = "/LINGOS/run/auth.sock"
 CONFIG_PATH = "/LINGOS/system/config/ai_config.json"
 AI_SOCKET_PATH = "/LINGOS/run/ai.sock"
 DAEMON_SOCKET_PATH = "/LINGOS/run/daemon.sock"
+
+# 【0.2.1】HA 事件广播：活跃连接集合（线程安全——锁保护增删/遍历）
+_ACTIVE_CONNS = set()
+_ACTIVE_CONNS_LOCK = threading.Lock()
+
+def _broadcast_ha_event(evt: dict) -> None:
+    """把 HA 实时事件推送给所有活跃 App 连接（type=ha_event）"""
+    payload = (json.dumps(evt, ensure_ascii=False) + "\n").encode()
+    with _ACTIVE_CONNS_LOCK:
+        conns = list(_ACTIVE_CONNS)
+    for c in conns:
+        try:
+            c.send(payload)
+        except Exception:
+            pass
 SKILL_INDEX_PATH = "/LINGOS/registry/skills/index.json"
 SKILL_HELP_PATH = "/LINGOS/system/config/skill_help.json"
 USER_PROFILE_PATH = "/LINGOS/system/config/user_profile.json"
@@ -2149,11 +2165,35 @@ def _session_new_id() -> str:
 
 def cmd_session_list() -> dict:
     data = _sessions_load()
+    # 【9.1】按会话聚合 token_usage.jsonl（token 占用统计）
+    sess_tokens = {}
+    try:
+        if os.path.exists(TOKEN_USAGE_FILE):
+            with open(TOKEN_USAGE_FILE) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                        sid = r.get("session_id", "")
+                        if sid:
+                            cur = sess_tokens.setdefault(sid, {"prompt": 0, "completion": 0})
+                            cur["prompt"] += r.get("prompt_tokens", 0)
+                            cur["completion"] += r.get("completion_tokens", 0)
+                    except Exception:
+                        continue
+    except Exception:
+        pass
     sessions = []
     for sid, info in data.items():
+        tok = sess_tokens.get(sid, {"prompt": 0, "completion": 0})
         sessions.append({"id": sid, "title": info.get("title", "未命名"),
                          "updated": info.get("updated", 0),
-                         "message_count": info.get("message_count", 0)})
+                         "message_count": info.get("message_count", 0),
+                         "token_prompt": tok["prompt"],
+                         "token_completion": tok["completion"],
+                         "token_total": tok["prompt"] + tok["completion"]})
     sessions.sort(key=lambda x: x.get("updated", 0), reverse=True)
     return {"status": "ok", "data": sessions}
 
@@ -2360,14 +2400,25 @@ def cmd_memory_delete(mid: str = "") -> dict:
 # =============================================================
 # 【0.1.9】AI 配置命令族（App 设置页调用）
 # =============================================================
+def _reply(conn, cmd_name, resp):
+    """命令响应统一出口——注入 cmd 标识（9.4：App 按 cmd 匹配，防与自动同步响应冲突先到先得）"""
+    try:
+        if isinstance(resp, dict):
+            resp = dict(resp)
+            resp["cmd"] = cmd_name
+        conn.send((json.dumps(resp, ensure_ascii=False) + "\n").encode())
+    except Exception as e:
+        logger.debug("reply send failed cmd=%s: %s", cmd_name, e)
+
 TOKEN_USAGE_FILE = "/LINGOS/state/token_usage.jsonl"
 
-def _token_usage_append(provider: str, model: str, prompt_tokens: int, completion_tokens: int) -> None:
+def _token_usage_append(provider: str, model: str, prompt_tokens: int, completion_tokens: int, session_id: str = "") -> None:
     """Token 用量落盘（JSONL 追加——每次模型调用后）"""
     try:
         os.makedirs(os.path.dirname(TOKEN_USAGE_FILE), exist_ok=True)
         rec = {"ts": time.time(), "provider": provider, "model": model,
-               "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
+               "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+               "session_id": session_id or ""}
         with open(TOKEN_USAGE_FILE, "a") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
@@ -2419,7 +2470,8 @@ AI_PERM_FILE = "/LINGOS/system/config/ai_permissions.json"
 AI_PERMS = ["location", "camera", "record_audio", "record_screen", "accelerometer",
             "phone_state", "installed_apps", "external_storage", "network_control",
             "bluetooth_control", "scan_bluetooth", "launch_app", "install_app",
-            "jump_app", "background_data", "background_task", "auto_start"]
+            "jump_app", "background_data", "background_task", "auto_start",
+            "ha_control"]  # 【0.2.1】HA 控制权限（AI-AGENT#10——默认直接执行，高风险强制确认）
 AI_PERM_MODES = ["deny", "allow_once", "allow_while", "allow_always", "shadow"]
 
 def _ai_perm_load() -> dict:
@@ -2748,6 +2800,8 @@ def handle_client(conn, addr):
     """
     logger.debug(f"handle_client: new connection from {addr}")
     global auto_allow_high_risk
+    with _ACTIVE_CONNS_LOCK:
+        _ACTIVE_CONNS.add(conn)
     try:
         data = b""
         while True:
@@ -2774,80 +2828,80 @@ def handle_client(conn, addr):
         # ---- 新增：set_log_level 命令 ----
         # 【先生决策】App 命令（WS command → Python 直通）
         if cmd == "system_info":
-            conn.send((json.dumps(cmd_system_info(), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "system_info", cmd_system_info()); return
         if cmd == "file_list":
-            conn.send((json.dumps(cmd_file_list(str(req.get("path", "/"))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "file_list", cmd_file_list(str(req.get("path", "/")))); return
         if cmd == "file_read":
-            conn.send((json.dumps(cmd_file_read(str(req.get("path", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "file_read", cmd_file_read(str(req.get("path", "")))); return
         if cmd == "file_write":
-            conn.send((json.dumps(cmd_file_write(str(req.get("path", "")), str(req.get("content", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "file_write", cmd_file_write(str(req.get("path", "")), str(req.get("content", "")))); return
         if cmd == "file_delete":
-            conn.send((json.dumps(cmd_file_delete(str(req.get("path", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "file_delete", cmd_file_delete(str(req.get("path", "")))); return
         if cmd == "ha_search":
-            conn.send((json.dumps(cmd_ha_search(str(req.get("query", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "ha_search", cmd_ha_search(str(req.get("query", "")))); return
         if cmd == "alert_query":
-            conn.send((json.dumps(cmd_alert_query(), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "alert_query", cmd_alert_query()); return
         if cmd == "memory_search":
-            conn.send((json.dumps(cmd_memory_search(str(req.get("keyword", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "memory_search", cmd_memory_search(str(req.get("keyword", "")))); return
         if cmd == "memory_write":
-            conn.send((json.dumps(cmd_memory_write(str(req.get("content", "")), str(req.get("type", "medium"))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "memory_write", cmd_memory_write(str(req.get("content", "")), str(req.get("type", "medium")))); return
         if cmd == "memory_delete":
-            conn.send((json.dumps(cmd_memory_delete(str(req.get("id", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "memory_delete", cmd_memory_delete(str(req.get("id", "")))); return
 
         # 【协议v3】会话管理
         if cmd == "session_list":
-            conn.send((json.dumps(cmd_session_list(), ensure_ascii=False) + "\n").encode())
+            _reply(conn, "session_list", cmd_session_list())
             return
         if cmd == "session_create":
-            conn.send((json.dumps(cmd_session_create(str(req.get("title", "新会话"))), ensure_ascii=False) + "\n").encode())
+            _reply(conn, "session_create", cmd_session_create(str(req.get("title", "新会话"))))
             return
         if cmd == "session_delete":
-            conn.send((json.dumps(cmd_session_delete(str(req.get("id", ""))), ensure_ascii=False) + "\n").encode())
+            _reply(conn, "session_delete", cmd_session_delete(str(req.get("id", ""))))
             return
         if cmd == "session_rename":
-            conn.send((json.dumps(cmd_session_rename(str(req.get("id", "")), str(req.get("title", ""))), ensure_ascii=False) + "\n").encode())
+            _reply(conn, "session_rename", cmd_session_rename(str(req.get("id", "")), str(req.get("title", ""))))
             return
         if cmd == "session_history":
-            conn.send((json.dumps(cmd_session_history(str(req.get("id", "")), int(req.get("limit", 50))), ensure_ascii=False) + "\n").encode())
+            _reply(conn, "session_history", cmd_session_history(str(req.get("id", "")), int(req.get("limit", 50))))
             return
 
         # ---- 【0.1.9】AI 配置命令族 ----
         if cmd == "token_usage_query":
-            conn.send((json.dumps(cmd_token_usage_query(str(req.get("start_time", "")), str(req.get("end_time", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "token_usage_query", cmd_token_usage_query(str(req.get("start_time", "")), str(req.get("end_time", "")))); return
         if cmd == "permission_set":
-            conn.send((json.dumps(cmd_permission_set(str(req.get("perm", "")), str(req.get("mode", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "permission_set", cmd_permission_set(str(req.get("perm", "")), str(req.get("mode", "")))); return
         if cmd == "permission_list":
-            conn.send((json.dumps(cmd_permission_list(), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "permission_list", cmd_permission_list()); return
         if cmd == "skill_list_full":
-            conn.send((json.dumps(cmd_skill_list_full(), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "skill_list_full", cmd_skill_list_full()); return
         if cmd == "skill_enable":
-            conn.send((json.dumps(cmd_skill_enable(str(req.get("name", "")), bool(req.get("enabled", True))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "skill_enable", cmd_skill_enable(str(req.get("name", "")), bool(req.get("enabled", True)))); return
         if cmd == "personality_set":
-            conn.send((json.dumps(cmd_personality_set(str(req.get("name", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "personality_set", cmd_personality_set(str(req.get("name", "")))); return
         if cmd == "personality_get":
-            conn.send((json.dumps(cmd_personality_get(), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "personality_get", cmd_personality_get()); return
         if cmd == "mcp_add":
-            conn.send((json.dumps(cmd_mcp_add(str(req.get("name", "")), str(req.get("url", "")), str(req.get("auth_type", "none")), str(req.get("auth_token", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "mcp_add", cmd_mcp_add(str(req.get("name", "")), str(req.get("url", "")), str(req.get("auth_type", "none")), str(req.get("auth_token", "")))); return
         if cmd == "mcp_remove":
-            conn.send((json.dumps(cmd_mcp_remove(str(req.get("name", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "mcp_remove", cmd_mcp_remove(str(req.get("name", "")))); return
         if cmd == "mcp_list":
-            conn.send((json.dumps(cmd_mcp_list(), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "mcp_list", cmd_mcp_list()); return
         if cmd == "mcp_test":
-            conn.send((json.dumps(cmd_mcp_test(str(req.get("name", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "mcp_test", cmd_mcp_test(str(req.get("name", "")))); return
         if cmd == "ai_config_set":
-            conn.send((json.dumps(cmd_ai_config_set(str(req.get("provider", "")), str(req.get("api_key", "")), str(req.get("base_url", "")), str(req.get("model", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "ai_config_set", cmd_ai_config_set(str(req.get("provider", "")), str(req.get("api_key", "")), str(req.get("base_url", "")), str(req.get("model", "")))); return
         # ---- 【0.2.0】模型提供商（App 同步显示 + 切换） ----
         if cmd == "provider_list":
-            conn.send((json.dumps(cmd_provider_list(), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "provider_list", cmd_provider_list()); return
         if cmd == "model_switch":
-            conn.send((json.dumps(cmd_model_switch(str(req.get("model_id", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "model_switch", cmd_model_switch(str(req.get("model_id", "")))); return
         if cmd == "provider_add":
-            conn.send((json.dumps(cmd_provider_add(str(req.get("id", "")), str(req.get("name", "")), str(req.get("format", "openai")), str(req.get("base_url", "")), str(req.get("api_key", "")), str(req.get("model", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "provider_add", cmd_provider_add(str(req.get("id", "")), str(req.get("name", "")), str(req.get("format", "openai")), str(req.get("base_url", "")), str(req.get("api_key", "")), str(req.get("model", "")))); return
         if cmd == "provider_remove":
-            conn.send((json.dumps(cmd_provider_remove(str(req.get("id", ""))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "provider_remove", cmd_provider_remove(str(req.get("id", "")))); return
         # ---- 【0.2.0】上下文状态（App 会话页入口） ----
         if cmd == "context_status":
-            conn.send((json.dumps(cmd_context_status(str(req.get("session_id", "default"))), ensure_ascii=False) + "\n").encode()); return
+            _reply(conn, "context_status", cmd_context_status(str(req.get("session_id", "default")))); return
         # ---- 【0.2.0】语音（WS 信令——音频本体走 HTTP REST） ----
         if cmd == "voice_tts":
             ok, path, info = voice_service.tts_synthesize(str(req.get("text", "")), str(req.get("provider", "")), str(req.get("voice", "")), bool(req.get("stream", False)))
@@ -2867,6 +2921,30 @@ def handle_client(conn, addr):
             conn.send((json.dumps(voice_service.cmd_voice_usage_query(int(req.get("days", 7))), ensure_ascii=False) + "\n").encode()); return
         if cmd == "audio_clear":
             conn.send((json.dumps(voice_service.cmd_audio_clear(), ensure_ascii=False) + "\n").encode()); return
+
+        # ---- 【0.2.1】HA 命令族（AI-AGENT#10——B REST 控制 + C WS 实时事件） ----
+        if cmd == "ha_config_get":
+            _reply(conn, "ha_config_get", ha_integration.cmd_ha_config_get()); return
+        if cmd == "ha_config_set":
+            _reply(conn, "ha_config_set", ha_integration.cmd_ha_config_set(
+                str(req.get("host", "")), str(req.get("token", "")), int(req.get("port", 8123)))); return
+        if cmd == "ha_status":
+            _reply(conn, "ha_status", ha_integration.cmd_ha_status()); return
+        if cmd == "ha_states":
+            _reply(conn, "ha_states", ha_integration.cmd_ha_states()); return
+        if cmd == "ha_control":
+            _perm = _ai_perm_load().get("ha_control", "allow_always")
+            if _perm == "deny":
+                _reply(conn, "ha_control", {"status": "error", "code": "permission_denied",
+                                            "msg": "ha_control 权限被拒绝"}); return
+            # 高风险强制确认（先生裁决 A2）——confirm=true 才真正执行
+            if bool(req.get("confirm", False)):
+                _reply(conn, "ha_control", ha_integration.cmd_ha_control_confirm(
+                    str(req.get("domain", "")), str(req.get("service", "")),
+                    str(req.get("entity_id", "")), str(req.get("data", "")))); return
+            _reply(conn, "ha_control", ha_integration.cmd_ha_control(
+                str(req.get("domain", "")), str(req.get("service", "")),
+                str(req.get("entity_id", "")), str(req.get("data", "")))); return
 
         if cmd == "set_log_level":
             level_str = req.get("level", "info").lower()
@@ -3077,7 +3155,8 @@ def handle_client(conn, addr):
                 _token_usage_append(_prov.id if _prov else current_backend,
                                     _prov.model if _prov else "?",
                                     usage_info.get("prompt_tokens", 0),
-                                    usage_info.get("completion_tokens", 0))
+                                    usage_info.get("completion_tokens", 0),
+                                    session_id=session_id)
             except Exception:
                 pass
             return
@@ -3266,6 +3345,8 @@ def handle_client(conn, addr):
         except:
             pass
     finally:
+        with _ACTIVE_CONNS_LOCK:
+            _ACTIVE_CONNS.discard(conn)
         try:
             conn.close()
         except:
@@ -3491,6 +3572,13 @@ def main():
         threading.Thread(target=start_voice_http_server, daemon=True).start()
     except Exception as e:
         logger.warning("voice init failed: %s", e)
+
+    # 【0.2.1】HA 事件订阅（AI-AGENT#10 C 通道——state_changed → 广播 App）
+    try:
+        ha_integration.ha_start_event_loop(_broadcast_ha_event)
+        logger.info("HA event loop started")
+    except Exception as e:
+        logger.warning("HA event loop init failed: %s", e)
 
 
     # 创建默认 sub_ai.conf

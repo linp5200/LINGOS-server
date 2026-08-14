@@ -81,6 +81,25 @@ static void ensure_directories(void) {
  * 复制 Python 脚本
  * ============================================================ */
 static void copy_python_scripts(void) {
+    /* 【0.2.1 全捆优化】捆绑形态（包内 python/ venv 存在）下跳过——
+       venv 已含全部 Python 脚本，无需从源码复制 */
+    {
+        char exe[512];
+        ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (n > 0) {
+            exe[n] = '\0';
+            char *slash = strrchr(exe, '/');
+            if (slash) {
+                *slash = '\0';
+                char vp[512];
+                safe_snprintf(vp, sizeof(vp), "%s/../python/bin/python3", exe);
+                if (access(vp, X_OK) == 0) {
+                    LOG_INFO_T("EnvBootstrap", "Python", "Bundled", "bundled venv detected, skipping copy");
+                    return;
+                }
+            }
+        }
+    }
     /* 在 Linux 环境中，脚本由 make install_python_script 复制 */
     /* 此处仅确保 bin 目录存在 */
     const char *root = lingos_data_root();
