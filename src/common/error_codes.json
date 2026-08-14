@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "errors": [
+    { "symbol": "ERR_UNKNOWN_001", "hex_id": "0x00000000", "desc_en": "Unknown error", "desc_zh": "未知错误" },
+    { "symbol": "ERR_MEM_001", "hex_id": "0xE0000001", "desc_en": "Memory allocation failed", "desc_zh": "内存分配失败" },
+    { "symbol": "ERR_MEM_002", "hex_id": "0xE0000002", "desc_en": "Memory alignment fault", "desc_zh": "内存对齐错误" },
+    { "symbol": "ERR_FS_001", "hex_id": "0xF0000001", "desc_en": "Root directory inaccessible", "desc_zh": "根目录不可访问" },
+    { "symbol": "ERR_FS_002", "hex_id": "0xF0000002", "desc_en": "Configuration file corrupted", "desc_zh": "配置文件损坏" },
+    { "symbol": "ERR_SYS_001", "hex_id": "0x10000001", "desc_en": "System initialization failed", "desc_zh": "系统初始化失败" },
+    { "symbol": "ERR_SYS_002", "hex_id": "0x10000002", "desc_en": "Unhandled fatal signal", "desc_zh": "未处理的致命信号" },
+    { "symbol": "ERR_AI_001", "hex_id": "0xA0000001", "desc_en": "Model file loading failed", "desc_zh": "模型加载失败" },
+    { "symbol": "ERR_TUI_001", "hex_id": "0xB0000001", "desc_en": "Terminal initialization failed", "desc_zh": "终端初始化失败" },
+    { "symbol": "ERR_SEC_001", "hex_id": "0x20000001", "desc_en": "Permission check failed", "desc_zh": "权限检查失败" },
+    { "symbol": "ERR_PLUGIN_001", "hex_id": "0x30000001", "desc_en": "Plugin loading failed", "desc_zh": "插件加载失败" },
+    { "symbol": "ERR_UPDATE_001", "hex_id": "0x40000001", "desc_en": "Update package corrupted", "desc_zh": "更新包损坏" },
+    { "symbol": "ERR_VISION_001", "hex_id": "0x50000001", "desc_en": "Camera initialization failed", "desc_zh": "摄像头初始化失败" },
+    { "symbol": "ERR_VOICE_001", "hex_id": "0x60000001", "desc_en": "Audio device initialization failed", "desc_zh": "音频设备初始化失败" },
+    { "symbol": "ERR_NET_001", "hex_id": "0xC0000001", "desc_en": "Socket creation failed", "desc_zh": "套接字创建失败" }
+  ]
+}

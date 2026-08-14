@@ -1,0 +1,234 @@
+/**
+ * @file    src/config/config_saver.c
+ * @brief   配置保存实现（三级降级）
+ * @version LN-B-5.1.2.6-rc
+ * @par     核心协议：C1, C-C
+ */
+
+#include "config_saver.h"
+#include "config_core.h"
+#include "../common/safe_string.h"
+#include "../common/data_path.h"
+#include "../common/lang.h"
+#include "../lib/log_extra.h"
+#include "../drivers/uart.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <time.h>
+
+/* ============================================================
+ * 辅助：原子写入
+ * ============================================================ */
+static int atomic_write(const char *path, const char *content) {
+    char tmp_path[512];
+    safe_snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+
+    FILE *fp = fopen(tmp_path, "w");
+    if (!fp) return -1;
+    fputs(content, fp);
+    fclose(fp);
+
+    if (rename(tmp_path, path) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+    return 0;
+}
+
+/* ============================================================
+ * 辅助：验证 JSON（简单检查）
+ * ============================================================ */
+static int validate_json(const char *content) {
+    // 简单检查：至少包含 { 和 }
+    if (!content || !*content) return -1;
+    if (strchr(content, '{') && strchr(content, '}')) return 0;
+    return -1;
+}
+
+/* ============================================================
+ * 生成配置内容
+ * ============================================================ */
+static int build_config_content(const wizard_config_t *cfg, char *buf, size_t size) {
+    if (!cfg || !buf || size == 0) return -1;
+
+    // 使用 config_core 的保存功能生成内容
+    // 这里直接调用 config_core_save 到临时文件
+    // 但我们不能直接保存，需要返回内容用于原子写入
+
+    // 简化：复制配置内容由 config_core_save 处理
+    // 此函数仅用于验证
+    return 0;
+}
+
+/* ============================================================
+ * 三级降级保存
+ * ============================================================ */
+int config_saver_save(const wizard_config_t *cfg) {
+    if (!cfg) return -1;
+
+    LOG_INFO_T("ConfigSaver", "Save", "Start", "saving configuration (3-level fallback)");
+
+    // Level 1: 正常保存（用户显式配置操作，强制写入，避免防覆盖保护静默跳过）
+    if (config_core_save_force(cfg) == 0) {
+        LOG_INFO_T("ConfigSaver", "Save", "OK", "config saved successfully");
+        return 0;
+    }
+
+    LOG_WARN_T("ConfigSaver", "Save", "Level1", "first save attempt failed, retrying...");
+
+    // Level 2: 删除后重建并保存
+    const char *root = lingos_data_root();
+    char path[512];
+    const char *files[] = {"ai_config.json", "user_profile.json", "startup.conf",
+                           "security.json", "privilege.json", NULL};
+
+    for (int i = 0; files[i]; i++) {
+        safe_snprintf(path, sizeof(path), "%s/system/config/%s", root, files[i]);
+        if (access(path, F_OK) == 0) {
+            unlink(path);
+        }
+    }
+
+    // 重新尝试保存（强制写入）
+    if (config_core_save_force(cfg) == 0) {
+        LOG_INFO_T("ConfigSaver", "Save", "Level2", "config saved after recreate");
+        return 0;
+    }
+
+    LOG_WARN_T("ConfigSaver", "Save", "Level2", "recreate failed, generating script...");
+
+    // Level 3: 生成修复脚本
+    char script_path[512];
+    if (config_saver_generate_script(cfg, script_path, sizeof(script_path)) == 0) {
+        uart_puts(COLOR_RED);
+        uart_puts(tr(
+            "\n⚠  Configuration file write failed.\n",
+            "\n⚠  配置文件写入失败。\n"
+        ));
+        uart_puts(tr(
+            "  A repair script has been created:\n",
+            "  已生成修复脚本：\n"
+        ));
+        uart_puts(COLOR_YELLOW);
+        uart_puts("    ");
+        uart_puts(script_path);
+        uart_puts("\n");
+        uart_puts(COLOR_RED);
+        uart_puts(tr(
+            "  Please run the script manually:\n",
+            "  请手动运行脚本：\n"
+        ));
+        uart_puts(COLOR_YELLOW);
+        uart_puts("    bash ");
+        uart_puts(script_path);
+        uart_puts("\n");
+        uart_puts(COLOR_RESET);
+        LOG_INFO_T("ConfigSaver", "Save", "Level3", "script generated at %s", script_path);
+        return -1;
+    }
+
+    LOG_ERROR_T("ConfigSaver", "Save", "AllFail", "all save methods failed");
+    return -1;
+}
+
+/* ============================================================
+ * 生成修复脚本
+ * ============================================================ */
+int config_saver_generate_script(const wizard_config_t *cfg, char *script_path, size_t script_path_size) {
+    if (!cfg || !script_path || script_path_size == 0) return -1;
+
+    safe_snprintf(script_path, script_path_size, "/tmp/lingos_config_setup.sh");
+
+    FILE *fp = fopen(script_path, "w");
+    if (!fp) return -1;
+
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
+
+    fprintf(fp, "#!/bin/sh\n");
+    fprintf(fp, "# LING OS Configuration Setup Script\n");
+    fprintf(fp, "# Generated on %s\n", time_str);
+    fprintf(fp, "# Auto-generated by config_saver fallback\n\n");
+
+    fprintf(fp, "echo \"LING OS Configuration Setup\"\n");
+    fprintf(fp, "echo \"==========================\"\n\n");
+
+    // 创建目录
+    fprintf(fp, "mkdir -p /LINGOS/system/config\n");
+    fprintf(fp, "mkdir -p /LINGOS/Ensystem\n\n");
+
+    // 写入 ai_config.json
+    fprintf(fp, "cat > /LINGOS/system/config/ai_config.json << 'EOF'\n");
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"backend\": \"%s\",\n", cfg->ai_backend);
+    fprintf(fp, "  \"language\": \"%s\",\n", cfg->language);
+    fprintf(fp, "  \"thinking_enabled\": %s,\n", cfg->thinking_enabled ? "true" : "false");
+    fprintf(fp, "  \"stream_enabled\": %s,\n", cfg->stream_enabled ? "true" : "false");
+    fprintf(fp, "  \"show_thinking\": %s,\n", cfg->show_thinking ? "true" : "false");
+    fprintf(fp, "  \"meta_info_enabled\": %s,\n", cfg->meta_info_enabled ? "true" : "false");
+    fprintf(fp, "  \"max_context_tokens\": %d,\n", cfg->max_context_tokens);
+    fprintf(fp, "  \"socket_timeout\": %d,\n", cfg->socket_timeout);
+    fprintf(fp, "  \"auth_timeout\": %d,\n", cfg->auth_timeout);
+    fprintf(fp, "  \"log_level\": \"%s\",\n", cfg->log_level);
+    fprintf(fp, "  \"ollama\": {\n");
+    fprintf(fp, "    \"url\": \"%s\",\n", cfg->ollama_url);
+    fprintf(fp, "    \"model\": \"%s\"\n", cfg->ollama_model);
+    fprintf(fp, "  },\n");
+    fprintf(fp, "  \"deepseek\": {\n");
+    fprintf(fp, "    \"api_key\": \"%s\",\n", cfg->api_key);
+    fprintf(fp, "    \"model\": \"%s\",\n", cfg->model);
+    fprintf(fp, "    \"base_url\": \"%s\"\n", cfg->base_url);
+    fprintf(fp, "  }\n");
+    fprintf(fp, "}\n");
+    fprintf(fp, "EOF\n\n");
+
+    // 写入 startup.conf
+    fprintf(fp, "cat > /LINGOS/system/config/startup.conf << 'EOF'\n");
+    fprintf(fp, "mode = %s\n", cfg->startup_option);
+    fprintf(fp, "EOF\n\n");
+
+    // 写入 user_profile.json
+    fprintf(fp, "cat > /LINGOS/system/config/user_profile.json << 'EOF'\n");
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"user_name\": \"%s\"\n", cfg->user_name);
+    fprintf(fp, "}\n");
+    fprintf(fp, "EOF\n\n");
+
+    // 写入 security.json
+    fprintf(fp, "cat > /LINGOS/system/config/security.json << 'EOF'\n");
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"shadow_mode\": {\"enabled\": %s}\n", cfg->shadow_mode_enabled ? "true" : "false");
+    fprintf(fp, "}\n");
+    fprintf(fp, "EOF\n\n");
+
+    // 写入 privilege.json
+    fprintf(fp, "cat > /LINGOS/system/config/privilege.json << 'EOF'\n");
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"auto_allow_high_risk\": %s\n", cfg->auto_allow_high_risk ? "true" : "false");
+    fprintf(fp, "}\n");
+    fprintf(fp, "EOF\n\n");
+
+    // 写入 state.json
+    fprintf(fp, "cat > /LINGOS/Ensystem/state.json << 'EOF'\n");
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"system_configured\": true,\n");
+    fprintf(fp, "  \"last_config_time\": \"%s\",\n", time_str);
+    fprintf(fp, "  \"mode\": \"%s\"\n", cfg->system_mode);
+    fprintf(fp, "}\n");
+    fprintf(fp, "EOF\n\n");
+
+    fprintf(fp, "echo \"✅ Configuration applied successfully.\"\n");
+    fprintf(fp, "echo \"You can now start LING OS normally.\"\n");
+
+    fclose(fp);
+    chmod(script_path, 0755);
+
+    LOG_INFO_T("ConfigSaver", "Script", "OK", "generated script at %s", script_path);
+    return 0;
+}

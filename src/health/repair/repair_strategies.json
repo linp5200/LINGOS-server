@@ -1,0 +1,67 @@
+{
+  "strategies": [
+    {
+      "error_pattern": "memory.*[89][0-9]%|memory_high",
+      "severity": 4,
+      "actions": [
+        { "type": "clean_cache", "priority": 1 },
+        { "type": "notify_user", "priority": 2 }
+      ],
+      "fallback": ""
+    },
+    {
+      "error_pattern": "disk.*[89][0-9]%|disk_full",
+      "severity": 3,
+      "actions": [
+        { "type": "clean_logs", "priority": 1 },
+        { "type": "notify_user", "priority": 2 }
+      ],
+      "fallback": ""
+    },
+    {
+      "error_pattern": "ai_server.*crash|ai_unreachable",
+      "severity": 5,
+      "actions": [
+        { "type": "restart_ai_server", "priority": 1 },
+        { "type": "notify_user", "priority": 2 }
+      ],
+      "fallback": ""
+    },
+    {
+      "error_pattern": "lingosd.*crash|daemon_unreachable",
+      "severity": 5,
+      "actions": [
+        { "type": "restart_daemon", "priority": 1 },
+        { "type": "notify_user", "priority": 2 }
+      ],
+      "fallback": "rollback"
+    },
+    {
+      "error_pattern": "skill.*timeout|SKILL_ERR_TIMEOUT",
+      "severity": 3,
+      "actions": [
+        { "type": "notify_user", "priority": 1 }
+      ],
+      "fallback": ""
+    },
+    {
+      "error_pattern": "config.*corrupt|config.*invalid",
+      "severity": 4,
+      "actions": [
+        { "type": "repair_config", "priority": 1 },
+        { "type": "notify_user", "priority": 2 }
+      ],
+      "fallback": ""
+    },
+    {
+      "error_pattern": "service.*failed to start",
+      "severity": 4,
+      "actions": [
+        { "type": "restart_service", "priority": 1, "service": "lingosd" },
+        { "type": "restart_service", "priority": 2, "service": "ai_server" },
+        { "type": "notify_user", "priority": 3 }
+      ],
+      "fallback": "rollback"
+    }
+  ]
+}
