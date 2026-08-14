@@ -75,11 +75,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: 'LINGOS-*'
-          path: /tmp/release_files
-          merge-multiple: true
+          path: /tmp/artifacts
 
       - name: 整理 Release 文件
         run: |
+          mkdir -p /tmp/release_files
+          # 每个架构 artifact 独立子目录——find 收集全部 tar.gz（避免 merge 覆盖）
+          find /tmp/artifacts -name '*.tar.gz' -exec cp -n {} /tmp/release_files/ \;
           ls -la /tmp/release_files/
           du -sh /tmp/release_files/*
 
@@ -88,3 +90,4 @@ jobs:
         with:
           files: /tmp/release_files/*.tar.gz
           generate_release_notes: false
+          overwrite_files: true
