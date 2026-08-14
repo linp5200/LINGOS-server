@@ -13,16 +13,19 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/dist}"
-VER="$(grep -oP 'VERSION = "\K[^"]+' "$ROOT/Makefile" | head -1)"
+# 【先生裁决 2026-08-14】发行版本号独立于内部版本（LN-B-5.1.2.6-rc）：
+# 默认 0.0.1（CI 用 RELEASE_VER 覆盖）；内部版本仍由 Makefile 提供
+VER="${RELEASE_VER:-0.0.1}"
 ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64|amd64) ARCH=x86_64 ;;
     aarch64|arm64) ARCH=aarch64 ;;
 esac
-PKG="LINGOS-$VER-$ARCH-linux"
+# 【先生裁决 2026-08-14】包名 = LINGOS-版本号-server.后缀（双架构加架构标识防覆盖）
+PKG="LINGOS-${VER}-server-${ARCH}"
 DEST="$OUT/$PKG"
 
-echo "==> 打包: $PKG"
+echo "==> 打包: $PKG  (内部版本: $(grep -oP 'VERSION = "\K[^"]+' "$ROOT/Makefile" | head -1))"
 echo "==> 版本: $VER  架构: $ARCH"
 
 rm -rf "$DEST"

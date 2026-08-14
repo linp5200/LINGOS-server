@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # 【先生裁决 2026-08-14】服务端发行版本号 0.0.1（独立于内部 LN-B-5.1.2.6-rc）
+  VERSION: 0.0.1
+
 jobs:
   build:
     strategy:
@@ -46,7 +50,7 @@ jobs:
         run: make 2>&1 | tail -20
 
       - name: 全捆打包（lib/ 全捆 + venv + manifest）
-        run: bash scripts/bundle.sh dist
+        run: RELEASE_VER=$VERSION bash scripts/bundle.sh dist
 
       - name: 产物清单
         run: |
