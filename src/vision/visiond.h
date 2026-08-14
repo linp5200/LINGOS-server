@@ -13,6 +13,10 @@
 typedef struct {
     int camera_device;
     char device_path[128];
+    char camera_source[16];   /* 【0.2.2】v4l2 / rtsp / mjpeg（先生裁决：RTSP 走 Python 拉流） */
+    char rtsp_url[256];       /* 【0.2.2】RTSP/MJPEG 流地址（camera_source=rtsp 时用） */
+    int rtsp_frame_port;      /* 【0.2.2】rtsp_streamer 帧通道端口 */
+    int rtsp_http_port;       /* 【0.2.2】rtsp_streamer 预览 MJPEG 端口 */
     int width;
     int height;
     int fps;

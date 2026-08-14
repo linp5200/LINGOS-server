@@ -111,12 +111,16 @@ if command -v python3 >/dev/null; then
     echo "==> 构建 venv (python$PYVER --copies)"
     python3 -m venv --copies "$DEST/python"
     "$DEST/python/bin/pip" install --no-cache-dir -q \
-        requests websocket-client tiktoken numpy pillow 2>/dev/null || \
+        requests websocket-client tiktoken numpy pillow pytesseract 2>/dev/null || \
+    "$DEST/python/bin/pip" install --no-cache-dir -q requests websocket-client tiktoken pillow pytesseract 2>/dev/null || \
     "$DEST/python/bin/pip" install --no-cache-dir -q requests websocket-client
+    # 【0.2.2 vision】OCR/视觉可选依赖（体积不敏感裁决——失败不阻塞主包）
+    "$DEST/python/bin/pip" install --no-cache-dir -q paddleocr paddlepaddle 2>/dev/null || true
+    "$DEST/python/bin/pip" install --no-cache-dir -q opencv-python-headless 2>/dev/null || true
     # 服务端脚本复制进 venv（可执行入口）
     mkdir -p "$DEST/python/server"
     cp -a "$ROOT"/src/python/*.py "$DEST/python/server/" 2>/dev/null || true
-    echo "==> venv 完成（含 requests/websocket-client）"
+    echo "==> venv 完成（含 requests/websocket-client/OCR/视觉依赖）"
 else
     echo "!! 无 python3——跳过 venv（Python 层缺失）" >&2
 fi

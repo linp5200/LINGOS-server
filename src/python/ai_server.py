@@ -140,6 +140,17 @@ def _broadcast_ha_event(evt: dict) -> None:
             c.send(payload)
         except Exception:
             pass
+
+def _broadcast_vision_event(evt: dict) -> None:
+    """【0.2.2】visiond 检测事件广播（type=vision_event——App 摄像头页消费）"""
+    payload = (json.dumps(evt, ensure_ascii=False) + "\n").encode()
+    with _ACTIVE_CONNS_LOCK:
+        conns = list(_ACTIVE_CONNS)
+    for c in conns:
+        try:
+            c.send(payload)
+        except Exception:
+            pass
 SKILL_INDEX_PATH = "/LINGOS/registry/skills/index.json"
 SKILL_HELP_PATH = "/LINGOS/system/config/skill_help.json"
 USER_PROFILE_PATH = "/LINGOS/system/config/user_profile.json"
@@ -2197,27 +2208,187 @@ def cmd_session_list() -> dict:
     sessions.sort(key=lambda x: x.get("updated", 0), reverse=True)
     return {"status": "ok", "data": sessions}
 
-def cmd_session_create(title: str) -> dict:
+# ========== 【0.2.2 同步协议】归属校验 + 冲突窗口 + 增量同步（2026-08-14 先生裁决） ==========
+# 会话归属：每会话记 owner（device_id）；默认仅 owner 可改，其他设备只读
+# 冲突窗口：两设备修改时间接近 → 双失败（防竞态）；记录 last_writer + last_write_ts
+SYNC_CONFLICT_WINDOW = 2.0  # 秒——修改时间间隔小于此值判定冲突（双失败）
+
+def _session_owner_allowed(data: dict, sid: str, device_id: str) -> tuple:
+    """归属校验：返回 (allowed, reason)。默认仅 owner；全局开关'允许其他设备修改'可放开"""
+    if sid == "default":
+        return True, ""
+    s = data.get(sid)
+    if not s:
+        return False, "not_found"
+    # 全局开关（高级设置——先生裁决）：允许其他设备修改本设备会话
+    allow_cross = _sync_settings_get().get("allow_cross_device", False)
+    owner = s.get("owner", "")
+    if not owner or owner == device_id or allow_cross:
+        return True, ""
+    return False, "只读会话（owner=%s，其他设备默认只读——可在高级设置开启允许修改）" % owner
+
+def _sync_settings_file() -> str:
+    return "/LINGOS/system/config/sync_settings.json"
+
+def _sync_settings_get() -> dict:
+    try:
+        if os.path.exists(_sync_settings_file()):
+            with open(_sync_settings_file(), encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _sync_settings_save(cfg: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_sync_settings_file()), exist_ok=True)
+        with open(_sync_settings_file(), "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def cmd_sync_settings_get() -> dict:
+    return {"status": "ok", "data": _sync_settings_get()}
+
+def cmd_sync_settings_set(allow_cross_device: bool = False) -> dict:
+    cfg = _sync_settings_get()
+    cfg["allow_cross_device"] = bool(allow_cross_device)
+    _sync_settings_save(cfg)
+    return {"status": "ok", "data": cfg}
+
+def _check_conflict(data: dict, sid: str, device_id: str) -> tuple:
+    """冲突窗口校验：返回 (allowed, reason)。last_write_ts 与当前时间接近且非本设备 → 判定冲突"""
+    s = data.get(sid)
+    if not s:
+        return False, "not_found"
+    last_ts = s.get("last_write_ts", 0)
+    last_writer = s.get("last_writer", "")
+    now = time.time()
+    if last_ts and last_writer and last_writer != device_id:
+        if now - last_ts < SYNC_CONFLICT_WINDOW:
+            return False, "修改占线（另一设备刚修改——冲突窗口内，本次修改已拒绝，请稍后重试）"
+    return True, ""
+
+def _mark_written(data: dict, sid: str, device_id: str) -> None:
+    """写入后记录 writer + 时间戳（设备优先：最新改动的设备允许改动——后写生效）"""
+    if sid in data:
+        data[sid]["last_writer"] = device_id
+        data[sid]["last_write_ts"] = time.time()
+
+def cmd_sync_full(device_id: str = "") -> dict:
+    """首次连接：完整同步包（全量快照——列表+全部消息+小数据域）"""
+    data = _sessions_load()
+    sessions = []
+    for sid, info in data.items():
+        sessions.append({
+            "id": sid,
+            "title": info.get("title", "未命名"),
+            "updated": info.get("updated", 0),
+            "message_count": info.get("message_count", 0),
+            "owner": info.get("owner", ""),
+            "messages": info.get("messages", []),
+        })
+    sessions.sort(key=lambda x: x.get("updated", 0), reverse=True)
+    # 小数据域（全量——几十字节不值得增量）
+    small = {
+        "permissions": _ai_perm_load(),
+        "providers": [p.to_dict() for p in llm_unified.get_providers()],
+        "ha_config": ha_integration.ha_load_config() if 'ha_integration' in sys.modules else {},
+        "sync_settings": _sync_settings_get(),
+    }
+    return {"status": "ok", "data": {"sessions": sessions, "small": small}}
+
+def cmd_vision_config_get() -> dict:
+    """【0.2.2】读取 vision.conf 配置（App 摄像头页显示视频源）"""
+    cfg = {"camera_source": "v4l2", "device_path": "/dev/video0",
+           "rtsp_url": "", "rtsp_http_port": 8891}
+    try:
+        path = "/LINGOS/system/config/vision.conf"
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip()
+                        if k in cfg:
+                            cfg[k] = v
+    except Exception:
+        pass
+    return {"status": "ok", "data": cfg}
+
+def cmd_sync_delta(last_sync: float = 0, device_id: str = "", local_hash: str = "") -> dict:
+    """非首次连接：A 时间戳（消息增量）+ B 哈希（列表对比）+ 小数据域全量"""
+    data = _sessions_load()
+    sessions = []
+    for sid, info in data.items():
+        sessions.append({
+            "id": sid,
+            "title": info.get("title", "未命名"),
+            "updated": info.get("updated", 0),
+            "message_count": info.get("message_count", 0),
+            "owner": info.get("owner", ""),
+        })
+    sessions.sort(key=lambda x: x.get("updated", 0), reverse=True)
+    # B 哈希：列表全量传 + 整体哈希（App 对比发现增删/改名）
+    import hashlib
+    list_hash = hashlib.md5(json.dumps(sessions, sort_keys=True).encode()).hexdigest()
+    # A 时间戳：增量消息（updated > last_sync 的会话，取其新增消息）
+    # 【修复】会话 updated 可能滞后于消息 ts——按消息 ts 独立判断（不依赖会话 updated）
+    delta_messages = {}
+    for sid, info in data.items():
+        msgs = info.get("messages", [])
+        new_msgs = [m for m in msgs if m.get("ts", 0) > last_sync]
+        if new_msgs:
+            delta_messages[sid] = new_msgs
+    small = {
+        "permissions": _ai_perm_load(),
+        "providers": [p.to_dict() for p in llm_unified.get_providers()],
+        "ha_config": ha_integration.ha_load_config() if 'ha_integration' in sys.modules else {},
+        "sync_settings": _sync_settings_get(),
+    }
+    return {"status": "ok", "data": {
+        "sessions": sessions,          # 全量列表（B 对比）
+        "list_hash": list_hash,        # 整体哈希
+        "delta_messages": delta_messages,  # 增量消息（A）
+        "small": small,                # 小数据域全量
+    }}
+
+def cmd_session_create(title: str, device_id: str = "") -> dict:
     data = _sessions_load()
     sid = _session_new_id()
     data[sid] = {"title": title or "新会话", "created": time.time(),
-                 "updated": time.time(), "message_count": 0}
+                 "updated": time.time(), "message_count": 0,
+                 "owner": device_id or "", "last_writer": device_id or "",
+                 "last_write_ts": time.time()}
     _sessions_save(data)
     return {"status": "ok", "data": {"id": sid, "title": data[sid]["title"]}}
 
-def cmd_session_delete(sid: str) -> dict:
+def cmd_session_delete(sid: str, device_id: str = "") -> dict:
     data = _sessions_load()
     if sid in data:
+        allowed, reason = _session_owner_allowed(data, sid, device_id)
+        if not allowed:
+            return {"status": "error", "code": "readonly", "msg": reason}
         del data[sid]
         _sessions_save(data)
         return {"status": "ok"}
     return {"status": "error", "code": "not_found", "msg": "session not found"}
 
-def cmd_session_rename(sid: str, title: str) -> dict:
+def cmd_session_rename(sid: str, title: str, device_id: str = "") -> dict:
     data = _sessions_load()
     if sid in data:
+        allowed, reason = _session_owner_allowed(data, sid, device_id)
+        if not allowed:
+            return {"status": "error", "code": "readonly", "msg": reason}
+        ok, why = _check_conflict(data, sid, device_id)
+        if not ok:
+            return {"status": "error", "code": "conflict", "msg": why}
         data[sid]["title"] = title or "未命名"
         data[sid]["updated"] = time.time()
+        _mark_written(data, sid, device_id)
         _sessions_save(data)
         return {"status": "ok"}
     return {"status": "error", "code": "not_found", "msg": "session not found"}
@@ -2775,12 +2946,21 @@ def cmd_mcp_test(name: str = "") -> dict:
     _mcp_save(data)
     return {"status": "ok", "data": {"name": name, "status": info["status"]}}
 
-def _session_append_msg(sid: str, role: str, content: str, max_per_session: int = 200) -> None:
+def _session_append_msg(sid: str, role: str, content: str, max_per_session: int = 200, device_id: str = "") -> None:
     if not sid or sid == "default":
         return
     try:
         data = _sessions_load()
         if sid not in data:
+            return
+        # 【0.2.2 同步】归属校验 + 冲突窗口（服务端强制——绕过 UI 也无法修改）
+        allowed, reason = _session_owner_allowed(data, sid, device_id)
+        if not allowed:
+            logger.warning("session append denied: %s (%s)", sid, reason)
+            return
+        ok, why = _check_conflict(data, sid, device_id)
+        if not ok:
+            logger.warning("session append conflict: %s (%s)", sid, why)
             return
         msgs = data[sid].setdefault("messages", [])
         msgs.append({"role": role, "content": content[:2000], "ts": time.time()})
@@ -2788,6 +2968,7 @@ def _session_append_msg(sid: str, role: str, content: str, max_per_session: int 
             data[sid]["messages"] = msgs[-max_per_session:]
         data[sid]["message_count"] = len(data[sid]["messages"])
         data[sid]["updated"] = time.time()
+        _mark_written(data, sid, device_id)
         _sessions_save(data)
     except Exception as e:
         logger.warning(f"session append failed: {e}")
@@ -2853,16 +3034,33 @@ def handle_client(conn, addr):
             _reply(conn, "session_list", cmd_session_list())
             return
         if cmd == "session_create":
-            _reply(conn, "session_create", cmd_session_create(str(req.get("title", "新会话"))))
+            _reply(conn, "session_create", cmd_session_create(str(req.get("title", "新会话")), str(req.get("device_id", ""))))
             return
         if cmd == "session_delete":
-            _reply(conn, "session_delete", cmd_session_delete(str(req.get("id", ""))))
+            _reply(conn, "session_delete", cmd_session_delete(str(req.get("id", "")), str(req.get("device_id", ""))))
             return
         if cmd == "session_rename":
-            _reply(conn, "session_rename", cmd_session_rename(str(req.get("id", "")), str(req.get("title", ""))))
+            _reply(conn, "session_rename", cmd_session_rename(str(req.get("id", "")), str(req.get("title", "")), str(req.get("device_id", ""))))
             return
         if cmd == "session_history":
             _reply(conn, "session_history", cmd_session_history(str(req.get("id", "")), int(req.get("limit", 50))))
+            return
+
+        # 【0.2.2 同步协议】（先生裁决 2026-08-14）
+        if cmd == "sync_full":
+            _reply(conn, "sync_full", cmd_sync_full(str(req.get("device_id", ""))))
+            return
+        if cmd == "sync_delta":
+            _reply(conn, "sync_delta", cmd_sync_delta(
+                float(req.get("last_sync", 0) or 0),
+                str(req.get("device_id", "")),
+                str(req.get("local_hash", ""))))
+            return
+        if cmd == "sync_settings_get":
+            _reply(conn, "sync_settings_get", cmd_sync_settings_get())
+            return
+        if cmd == "sync_settings_set":
+            _reply(conn, "sync_settings_set", cmd_sync_settings_set(bool(req.get("allow_cross_device", False))))
             return
 
         # ---- 【0.1.9】AI 配置命令族 ----
@@ -2925,6 +3123,10 @@ def handle_client(conn, addr):
         # ---- 【0.2.1】HA 命令族（AI-AGENT#10——B REST 控制 + C WS 实时事件） ----
         if cmd == "ha_config_get":
             _reply(conn, "ha_config_get", ha_integration.cmd_ha_config_get()); return
+
+        # ---- 【0.2.2 vision】摄像头配置查询（App 摄像头页） ----
+        if cmd == "vision_config_get":
+            _reply(conn, "vision_config_get", cmd_vision_config_get()); return
         if cmd == "ha_config_set":
             _reply(conn, "ha_config_set", ha_integration.cmd_ha_config_set(
                 str(req.get("host", "")), str(req.get("token", "")), int(req.get("port", 8123)))); return
@@ -3159,6 +3361,17 @@ def handle_client(conn, addr):
                                     session_id=session_id)
             except Exception:
                 pass
+
+            # 【0.2.2 同步】会话消息持久化（App 聊天主路径——内存 conversations → sessions.json）
+            # 归属校验 + 冲突窗口在 _session_append_msg 内强制（服务端）
+            try:
+                if session_id and session_id != "default":
+                    device_id = str(req.get("device_id", ""))
+                    _session_append_msg(session_id, "user", prompt, device_id=device_id)
+                    if full_answer:
+                        _session_append_msg(session_id, "assistant", full_answer, device_id=device_id)
+            except Exception as e:
+                logger.warning("session persist failed: %s", e)
             return
 
         elif cmd == "agent_view":
@@ -3435,6 +3648,21 @@ class _VoiceHTTPHandler(BaseHTTPRequestHandler):
         self.wfile.write(b'{"error":"not found"}')
 
     def do_POST(self):
+        # 【0.2.2 vision】visiond 检测事件上报 → 广播 App（vision_event）
+        if self.path.startswith("/api/vision_event"):
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(ln).decode("utf-8"))
+                evt = {"type": "vision_event", "data": data}
+                _broadcast_vision_event(evt)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok"}')
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(('{"error":"%s"}' % str(e)).encode())
+            return
         if self.path.startswith("/api/audio/tts"):
             if not self._check():
                 return

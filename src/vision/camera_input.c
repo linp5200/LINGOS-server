@@ -16,14 +16,24 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/videodev2.h>
 #include <errno.h>
 
 static int g_camera_fd = -1;
+/* 【0.2.2】RTSP 模式（camera_source=rtsp——Python 拉流，先生裁决） */
+static int g_rtsp_mode = 0;
+static int g_rtsp_sock = -1;
+static char g_rtsp_url[256] = {0};
+static int g_rtsp_frame_port = 8890;
+static int g_rtsp_http_port = 8891;
 static camera_frame_t g_frame;
 static unsigned char *g_frame_buffer = NULL;
+static int g_frame_buffer_size = 0;
 static int g_recovery_attempts = 0;
 static int g_max_recovery_attempts = 3;
 
@@ -32,7 +42,44 @@ static int g_max_recovery_attempts = 3;
  * ============================================================ */
 
 int camera_init(const vision_config_t *config) {
-    LOG_DEBUG_T("Camera", "Init", "Enter", "device=%s", config->device_path);
+    LOG_DEBUG_T("Camera", "Init", "Enter", "device=%s source=%s", config->device_path,
+                config->camera_source[0] ? config->camera_source : "v4l2");
+
+    /* 【0.2.2】RTSP 模式：启动 Python 拉流服务 + 连接帧通道（先生裁决：RTSP 走 Python） */
+    if (config->camera_source[0] && strcmp(config->camera_source, "v4l2") != 0) {
+        g_rtsp_mode = 1;
+        safe_strncpy(g_rtsp_url, config->rtsp_url, sizeof(g_rtsp_url));
+        g_rtsp_frame_port = config->rtsp_frame_port > 0 ? config->rtsp_frame_port : 8890;
+        g_rtsp_http_port = config->rtsp_http_port > 0 ? config->rtsp_http_port : 8891;
+        if (g_rtsp_url[0] == '\0') {
+            LOG_ERROR_T("Camera", "Init", "RTSPNoUrl", "camera_source=rtsp 但未配置 rtsp_url");
+            return -1;
+        }
+        /* 启动 rtsp_streamer.py（Python 拉流——ffmpeg） */
+        char cmd[512];
+        const char *py = "/LINGOS/python/bin/python3";
+        if (access(py, X_OK) != 0) py = "python3";
+        safe_snprintf(cmd, sizeof(cmd),
+                      "%s /LINGOS/bin/rtsp_streamer.py --url \"%s\" --frame-port %d --http-port %d >/dev/null 2>&1 &",
+                      py, g_rtsp_url, g_rtsp_frame_port, g_rtsp_http_port);
+        system(cmd);
+        LOG_INFO_T("Camera", "Init", "RTSPStart", "rtsp_streamer started: %s", g_rtsp_url);
+        /* 等待流服务就绪后连接帧通道 */
+        usleep(1500000);
+        g_rtsp_sock = socket(AF_INET, SOCK_STREAM, 0);
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(g_rtsp_frame_port);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (connect(g_rtsp_sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+            LOG_WARN_T("Camera", "Init", "RTSPConnFail", "无法连接帧通道 %d——重试中", g_rtsp_frame_port);
+            close(g_rtsp_sock);
+            g_rtsp_sock = -1;
+            /* 非致命——capture 时重连 */
+        }
+        return 0;
+    }
 
     const char *device = config->device_path[0] ? config->device_path : "/dev/video0";
     g_camera_fd = open(device, O_RDWR);
@@ -130,6 +177,64 @@ int camera_init(const vision_config_t *config) {
  * ============================================================ */
 
 int camera_capture(camera_frame_t *frame) {
+    /* 【0.2.2】RTSP 模式：从帧通道读 JPEG 帧（Python 拉流） */
+    if (g_rtsp_mode) {
+        if (g_rtsp_sock < 0) {
+            /* 重连帧通道 */
+            g_rtsp_sock = socket(AF_INET, SOCK_STREAM, 0);
+            struct sockaddr_in addr;
+            memset(&addr, 0, sizeof(addr));
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(g_rtsp_frame_port);
+            addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            if (connect(g_rtsp_sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+                close(g_rtsp_sock);
+                g_rtsp_sock = -1;
+                usleep(500000);
+                return -1;
+            }
+            /* 读握手行 */
+            char handshake[32] = {0};
+            recv(g_rtsp_sock, handshake, sizeof(handshake), 0);
+        }
+        /* 发请求 → 收 4 字节长度 + JPEG 帧 */
+        if (send(g_rtsp_sock, "GET", 3, 0) <= 0) {
+            close(g_rtsp_sock);
+            g_rtsp_sock = -1;
+            return -1;
+        }
+        uint32_t len = 0;
+        int r = recv(g_rtsp_sock, &len, 4, MSG_WAITALL);
+        if (r != 4) {
+            close(g_rtsp_sock);
+            g_rtsp_sock = -1;
+            return -1;
+        }
+        len = ntohl(len);
+        if (len == 0 || len > 2 * 1024 * 1024) {
+            return -1;
+        }
+        /* 复用 g_frame_buffer 存放 JPEG */
+        if (g_frame_buffer == NULL || (int)len > g_frame_buffer_size) {
+            unsigned char *nb = realloc(g_frame_buffer, len);
+            if (!nb) return -1;
+            g_frame_buffer = nb;
+            g_frame_buffer_size = len;
+        }
+        int got = recv(g_rtsp_sock, g_frame_buffer, len, MSG_WAITALL);
+        if (got != (int)len) {
+            close(g_rtsp_sock);
+            g_rtsp_sock = -1;
+            return -1;
+        }
+        frame->data = g_frame_buffer;
+        frame->width = 640;
+        frame->height = 480;  /* rtsp_streamer 固定 scale=640:-1——实际高度由检测端解析 */
+        frame->size = (int)len;
+        frame->timestamp = time(NULL);
+        return 0;
+    }
+
     if (g_camera_fd < 0) {
         LOG_ERROR_T("Camera", "Capture", "NotInit", "camera not initialized");
         return -1;
@@ -185,6 +290,21 @@ int camera_capture(camera_frame_t *frame) {
  * ============================================================ */
 
 void camera_cleanup(void) {
+    /* 【0.2.2】RTSP 模式清理 */
+    if (g_rtsp_mode) {
+        if (g_rtsp_sock >= 0) {
+            close(g_rtsp_sock);
+            g_rtsp_sock = -1;
+        }
+        if (g_frame_buffer) {
+            free(g_frame_buffer);
+            g_frame_buffer = NULL;
+            g_frame_buffer_size = 0;
+        }
+        g_rtsp_mode = 0;
+        LOG_DEBUG_T("Camera", "Cleanup", "RTSP", "rtsp camera cleaned up");
+        return;
+    }
     if (g_camera_fd >= 0) {
         enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         ioctl(g_camera_fd, VIDIOC_STREAMOFF, &type);

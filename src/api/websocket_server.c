@@ -309,6 +309,7 @@ typedef struct ws_chat_arg {
     char *prompt;
     char *model;
     char *image;
+    char *device_id;   /* 【0.2.2 同步】设备标识——归属校验透传 */
 } ws_chat_arg_t;
 
 static void* ws_chat_thread(void *argp) {
@@ -342,6 +343,9 @@ static void* ws_chat_thread(void *argp) {
     }
     if (image && image[0] != '\0') {
         cJSON_AddStringToObject(root, "image", image);   /* R6: 多模态透传 */
+    }
+    if (a->device_id && a->device_id[0] != '\0') {
+        cJSON_AddStringToObject(root, "device_id", a->device_id);  /* 【0.2.2】归属校验 */
     }
     cJSON_AddNumberToObject(root, "timeout", 60);
     cJSON_AddBoolToObject(root, "gui_mode", 1); /* B5: GUI 模式提示词 */
@@ -418,6 +422,7 @@ done:
         free(a->prompt);
         free(a->model);
         free(a->image);
+        free(a->device_id);
         free(a);
     }
     return NULL;
@@ -697,6 +702,25 @@ static void process_client_message(ws_client_t *client, const char *msg) {
             a->prompt = strdup(prompt);
             a->model = (model[0] != '\0') ? strdup(model) : strdup("");
             a->image = (image_buf[0] != '\0') ? strdup(image_buf) : strdup("");
+            /* 【0.2.2 同步】透传 device_id（客户端 chat 帧携带） */
+            char *dd = strstr((char*)msg, "\"device_id\"");
+            a->device_id = strdup("");
+            if (dd) {
+                char *dp = strchr(dd, ':');
+                if (dp) {
+                    char *d2 = strchr(dp, '"');
+                    if (d2) {
+                        char *d3 = strchr(d2 + 1, '"');
+                        if (d3 && d3 - d2 - 1 < 128) {
+                            char tmp[128];
+                            memcpy(tmp, d2 + 1, d3 - d2 - 1);
+                            tmp[d3 - d2 - 1] = '\0';
+                            free(a->device_id);
+                            a->device_id = strdup(tmp);
+                        }
+                    }
+                }
+            }
             free(image_buf);
             if (!a->prompt || !a->model || !a->image) {
                 free(a->prompt); free(a->model); free(a->image); free(a);

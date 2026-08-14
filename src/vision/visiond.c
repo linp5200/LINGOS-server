@@ -187,6 +187,49 @@ static void* heartbeat_thread_func(void *arg) {
 }
 
 /* ============================================================
+ * 检测结果上报 ai_server（0.2.2——App vision_event 广播链）
+ * 用 libcurl POST /api/vision_event（Makefile 已链 libcurl）
+ * ============================================================ */
+#include <curl/curl.h>
+#include <cJSON.h>
+
+static void vision_report_results(detection_result_t *results, int count) {
+    if (count <= 0) return;
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr = cJSON_CreateArray();
+    for (int i = 0; i < count && i < 32; i++) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "label", results[i].label);
+        cJSON_AddNumberToObject(item, "confidence", results[i].confidence);
+        cJSON_AddNumberToObject(item, "world_x", results[i].world_x);
+        cJSON_AddNumberToObject(item, "world_y", results[i].world_y);
+        cJSON_AddNumberToObject(item, "track_id", results[i].track_id);
+        cJSON_AddItemToArray(arr, item);
+    }
+    cJSON_AddItemToObject(root, "detections", arr);
+    char *json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json_str) return;
+
+    CURL *curl = curl_easy_init();
+    if (curl) {
+        struct curl_slist *headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        char url[128];
+        safe_snprintf(url, sizeof(url), "http://127.0.0.1:8088/api/vision_event");
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
+        curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+        curl_slist_free_all(headers);
+    }
+    free(json_str);
+}
+
+/* ============================================================
  * 检测线程
  * ============================================================ */
 
@@ -229,6 +272,8 @@ static void* detect_thread_func(void *arg) {
 
         if (count > 0) {
             LOG_DEBUG_T("Visiond", "Detect", "Results", "detected %d objects", count);
+            /* 【0.2.2】上报 ai_server → App vision_event 广播 */
+            vision_report_results(results, count);
         }
 
         usleep(100000);

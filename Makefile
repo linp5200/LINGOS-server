@@ -456,7 +456,7 @@ test-render:
 
 install_python_script:
 	@mkdir -p /LINGOS/bin
-	@for f in ai_server.py sub_ai_scheduler.py repair_engine.py authorization_service.py skill_handlers.py syscall_client.py config_helpers.py embed_service.py registry_client.py skill_loader.py yolo_service.py diagnosis_engine.py memory_retrieval.py ha_archive.py agent_orchestrator.py web_search.py git_skills.py llm_unified.py voice_service.py; do \
+	@for f in ai_server.py sub_ai_scheduler.py repair_engine.py authorization_service.py skill_handlers.py syscall_client.py config_helpers.py embed_service.py registry_client.py skill_loader.py yolo_service.py diagnosis_engine.py memory_retrieval.py ha_archive.py agent_orchestrator.py web_search.py git_skills.py llm_unified.py voice_service.py ha_integration.py rtsp_streamer.py ocr_service.py calibration_service.py vision_ai.py; do \
 	    if [ -f $(SRC_DIR)/python/$$f ]; then \
 	        cp $(SRC_DIR)/python/$$f /LINGOS/bin/; \
 	        chmod +x /LINGOS/bin/$$f; \
