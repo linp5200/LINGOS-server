@@ -1,0 +1,57 @@
+# LING OS 主机 Docker 全家编排（0.2.2 定稿——先生裁决 2026-08-14）
+# 组成：Home Assistant + Miloco(小米官方) + Go2rtc + Micam(转RTSP)
+# 全部 localhost 互联——LING OS 全捆包拉 rtsp://localhost:8554
+# 用法：见 scripts/deploy_ha.sh（一键部署引导）
+
+services:
+  # ---------- Home Assistant（先生裁决 A：Docker 容器） ----------
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    network_mode: host          # host 网络——HA 发现设备需要广播
+    volumes:
+      - ./ha_config:/config
+    environment:
+      - TZ=Asia/Shanghai
+
+  # ---------- Go2rtc（流媒体中转——RTSP 输出） ----------
+  go2rtc:
+    image: ghcr.io/alexxit/go2rtc:latest
+    container_name: go2rtc
+    restart: unless-stopped
+    network_mode: host          # host——rtsp 端口 8554 + WebUI 1984
+    volumes:
+      - ./go2rtc_config:/config
+
+  # ---------- Miloco（小米官方工具——发现小方/绑定账号） ----------
+  miloco:
+    image: ghcr.io/xiaomi/miloco:latest
+    container_name: miloco
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - MILOCO_PASSWORD=${MILOCO_PASSWORD}   # 部署时设置（.env）
+      - MILOCO_HTTPS_PORT=8000               # WebUI（自签证书）
+    volumes:
+      - ./miloco_data:/data
+
+  # ---------- Micam（miloco → RTSP 转发） ----------
+  micam:
+    image: ghcr.io/miiot/micam:latest
+    container_name: micam
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - MILOCO_PASSWORD=${MILOCO_PASSWORD}
+      - CAMERA_ID=${CAMERA_ID}              # 小方 did（米家 App 可查）
+      - RTSP_URL=rtsp://localhost:8554/小方   # 输出到 go2rtc
+    depends_on:
+      - miloco
+      - go2rtc
+
+# ============================================================
+# .env 模板（先生部署时填写）：
+#   MILOCO_PASSWORD=<部署时设置的密码，需 MD5>
+#   CAMERA_ID=<小方摄像头 did>
+# ============================================================
