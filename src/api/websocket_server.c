@@ -353,7 +353,9 @@ static void* ws_chat_thread(void *argp) {
     free(msg);
 
     /* 流式读取——poll 100ms 超时轮询 interrupt 标志 */
-    char line_buf[4096];
+    /* 【0.2.1 #3 修复】行缓冲 4096 → 64KB：超长事件行（工具结果/思考流）截断会损坏 JSON
+       导致 App 解析失败丢事件 → 对话"中断"假象 */
+    char line_buf[65536];
     size_t line_pos = 0;
     int interrupted = 0;
     while (1) {
@@ -370,7 +372,7 @@ static void* ws_chat_thread(void *argp) {
             line_buf[line_pos] = '\0';
             line_pos = 0;
             if (line_buf[0] == '\0') continue;
-            char chunk_send[4600];
+            char chunk_send[66000];
             safe_snprintf(chunk_send, sizeof(chunk_send),
                           "{\"type\":\"chat_event\",\"data\":%s}", line_buf);
             pthread_mutex_lock(&client->lock);
@@ -379,7 +381,16 @@ static void* ws_chat_thread(void *argp) {
             if (strstr(line_buf, "\"type\":\"done\"") || strstr(line_buf, "\"type\":\"error\"")) break;
         } else {
             line_pos++;
-            if (line_pos >= sizeof(line_buf) - 1) line_pos = sizeof(line_buf) - 2;
+            if (line_pos >= sizeof(line_buf) - 1) {
+                /* 行超长（>64KB）：丢弃该行剩余部分直到换行，防止损坏 JSON 上传 */
+                line_buf[0] = '\0';
+                line_pos = 0;
+                while (1) {
+                    ssize_t c = read(fd, line_buf, 1);
+                    if (c <= 0) break;
+                    if (line_buf[0] == '\n') break;
+                }
+            }
         }
     }
     close(fd);
