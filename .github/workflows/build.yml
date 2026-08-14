@@ -69,4 +69,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.tar.gz
-          generate_release_notes: true
+          generate_release_notes: false
+          # 【0.2.1 修复】双架构 job 并行——后完成的更新已有 release 追加资产
+          update_release: true
+          overwrite_files: true
