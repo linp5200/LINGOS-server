@@ -2,6 +2,8 @@ name: build-bundle
 
 # LING OS 服务端全捆打包 CI（0.2.1 定稿——先生裁决 H4：CI 出全捆包，解压即用）
 # 矩阵：x86_64 原生 + arm64 qemu 容器（DEPENDENCIES.md 平台定位）
+# 【先生裁决 2026-08-14】发行版本号 0.0.1（独立于内部 LN-B-5.1.2.6-rc）
+# 包名：LINGOS-<版本>-server-<架构>.tar.gz
 
 on:
   push:
@@ -13,7 +15,6 @@ permissions:
   contents: write
 
 env:
-  # 【先生裁决 2026-08-14】服务端发行版本号 0.0.1（独立于内部 LN-B-5.1.2.6-rc）
   VERSION: 0.0.1
 
 jobs:
@@ -64,12 +65,26 @@ jobs:
           name: LINGOS-${{ matrix.arch }}
           path: dist/*.tar.gz
 
-      - name: 创建 Release（tag 推送时）
-        if: startsWith(github.ref, 'refs/tags/')
+  # 【0.2.1 修复】Release 独立 job——等双架构 build 完成统一上传（防并发竞态）
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 下载全部架构产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'LINGOS-*'
+          path: /tmp/release_files
+          merge-multiple: true
+
+      - name: 整理 Release 文件
+        run: |
+          ls -la /tmp/release_files/
+          du -sh /tmp/release_files/*
+
+      - name: 发布 Release（tag 推送时）
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: /tmp/release_files/*.tar.gz
           generate_release_notes: false
-          # 【0.2.1 修复】双架构 job 并行——后完成的更新已有 release 追加资产
-          update_release: true
-          overwrite_files: true
