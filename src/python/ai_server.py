@@ -1791,7 +1791,9 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
 
         # 【批次B】流式调用模型（思考+内容+工具调用实时到达）
         content_parts = []
+        reasoning_parts = []   # 【0.2.2 #3 修复】保存 reasoning_content（工具调用轮必须回传——官方文档）
         tool_calls = None
+        stream_incomplete = False
         thinking_sent = False
         try:
             if current_backend == "deepseek":
@@ -1802,6 +1804,7 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
                 btype = block.get("type", "")
                 text = block.get("text", "")
                 if btype == "thinking":
+                    reasoning_parts.append(text)   # 保存（用于回传）
                     if thinking_display != "off":
                         thinking_sent = True
                         _send_evt(conn, {"type": "thinking_delta", "delta": text})
@@ -1814,6 +1817,11 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
                     _send_evt(conn, {"type": "content", "delta": text})
                 elif btype == "tool_calls":
                     tool_calls = block.get("tool_calls")
+                elif btype == "stream_incomplete":
+                    # 【0.2.2 #3 修复】流中断（无 [DONE] 且无输出）——标记异常
+                    stream_incomplete = True
+                    logger.warning("react_stream: stream incomplete (no [DONE], no output) session=%s iter=%d",
+                                   session_id, iteration)
                 elif btype == "usage":
                     # 【0.2.0】真实 usage 提取（修 jsonl 假 0 落盘）
                     u = block.get("usage", {}) or {}
@@ -1830,6 +1838,41 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
 
         content = "".join(content_parts)
         if not tool_calls:
+            # 【0.2.2 #3 修复】空回复/流中断检测（先生观察 2026-08-15 + DeepSeek 官方文档）
+            # 流中断（stream_incomplete）或模型返回空（无 thinking/content/tool_calls）→ 重试一次
+            if stream_incomplete or (not content.strip() and not reasoning_parts):
+                logger.warning("react_stream: 模型返回异常（中断/空白）——重试一次 session=%s iter=%d incomplete=%s",
+                               session_id, iteration, stream_incomplete)
+                _send_evt(conn, {"type": "thinking",
+                                 "content": t("Model returned empty, retrying...", "模型返回空白，重试中……")})
+                try:
+                    if current_backend == "deepseek":
+                        gen2 = call_deepseek_stream(messages, tools=skill_schemas, timeout=60)
+                    else:
+                        gen2 = call_ollama_stream(messages, tools=skill_schemas, timeout=60)
+                    retry_parts = []
+                    retry_reasoning = []
+                    for block in gen2:
+                        btype = block.get("type", "")
+                        if btype == "thinking":
+                            retry_reasoning.append(block.get("text", ""))
+                        elif btype == "content":
+                            retry_parts.append(block.get("text", ""))
+                            _send_evt(conn, {"type": "content", "delta": block.get("text", "")})
+                        elif btype == "tool_calls":
+                            tool_calls = block.get("tool_calls")
+                    content = "".join(retry_parts)
+                    if not content.strip() and not tool_calls:
+                        logger.error("react_stream: 重试仍空白——判定异常中断 session=%s", session_id)
+                        _send_evt(conn, {"type": "content",
+                                         "delta": t("(AI 回复异常——模型返回空白，请重试)",
+                                                    "（AI回复异常——模型返回空白，请重试）")})
+                        return content, usage_info
+                except Exception as e2:
+                    logger.error("react_stream retry exception: %s", traceback.format_exc())
+                    _send_evt(conn, {"type": "content",
+                                     "delta": t(f"(AI 重试失败: {str(e2)[:60]})", f"（AI重试失败：{str(e2)[:60]}）")})
+                    return content or "", usage_info
             # 无工具调用：content 已实时流式推送（最终回复）
             full = content
             return full, usage_info
@@ -1855,8 +1898,14 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
                              "content": str(r.get("content", ""))[:500],
                              "success": r.get("success", 1)})
 
-        messages.append({"role": "assistant", "content": content or "",
-                         "tool_calls": tool_calls})
+        # 【0.2.2 #3 修复】工具调用轮消息拼接——必须回传 reasoning_content（DeepSeek 官方文档：
+        # "携带了 tools 参数的请求，后续所有请求中必须完整回传 reasoning_content，否则 API 返回 400"）
+        assistant_msg = {"role": "assistant", "content": content or "",
+                         "tool_calls": tool_calls}
+        reasoning_text = "".join(reasoning_parts).strip()
+        if reasoning_text:
+            assistant_msg["reasoning_content"] = reasoning_text
+        messages.append(assistant_msg)
         messages.extend(results)
 
     return full, usage_info
@@ -1938,7 +1987,11 @@ def react_loop_nonstream_with_display(
                         args = {}
                     StreamDisplay.tool_call(name, args)
 
-            messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
+            # 【0.2.2 #3 修复】非流式工具调用轮同样回传 reasoning_content（官方文档——否则 400）
+            assistant_msg = {"role": "assistant", "content": content, "tool_calls": tool_calls}
+            if reasoning:
+                assistant_msg["reasoning_content"] = reasoning
+            messages.append(assistant_msg)
             tool_results = execute_tool_calls(tool_calls, session_id)
 
             # 显示工具结果
@@ -2318,6 +2371,57 @@ def cmd_vision_config_get() -> dict:
     except Exception:
         pass
     return {"status": "ok", "data": cfg}
+
+# ========== 【0.2.2】DeepSeek 官方 API 扩展（先生指示 2026-08-15） ==========
+def cmd_balance_query(provider_id: str = "") -> dict:
+    """查询余额（DeepSeek GET /user/balance）——App 显示在 token 上传/下行一行
+    其他 provider 若 base_url 支持 /user/balance 同样可用"""
+    try:
+        prov = None
+        if provider_id:
+            for p in llm_unified.get_providers():
+                if p.id == provider_id:
+                    prov = p
+                    break
+        else:
+            prov = llm_unified.get_active_provider()
+        if not prov or not prov.api_key:
+            return {"status": "error", "code": "no_key", "msg": "当前模型无 API Key——无法查询余额"}
+        import requests
+        url = prov.base_url.rstrip("/")
+        if not url.endswith("/user/balance"):
+            url = url.replace("/v1", "") + "/user/balance"
+        r = requests.get(url, headers={"Authorization": "Bearer %s" % prov.api_key}, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            return {"status": "ok", "data": data}
+        return {"status": "error", "code": "http_%d" % r.status_code, "msg": "余额查询失败: %s" % r.text[:120]}
+    except Exception as e:
+        return {"status": "error", "code": "network", "msg": "余额查询异常: %s" % str(e)[:120]}
+
+def cmd_model_list_query(provider_id: str = "") -> dict:
+    """获取模型列表（GET /models）——App 添加提供商时直接列出可选模型"""
+    try:
+        prov = None
+        if provider_id:
+            for p in llm_unified.get_providers():
+                if p.id == provider_id:
+                    prov = p
+                    break
+        else:
+            prov = llm_unified.get_active_provider()
+        if not prov or not prov.api_key:
+            return {"status": "error", "code": "no_key", "msg": "无 API Key——无法获取模型列表"}
+        import requests
+        url = prov.base_url.rstrip("/") + "/models"
+        r = requests.get(url, headers={"Authorization": "Bearer %s" % prov.api_key}, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+            return {"status": "ok", "data": {"models": models}}
+        return {"status": "error", "code": "http_%d" % r.status_code, "msg": "模型列表获取失败: %s" % r.text[:120]}
+    except Exception as e:
+        return {"status": "error", "code": "network", "msg": "模型列表获取异常: %s" % str(e)[:120]}
 
 def cmd_sync_delta(last_sync: float = 0, device_id: str = "", local_hash: str = "") -> dict:
     """非首次连接：A 时间戳（消息增量）+ B 哈希（列表对比）+ 小数据域全量"""
@@ -2809,8 +2913,10 @@ def cmd_model_switch(model_id: str = "") -> dict:
 
 
 def cmd_provider_add(pid: str = "", name: str = "", fmt: str = "openai", base_url: str = "",
-                     api_key: str = "", model: str = "") -> dict:
-    """添加/更新提供商（写 provider.json——App ai_config_set 增强）"""
+                     api_key: str = "", model: str = "",
+                     thinking_enabled: bool = True, reasoning_effort: str = "high") -> dict:
+    """添加/更新提供商（写 provider.json——App ai_config_set 增强）
+    【0.2.2】新增 thinking_enabled（思考模式开关）+ reasoning_effort（思考强度 low/medium/high/xhigh/max）"""
     if not pid or not base_url or not model:
         return {"status": "error", "msg": "需要 id/base_url/model"}
     providers = llm_unified.get_providers()
@@ -2826,10 +2932,14 @@ def cmd_provider_add(pid: str = "", name: str = "", fmt: str = "openai", base_ur
         if api_key:
             existing.api_key = api_key
         existing.model = model
+        existing.thinking_enabled = bool(thinking_enabled)
+        existing.reasoning_effort = reasoning_effort or "high"
     else:
         providers.append(llm_unified.LLMProvider({
             "id": pid, "name": name or pid, "format": fmt,
-            "base_url": base_url, "api_key": api_key, "model": model}))
+            "base_url": base_url, "api_key": api_key, "model": model,
+            "thinking_enabled": bool(thinking_enabled),
+            "reasoning_effort": reasoning_effort or "high"}))
     llm_unified.save_providers(providers, pid)
     # 同步旧 ai_config.json（deepseek 兼容——保持旧行为不破坏）
     try:
@@ -3094,9 +3204,17 @@ def handle_client(conn, addr):
         if cmd == "model_switch":
             _reply(conn, "model_switch", cmd_model_switch(str(req.get("model_id", "")))); return
         if cmd == "provider_add":
-            _reply(conn, "provider_add", cmd_provider_add(str(req.get("id", "")), str(req.get("name", "")), str(req.get("format", "openai")), str(req.get("base_url", "")), str(req.get("api_key", "")), str(req.get("model", "")))); return
+            _reply(conn, "provider_add", cmd_provider_add(
+                str(req.get("id", "")), str(req.get("name", "")), str(req.get("format", "openai")),
+                str(req.get("base_url", "")), str(req.get("api_key", "")), str(req.get("model", "")),
+                bool(req.get("thinking_enabled", True)), str(req.get("reasoning_effort", "high")))); return
         if cmd == "provider_remove":
             _reply(conn, "provider_remove", cmd_provider_remove(str(req.get("id", "")))); return
+        # ---- 【0.2.2】DeepSeek 官方 API（先生指示 2026-08-15） ----
+        if cmd == "balance_query":
+            _reply(conn, "balance_query", cmd_balance_query(str(req.get("provider_id", "")))); return
+        if cmd == "model_list_query":
+            _reply(conn, "model_list_query", cmd_model_list_query(str(req.get("provider_id", "")))); return
         # ---- 【0.2.0】上下文状态（App 会话页入口） ----
         if cmd == "context_status":
             _reply(conn, "context_status", cmd_context_status(str(req.get("session_id", "default")))); return

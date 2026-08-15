@@ -56,6 +56,8 @@ class LLMProvider:
         self.context_window = data.get("context_window")     # None=无限
         self.supports_tools = data.get("supports_tools", True)
         self.supports_reasoning = data.get("supports_reasoning", True)
+        self.thinking_enabled = data.get("thinking_enabled", True)  # 【0.2.2】思考模式开关
+        self.reasoning_effort = data.get("reasoning_effort", "high")  # 【0.2.2】思考强度 low/medium/high/xhigh/max
         self.extra = data.get("extra", {}) or {}
 
     def to_dict(self) -> dict:
@@ -65,6 +67,8 @@ class LLMProvider:
             "context_window": self.context_window,
             "supports_tools": self.supports_tools,
             "supports_reasoning": self.supports_reasoning,
+            "thinking_enabled": self.thinking_enabled,
+            "reasoning_effort": self.reasoning_effort,
             "extra": self.extra,
         }
 
@@ -308,7 +312,18 @@ def _openai_stream(provider: LLMProvider, messages: List[Dict], tools: Optional[
     if tools and provider.supports_tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    if reasoning_effort and provider.supports_reasoning:
+    if provider.supports_reasoning:
+        # 【0.2.2】思考模式开关 + 强度（DeepSeek 官方文档）
+        # 强度映射：low→low, medium→high, high→high, xhigh→high, max→max
+        # 思考关闭时（disabled）不传 effort——DeepSeek 文档：none 表示关闭思考模式
+        effort = provider.reasoning_effort or reasoning_effort or "high"
+        if provider.thinking_enabled:
+            mapped = "low" if effort == "low" else ("max" if effort == "max" else "high")
+            payload["reasoning_effort"] = mapped
+        # thinking 是 DeepSeek 特有扩展——其他提供商不认识会 400，仅 DeepSeek 系发送
+        if "deepseek" in provider.base_url or "deepseek" in provider.model.lower():
+            payload["thinking"] = {"type": "enabled" if provider.thinking_enabled else "disabled"}
+    elif reasoning_effort and provider.supports_reasoning:
         payload["reasoning_effort"] = reasoning_effort
 
     attempts = 0
@@ -340,11 +355,13 @@ def _openai_stream(provider: LLMProvider, messages: List[Dict], tools: Optional[
                     return
                 usage = None
                 tool_calls_acc: Dict[int, dict] = {}
+                got_done = False
                 for line in resp.iter_lines():
                     if not line or not line.startswith(b"data: "):
                         continue
                     chunk = line[6:]
                     if chunk == b"[DONE]":
+                        got_done = True
                         break
                     try:
                         data = json.loads(chunk)
@@ -371,6 +388,13 @@ def _openai_stream(provider: LLMProvider, messages: List[Dict], tools: Optional[
                                 acc["name"] += fn["name"]
                             if fn.get("arguments"):
                                 acc["arguments"] += fn["arguments"]
+                # 【0.2.2 #3 修复】流式中断检测（官方文档：响应以 completed/incomplete/failed 结束）
+                # 流意外中断（无 [DONE]）且无任何输出 → 判定 incomplete——上层重试而非当完成
+                if not got_done:
+                    has_output = tool_calls_acc or usage
+                    if not has_output:
+                        yield {"type": "stream_incomplete",
+                               "text": "Stream ended without [DONE] and no output (possibly interrupted)"}
                 if tool_calls_acc:
                     tcs = [{"type": "function", "id": "call_%d" % i,
                             "function": {"name": tool_calls_acc[i]["name"],
@@ -417,7 +441,18 @@ def _openai_nonstream(provider: LLMProvider, messages: List[Dict], tools: Option
     if tools and provider.supports_tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    if reasoning_effort and provider.supports_reasoning:
+    if provider.supports_reasoning:
+        # 【0.2.2】思考模式开关 + 强度（DeepSeek 官方文档）
+        # 强度映射：low→low, medium→high, high→high, xhigh→high, max→max
+        # 思考关闭时（disabled）不传 effort——DeepSeek 文档：none 表示关闭思考模式
+        effort = provider.reasoning_effort or reasoning_effort or "high"
+        if provider.thinking_enabled:
+            mapped = "low" if effort == "low" else ("max" if effort == "max" else "high")
+            payload["reasoning_effort"] = mapped
+        # thinking 是 DeepSeek 特有扩展——其他提供商不认识会 400，仅 DeepSeek 系发送
+        if "deepseek" in provider.base_url or "deepseek" in provider.model.lower():
+            payload["thinking"] = {"type": "enabled" if provider.thinking_enabled else "disabled"}
+    elif reasoning_effort and provider.supports_reasoning:
         payload["reasoning_effort"] = reasoning_effort
 
     attempts = 0
