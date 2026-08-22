@@ -75,6 +75,8 @@
 #include <sys/wait.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <errno.h>
 #include <dirent.h>
 #include <ctype.h>
@@ -1109,9 +1111,204 @@ static void log_level_dispatch(const char *args) {
 }
 
 /* FTF[处理内置命令（核心）] */
+
+/* ============================================================
+ * 【2026-08-22 定稿】指令翻译层——动词子命令（git/docker 风格）
+ * 形式一（领域 动作 值）：log level error —— 设置/修改类（原逻辑处理）
+ * 形式二（动作 领域）：list model / list session —— 列出/查询类（本层）
+ * WS 机器命令（session_list 等 JSON 字面量）保留原样；本层做终端→协议映射
+ * 难适配指令（token 族/allow-high-risk/logdump 等专名）保留原样
+ * ============================================================ */
+
+/* 通过 daemon socket 发送 AI JSON 命令并显示响应（select 5s 超时，防阻塞） */
+static int send_ai_command(const char *json_cmd, const char *label) {
+    if (!json_cmd || !*json_cmd) return 0;
+    (void)label;
+
+    int sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        uart_puts(tr("Warning: socket error.\n", "警告：socket 错误。\n"));
+        return 1;
+    }
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    safe_strncpy(addr.sun_path, DAEMON_SOCKET_PATH, sizeof(addr.sun_path));
+    addr.sun_path[sizeof(addr.sun_path)-1] = '\0';
+
+    if (connect(sock_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        uart_puts(tr("Warning: daemon not reachable (lingosd running?).\n",
+                     "警告：守护进程不可达（lingosd 是否在运行？）。\n"));
+        close(sock_fd);
+        return 1;
+    }
+    if (write(sock_fd, json_cmd, strlen(json_cmd)) < 0 || write(sock_fd, "\n", 1) < 0) {
+        uart_puts(tr("Warning: write to daemon failed.\n", "警告：写入守护进程失败。\n"));
+        close(sock_fd);
+        return 1;
+    }
+
+    fd_set rfds;
+    struct timeval tv;
+    FD_ZERO(&rfds);
+    FD_SET(sock_fd, &rfds);
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    if (select(sock_fd + 1, &rfds, NULL, NULL, &tv) > 0) {
+        char buf[4096];
+        ssize_t n = read(sock_fd, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            uart_puts(buf);
+            uart_puts("\n");
+        }
+    } else {
+        uart_puts(tr("(timeout waiting for AI response)\n", "(等待 AI 响应超时)\n"));
+    }
+    close(sock_fd);
+    return 1;
+}
+
+/* 动词子命令翻译表：返回 1=已处理，0=不匹配交给原逻辑 */
+static int handle_verb_command(const char *cmd) {
+    if (!cmd || !*cmd) return 0;
+    char buf[300];
+    safe_strncpy(buf, cmd, sizeof(buf));
+    char *sp = strchr(buf, ' ');
+    if (!sp) return 0; /* 单词命令交给原逻辑 */
+    *sp = '\0';
+    const char *verb = buf;
+    const char *rest = sp + 1;
+    while (*rest == ' ') rest++;
+    if (!*rest) return 0;
+
+    char j[320];
+
+    /* ----- 形式二：动作 领域（查询/列出） ----- */
+    if (strcmp(verb, "list") == 0) {
+        if (strcmp(rest, "model") == 0 || strcmp(rest, "models") == 0 ||
+            strcmp(rest, "provider") == 0 || strcmp(rest, "providers") == 0)
+            return send_ai_command("{\"cmd\":\"provider_list\"}", "list model");
+        if (strcmp(rest, "session") == 0 || strcmp(rest, "sessions") == 0)
+            return send_ai_command("{\"cmd\":\"session_list\"}", "list session");
+        if (strcmp(rest, "skill") == 0 || strcmp(rest, "skills") == 0)
+            return send_ai_command("{\"cmd\":\"skill_list_full\"}", "list skill");
+        if (strcmp(rest, "permission") == 0 || strcmp(rest, "permissions") == 0)
+            return send_ai_command("{\"cmd\":\"permission_list\"}", "list permission");
+        if (strcmp(rest, "mcp") == 0)
+            return send_ai_command("{\"cmd\":\"mcp_list\"}", "list mcp");
+        if (strcmp(rest, "alert") == 0)
+            return send_ai_command("{\"cmd\":\"alert_query\"}", "list alert");
+        if (strcmp(rest, "usage") == 0 || strcmp(rest, "token") == 0)
+            return send_ai_command("{\"cmd\":\"token_usage_query\"}", "list usage");
+        if (strcmp(rest, "personality") == 0)
+            return send_ai_command("{\"cmd\":\"personality_get\"}", "list personality");
+        if (strcmp(rest, "ha") == 0 || strcmp(rest, "home") == 0)
+            return send_ai_command("{\"cmd\":\"ha_status\"}", "list ha");
+        if (strcmp(rest, "memory") == 0)
+            return send_ai_command("{\"cmd\":\"memory_search\",\"keyword\":\"\"}", "list memory");
+        return 0;
+    }
+    if (strcmp(verb, "view") == 0) {
+        if (strcmp(rest, "model") == 0) return send_ai_command("{\"cmd\":\"provider_list\"}", "view model");
+        if (strcmp(rest, "status") == 0) return send_ai_command("{\"cmd\":\"system_info\"}", "view status");
+        if (strcmp(rest, "session") == 0) return send_ai_command("{\"cmd\":\"session_list\"}", "view session");
+        if (strcmp(rest, "ha") == 0) return send_ai_command("{\"cmd\":\"ha_status\"}", "view ha");
+        return 0;
+    }
+    if (strcmp(verb, "show") == 0) {
+        if (strcmp(rest, "status") == 0) return send_ai_command("{\"cmd\":\"system_info\"}", "show status");
+        if (strcmp(rest, "model") == 0) return send_ai_command("{\"cmd\":\"provider_list\"}", "show model");
+        if (strcmp(rest, "ha") == 0) return send_ai_command("{\"cmd\":\"ha_status\"}", "show ha");
+        return 0;
+    }
+    if (strcmp(verb, "query") == 0) {
+        if (strcmp(rest, "balance") == 0) return send_ai_command("{\"cmd\":\"balance_query\"}", "query balance");
+        if (strcmp(rest, "usage") == 0) return send_ai_command("{\"cmd\":\"token_usage_query\"}", "query usage");
+        if (strcmp(rest, "voice") == 0) return send_ai_command("{\"cmd\":\"voice_usage_query\"}", "query voice");
+        if (strcmp(rest, "ha") == 0) return send_ai_command("{\"cmd\":\"ha_status\"}", "query ha");
+        return 0;
+    }
+
+    /* ----- 形式一变体：领域 动作（设置/操作类子命令） ----- */
+    if (strcmp(verb, "model") == 0) {
+        if (strcmp(rest, "list") == 0) return send_ai_command("{\"cmd\":\"provider_list\"}", "model list");
+        if (strncmp(rest, "switch ", 7) == 0) {
+            safe_snprintf(j, sizeof(j), "{\"cmd\":\"model_switch\",\"model_id\":\"%s\"}", rest + 7);
+            return send_ai_command(j, "model switch");
+        }
+        return 0;
+    }
+    if (strcmp(verb, "session") == 0) {
+        if (strcmp(rest, "list") == 0) return send_ai_command("{\"cmd\":\"session_list\"}", "session list");
+        if (strncmp(rest, "create ", 7) == 0) {
+            safe_snprintf(j, sizeof(j), "{\"cmd\":\"session_create\",\"title\":\"%s\"}", rest + 7);
+            return send_ai_command(j, "session create");
+        }
+        if (strncmp(rest, "delete ", 7) == 0) {
+            safe_snprintf(j, sizeof(j), "{\"cmd\":\"session_delete\",\"sid\":\"%s\"}", rest + 7);
+            return send_ai_command(j, "session delete");
+        }
+        if (strncmp(rest, "history ", 8) == 0) {
+            safe_snprintf(j, sizeof(j), "{\"cmd\":\"session_history\",\"sid\":\"%s\",\"limit\":50}", rest + 8);
+            return send_ai_command(j, "session history");
+        }
+        return 0;
+    }
+    if (strcmp(verb, "skill") == 0) {
+        if (strcmp(rest, "list") == 0) return send_ai_command("{\"cmd\":\"skill_list_full\"}", "skill list");
+        if (strncmp(rest, "enable ", 7) == 0) {
+            safe_snprintf(j, sizeof(j), "{\"cmd\":\"skill_enable\",\"name\":\"%s\",\"enabled\":true}", rest + 7);
+            return send_ai_command(j, "skill enable");
+        }
+        if (strncmp(rest, "disable ", 8) == 0) {
+            safe_snprintf(j, sizeof(j), "{\"cmd\":\"skill_enable\",\"name\":\"%s\",\"enabled\":false}", rest + 8);
+            return send_ai_command(j, "skill disable");
+        }
+        return 0;
+    }
+    if (strcmp(verb, "memory") == 0) {
+        if (strncmp(rest, "search ", 7) == 0) {
+            safe_snprintf(j, sizeof(j), "{\"cmd\":\"memory_search\",\"keyword\":\"%s\"}", rest + 7);
+            return send_ai_command(j, "memory search");
+        }
+        if (strncmp(rest, "write ", 6) == 0) {
+            safe_snprintf(j, sizeof(j), "{\"cmd\":\"memory_write\",\"content\":\"%s\"}", rest + 6);
+            return send_ai_command(j, "memory write");
+        }
+        return 0;
+    }
+    if (strcmp(verb, "voice") == 0) {
+        if (strcmp(rest, "usage") == 0 || strcmp(rest, "query") == 0)
+            return send_ai_command("{\"cmd\":\"voice_usage_query\"}", "voice usage");
+        return 0;
+    }
+    if (strcmp(verb, "ha") == 0) {
+        if (strcmp(rest, "status") == 0) return send_ai_command("{\"cmd\":\"ha_status\"}", "ha status");
+        if (strcmp(rest, "states") == 0) return send_ai_command("{\"cmd\":\"ha_states\"}", "ha states");
+        return 0;
+    }
+    if (strcmp(verb, "provider") == 0) {
+        if (strcmp(rest, "list") == 0) return send_ai_command("{\"cmd\":\"provider_list\"}", "provider list");
+        return 0;
+    }
+    if (strcmp(verb, "config") == 0) {
+        if (strcmp(rest, "advanced") == 0) {
+            uart_puts(tr("Advanced config is managed via dedicated commands (e.g. log level, model switch).\n",
+                         "高级配置通过特定指令管理（如 log level、model switch）。\n"));
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 static int handle_builtin_command(const char *cmd) {
     LOG_DEBUG_T("Shell", "BuiltinCmd", "Enter", "cmd='%s'", cmd ? cmd : "(null)");
     if (!cmd || !*cmd) return 0;
+
+    /* ----- 【2026-08-22 定稿】动词子命令翻译层（list/view/show/query/model/session/...） ----- */
+    if (handle_verb_command(cmd)) return 1;
 
     /* ----- help ----- */
     if (strncmp(cmd, "help", 4) == 0) {

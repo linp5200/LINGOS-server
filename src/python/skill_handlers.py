@@ -237,21 +237,35 @@ register_skill("file_move", file_move, risk="medium")
 # =============================================================
 
 def memory_write(args_json: str) -> Tuple[bool, str]:
-    """写入记忆（short/medium/long + importance: high/normal——先生决策 0.2.0 双记忆）"""
+    """写入记忆（short/medium/long + importance: high/normal + level: l1/l2/l3——先生决策 0.2.0 双记忆 + 2026-08-22 三级记忆）
+    三级记忆：L1 main(常驻,重要) / L2 working(工作,当前任务) / L3 external(外部,按需检索)"""
     try:
         args = json.loads(args_json)
         mem_type = args.get("type", "short")
         content = args.get("content")
         keywords = args.get("keywords", [])
         importance = args.get("importance", "normal")
+        level = str(args.get("level", "")).lower()
         if not content:
             return False, t("Missing 'content'", "缺少 'content'")
         if mem_type not in ("short", "medium", "long"):
             mem_type = "short"
         # 【0.2.0 双记忆】重要记忆（importance=high）前缀标记 [重要]——自动注入专用；
         # 普通记忆 AI 自主调用检索。AI 自行决定重要性。
+        # 【2026-08-22 三级记忆】level 显式分级（l1/l2/l3），importance=high 自动映射 L1
+        if level not in ("l1", "l2", "l3"):
+            level = "l1" if importance in ("high", "important") else "l3"
+        prefix = ""
+        if level == "l1" and not str(content).startswith("[L1]"):
+            prefix = "[L1]"
+        elif level == "l2" and not str(content).startswith("[L2]"):
+            prefix = "[L2]"
+        elif level == "l3" and not str(content).startswith("[L3]"):
+            prefix = "[L3]"
         if importance in ("high", "important") and not str(content).startswith("[重要]"):
-            content = "[重要] " + str(content)
+            prefix += "[重要]"
+        if prefix:
+            content = prefix + " " + str(content)
         success, result = call_syscall("memory_write", {
             "type": mem_type,
             "content": content,

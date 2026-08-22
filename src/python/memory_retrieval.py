@@ -154,12 +154,13 @@ def _keyword_search(query, memories, top_k):
 # 对外 API
 # =============================================================
 
-def retrieve_memories(query, top_k=5, important_only=False):
+def retrieve_memories(query, top_k=5, important_only=False, level=None):
     """双模式检索：优先语义，失败自动降级关键词（容错/跛脚）
 
     :param query: 用户请求文本
     :param top_k: 注入条数上限（默认 5，可配置）
     :param important_only: 仅检索重要记忆（[重要] 前缀——0.2.0 双记忆自动注入专用）
+    :param level: 【2026-08-22 三级记忆】按级过滤 "l1"/"l2"/"l3"（None=全部）
     :return: 记忆列表 [{memory_id, type, content, score}, ...]
     """
     if not query or not query.strip() or top_k <= 0:
@@ -171,18 +172,21 @@ def retrieve_memories(query, top_k=5, important_only=False):
 
     if important_only:
         memories = [m for m in memories if str(m.get("content", "")).startswith("[重要]")]
+    if level:
+        memories = [m for m in memories
+                    if "[%s]" % level.upper() in str(m.get("content", ""))]
 
     # 模式 A：语义检索
     semantic = _semantic_search(query, memories, top_k)
     if semantic is not None:
-        logger.info("Semantic retrieval: %d memories (top_k=%d, important=%s)",
-                    len(semantic), top_k, important_only)
+        logger.info("Semantic retrieval: %d memories (top_k=%d, important=%s, level=%s)",
+                    len(semantic), top_k, important_only, level)
         return semantic
 
     # 模式 B：关键词降级
     kw = _keyword_search(query, memories, top_k)
-    logger.info("Keyword retrieval fallback: %d memories (top_k=%d, important=%s)",
-                len(kw), top_k, important_only)
+    logger.info("Keyword retrieval fallback: %d memories (top_k=%d, important=%s, level=%s)",
+                len(kw), top_k, important_only, level)
     return kw
 
 
@@ -197,18 +201,27 @@ def search_keywords(query: str, top_k: int = 10) -> list:
 
 
 def find_important(top_k: int = 20) -> list:
-    """【0.2.0 索引增强】重要记忆索引（[重要] 前缀——AI 查看常驻信息/用户偏好）"""
+    """【0.2.0 索引增强】重要记忆索引（[重要] 前缀——AI 查看常驻信息/用户偏好）
+    【2026-08-22 三级记忆】L1 = 重要常驻（[L1][重要] 或 [重要]）"""
     memories = [m for m in _read_all_memories()
-                if str(m.get("content", "")).startswith("[重要]")]
+                if str(m.get("content", "")).startswith("[重要]")
+                or str(m.get("content", "")).startswith("[L1]")]
     # 按类型排序：short 优先（常驻信息）
     memories.sort(key=lambda m: 0 if m.get("type") == "short" else 1)
+    return memories[:top_k]
+
+def find_working(top_k: int = 20) -> list:
+    """【2026-08-22 三级记忆】L2 工作记忆（[L2] 前缀——当前任务/会话进行中状态）"""
+    memories = [m for m in _read_all_memories()
+                if str(m.get("content", "")).startswith("[L2]")]
     return memories[:top_k]
 
 
 def search_constants(keyword: str = "", top_k: int = 20) -> list:
     """【0.2.0 索引增强】常量/重要信息查找（用户偏好、固定事实等短记忆）"""
     memories = [m for m in _read_all_memories()
-                if m.get("type") == "short" or str(m.get("content", "")).startswith("[重要]")]
+                if m.get("type") == "short" or str(m.get("content", "")).startswith("[重要]")
+                or str(m.get("content", "")).startswith("[L1]")]
     if keyword and keyword.strip():
         memories = [m for m in memories if keyword.lower() in str(m.get("content", "")).lower()]
     return memories[:top_k]

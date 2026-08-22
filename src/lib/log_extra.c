@@ -28,7 +28,7 @@
 #include <signal.h>
 #include <dirent.h>
 
-#define LOG_DIR "/Debug"
+#define LOG_DIR "/log"
 #define LOG_FILE_PREFIX "lingos_"
 #define MAX_LOG_PATH 512
 #define MAX_LOG_MSG 8192
@@ -47,6 +47,8 @@ static pthread_mutex_t module_lock = PTHREAD_MUTEX_INITIALIZER;
 static int current_log_level = LOG_LEVEL_WARN;  /* 【修复】运行时默认 WARNING */
 static int g_global_level = LOG_LEVEL_WARN;  /* 【修复】全局默认 WARNING */
 static int console_output = 1;
+static int file_output = 1;                 /* 【2026-08-22 定稿】文件保存开关：默认开=DEBUG 全量；关=仅 WARN+ */
+static long log_seq = 0;                    /* 【2026-08-22 定稿】JSON 文件 id 自增序号（进程内） */
 static int initialized = 0;
 static char current_log_path[MAX_LOG_PATH] = {0};
 static char current_date[11] = {0};
@@ -441,6 +443,14 @@ void log_set_console_output(int enable) {
     console_output = enable;
 }
 
+/* 【2026-08-22 定稿】文件保存开关 */
+void log_set_file_output(int enable) {
+    file_output = enable ? 1 : 0;
+}
+int log_get_file_output(void) {
+    return file_output;
+}
+
 /* ============================================================
  * 核心日志输出
  * ============================================================ */
@@ -469,8 +479,8 @@ void log_output(int level, const char *module, const char *submodule,
     switch (level) {
         case LOG_LEVEL_ERROR: lvl_str = tr("ERROR", "错误"); color = COLOR_RED; break;
         case LOG_LEVEL_WARN:  lvl_str = tr("WARN", "警告");  color = COLOR_YELLOW; break;
-        case LOG_LEVEL_INFO:  lvl_str = tr("INFO", "信息");  color = COLOR_GREEN; break;
-        case LOG_LEVEL_DEBUG: lvl_str = tr("DEBUG", "调试"); color = COLOR_CYAN; break;
+        case LOG_LEVEL_INFO:  lvl_str = tr("INFO", "信息");  color = COLOR_DIM; break;
+        case LOG_LEVEL_DEBUG: lvl_str = tr("DEBUG", "调试"); color = COLOR_DIM; break;
         default: break;
     }
 
@@ -481,8 +491,9 @@ void log_output(int level, const char *module, const char *submodule,
     va_end(args);
 
     char full_msg[MAX_LOG_MSG + 256];
+    /* 【2026-08-22 定稿】终端时间改 [时间] 括号 */
     int len = safe_snprintf(full_msg, sizeof(full_msg),
-                           "%s%s[%s][%s][%s][%s][%s] %s%s\n",
+                           "%s[%s][%s][%s][%s][%s] %s%s\n",
                            color, time_buf, lvl_str,
                            module ? module : "?",
                            submodule ? submodule : "?",
@@ -499,21 +510,61 @@ void log_output(int level, const char *module, const char *submodule,
         fflush(stderr);
     }
 
-    update_log_path();
-    if (current_log_path[0] != '\0') {
-        FILE *fp = fopen(current_log_path, "a");
-        if (fp) {
-            char plain_msg[MAX_LOG_MSG + 256];
-            safe_snprintf(plain_msg, sizeof(plain_msg),
-                          "%s[%s][%s][%s][%s][%s] %s\n",
-                          time_buf, lvl_str,
-                          module ? module : "?",
-                          submodule ? submodule : "?",
-                          step ? step : "?",
-                          func ? func : "?",
-                          msg_body);
-            fputs(plain_msg, fp);
-            fclose(fp);
+    /* 【2026-08-22 定稿】文件：单文件 JSON 四字段 time/id/level/txt
+     * - 开关 file_output=1(默认) → DEBUG 全量写；=0 → 仅 WARN+（level<=WARN）
+     * - txt = 原始终端内容（[LEVEL][模块][函数] 标识，无颜色码、无时间壳）
+     * - time = ISO8601 带时区毫秒；id = 进程内自增 */
+    if (file_output && level <= LOG_LEVEL_WARN) {
+        update_log_path();
+        if (current_log_path[0] != '\0') {
+            FILE *fp = fopen(current_log_path, "a");
+            if (fp) {
+                long seq = ++log_seq;
+                /* 组装 txt：纯终端正文（含 [LEVEL][module][submodule][step][func] 标识） */
+                char plain_msg[MAX_LOG_MSG + 256];
+                safe_snprintf(plain_msg, sizeof(plain_msg),
+                              "[%s][%s][%s][%s][%s] %s",
+                              lvl_str,
+                              module ? module : "?",
+                              submodule ? submodule : "?",
+                              step ? step : "?",
+                              func ? func : "?",
+                              msg_body);
+                /* ISO8601 带时区毫秒 */
+                char iso_buf[64];
+                char tz_buf[8];
+                strftime(iso_buf, sizeof(iso_buf), "%Y-%m-%dT%H:%M:%S", tm);
+                strftime(tz_buf, sizeof(tz_buf), "%z", tm);
+                char *plain_esc = NULL;
+                size_t plain_len = strlen(plain_msg);
+                /* 简单 JSON 转义（引号/反斜杠/控制字符）——防弹 */
+                char *esc = malloc(plain_len * 6 + 1);
+                if (esc) {
+                    size_t j = 0;
+                    for (size_t i = 0; i < plain_len && j < plain_len * 6; i++) {
+                        unsigned char c = (unsigned char)plain_msg[i];
+                        switch (c) {
+                            case '"':  esc[j++] = '\\'; esc[j++] = '"'; break;
+                            case '\\': esc[j++] = '\\'; esc[j++] = '\\'; break;
+                            case '\n': esc[j++] = '\\'; esc[j++] = 'n'; break;
+                            case '\r': esc[j++] = '\\'; esc[j++] = 'r'; break;
+                            case '\t': esc[j++] = '\\'; esc[j++] = 't'; break;
+                            default:
+                                if (c < 0x20) { esc[j++] = '\\'; esc[j++] = 'u'; esc[j++] = '0'; esc[j++] = '0'; esc[j++] = "0123456789abcdef"[c>>4]; esc[j++] = "0123456789abcdef"[c&15]; }
+                                else esc[j++] = (char)c;
+                        }
+                    }
+                    esc[j] = '\0';
+                    fprintf(fp, "{\"time\":\"%s.%03ld%s\",\"id\":%ld,\"level\":\"%s\",\"txt\":\"%s\"}\n",
+                            iso_buf, ts.tv_nsec / 1000000, tz_buf, seq, lvl_str, esc);
+                    free(esc);
+                } else {
+                    /* 内存不足跛脚：降级写无转义 */
+                    fprintf(fp, "{\"time\":\"%s.%03ld%s\",\"id\":%ld,\"level\":\"%s\",\"txt\":\"%s\"}\n",
+                            iso_buf, ts.tv_nsec / 1000000, tz_buf, seq, lvl_str, plain_msg);
+                }
+                fclose(fp);
+            }
         }
     }
 }

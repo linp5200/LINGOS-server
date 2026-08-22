@@ -8,6 +8,7 @@ __pycache__/
 *.so
 lingos_linux
 lingosd
+lingos_supervisor
 lingos_gui
 
 # 构建产物

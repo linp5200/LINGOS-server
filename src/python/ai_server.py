@@ -87,36 +87,56 @@ except ImportError:
 # ========== 修复引擎导入 ==========
 from repair_engine import get_engine, get_repair_history, get_repair_history_by_id, reload_repair_config
 
-# ========== 日志配置 ==========
-LOG_DIR = "/LINGOS/Debug"
+# ========== 日志配置（2026-08-22 定稿：/log 单文件 JSON 四字段）==========
+LOG_DIR = "/LINGOS/log"
 os.makedirs(LOG_DIR, exist_ok=True)
 
-log_file = os.path.join(LOG_DIR, "ai_server.log")
-if os.path.exists(log_file):
-    backup_dir = os.path.join(LOG_DIR, "backups")
-    os.makedirs(backup_dir, exist_ok=True)
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    backup_path = os.path.join(backup_dir, f"ai_server_{timestamp}.log")
-    os.rename(log_file, backup_path)
-    backups = sorted([f for f in os.listdir(backup_dir) if f.startswith("ai_server_")])
-    for old in backups[:-5]:
-        os.remove(os.path.join(backup_dir, old))
+# 统一单文件（所有服务合一个）
+log_file = os.path.join(LOG_DIR, "lingos.log")
 
-log_format = "%(asctime)s [%(levelname)s] [%(funcName)s:%(lineno)d] %(message)s"
+# 全局自增 id（进程内；跨服务单文件以 id 连续）
+_log_seq = 0
+
+class LingosJsonFormatter(logging.Formatter):
+    """服务端统一 JSON 格式：{"time":ISO8601毫秒时区,"id":自增,"level":级别,"txt":原终端内容}"""
+    def format(self, record):
+        global _log_seq
+        _log_seq += 1
+        # txt = 原终端风格内容（含 [LEVEL][模块][函数] 标识，无时间壳）
+        txt = "[%s][%s][%s:%d] %s" % (record.levelname, record.name,
+                                      record.funcName or "?", record.lineno or 0,
+                                      record.getMessage())
+        # 转义
+        txt = (txt.replace("\\", "\\\\").replace('"', '\\"')
+                  .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t"))
+        iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record.created)) + \
+              ".%03d" % int(record.msecs) + time.strftime("%z", time.localtime(record.created))
+        return '{"time":"%s","id":%d,"level":"%s","txt":"%s"}' % (iso, _log_seq, record.levelname, txt)
+
+# 控制台：人类可读 [时间] 风格（定稿：保留原本格式仅时间改 [时间]）
 console_handler = logging.StreamHandler(sys.stderr)
-# 【修复8】控制台默认 WARNING（调试日志进文件，不再混入终端）；set_log_level 命令可动态调整
 console_handler.setLevel(logging.WARNING)
-console_formatter = logging.Formatter(log_format)
+console_formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s][%(funcName)s:%(lineno)d] %(message)s", "%H:%M:%S.%f")
 console_handler.setFormatter(console_formatter)
-file_handler = logging.FileHandler(log_file)
+
+# 文件：单文件 JSON（默认 DEBUG 全量；文件保存开关由 set_log_level/file_log 控制）
+file_handler = logging.FileHandler(log_file, encoding="utf-8")
 file_handler.setLevel(logging.DEBUG)
-file_formatter = logging.Formatter(log_format)
-file_handler.setFormatter(file_formatter)
+file_handler.setFormatter(LingosJsonFormatter())
 logger = logging.getLogger("AIServer")
 logger.setLevel(logging.DEBUG)  # 初始级别，启动后从配置文件读取
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
-logger.info("=== AI Server starting (LN-B-5.0.0.0-rc0.4) ===")
+
+# 文件保存开关：默认开；set_log_file 0 → 仅 WARN+（level<=WARN 语义）
+def set_log_file_enabled(enabled: bool):
+    """【2026-08-22 定稿】文件保存开关：1=开(DEBUG全量)，0=关(仅WARN+)"""
+    if enabled:
+        file_handler.setLevel(logging.DEBUG)
+    else:
+        file_handler.setLevel(logging.WARNING)
+
+logger.info("=== AI Server starting (LN-B-5.1.2.6-rc) ===")
 
 CRASH_LOG = os.path.join(LOG_DIR, "ai_server_crash.log")
 
@@ -2656,9 +2676,12 @@ def cmd_memory_search(keyword: str = "") -> dict:
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
-def cmd_memory_write(content: str, mtype: str = "medium") -> dict:
+def cmd_memory_write(content: str, mtype: str = "medium", level: str = "") -> dict:
+    """【2026-08-22 三级记忆】level: l1/l2/l3（空=自动：importance high→l1 否则 l3）"""
     try:
         from memory_retrieval import write_memory
+        if level and level.lower() in ("l1", "l2", "l3"):
+            content = "[%s] %s" % (level.upper(), content) if not content.startswith("[%s]" % level.upper()) else content
         write_memory(content, mtype)
         return {"status": "ok"}
     except Exception as e:
@@ -2828,6 +2851,47 @@ def cmd_skill_enable(name: str = "", enabled: bool = True) -> dict:
         with open(AI_SKILL_FILE, "w") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         return {"status": "ok", "data": {name: bool(enabled)}}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+# 【2026-08-22 定稿】技能安装（OpenClaw 式：SKILL.md + handler.py + requirements.txt）
+def cmd_skill_install(src: str = "") -> dict:
+    """安装技能——{src: 技能包目录}（内置市场不可删；自定义可增删）"""
+    try:
+        from skill_install import install_skill, SKILLS_ROOT
+        ok, msg = install_skill(src)
+        if ok:
+            try:
+                from skill_install import reload_custom_skills
+                from skill_handlers import SKILL_REGISTRY
+                reload_custom_skills(SKILL_REGISTRY)
+            except Exception:
+                pass
+        return {"status": "ok" if ok else "error", "msg": msg, "root": SKILLS_ROOT}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_skill_uninstall(name: str = "") -> dict:
+    """卸载自定义技能——{name}（内置不可删）"""
+    try:
+        from skill_install import remove_skill
+        ok, msg = remove_skill(name)
+        if ok:
+            try:
+                from skill_install import reload_custom_skills
+                from skill_handlers import SKILL_REGISTRY
+                reload_custom_skills(SKILL_REGISTRY)
+            except Exception:
+                pass
+        return {"status": "ok" if ok else "error", "msg": msg}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_skill_list_custom() -> dict:
+    """列出已安装技能（内置/自定义、依赖状态）"""
+    try:
+        from skill_install import scan_skills
+        return {"status": "ok", "data": scan_skills()}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
@@ -3184,6 +3248,12 @@ def handle_client(conn, addr):
             _reply(conn, "skill_list_full", cmd_skill_list_full()); return
         if cmd == "skill_enable":
             _reply(conn, "skill_enable", cmd_skill_enable(str(req.get("name", "")), bool(req.get("enabled", True)))); return
+        if cmd == "skill_install":
+            _reply(conn, "skill_install", cmd_skill_install(str(req.get("src", "")))); return
+        if cmd == "skill_uninstall":
+            _reply(conn, "skill_uninstall", cmd_skill_uninstall(str(req.get("name", "")))); return
+        if cmd == "skill_list_custom":
+            _reply(conn, "skill_list_custom", cmd_skill_list_custom()); return
         if cmd == "personality_set":
             _reply(conn, "personality_set", cmd_personality_set(str(req.get("name", "")))); return
         if cmd == "personality_get":

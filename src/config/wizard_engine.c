@@ -17,6 +17,7 @@
 #include "../common/safe_string.h"
 #include "../common/lang.h"
 #include "../common/data_path.h"
+#include "../drivers/uart.h"
 #include "../lib/log_extra.h"
 #include "../lib/cJSON/cJSON.h"
 #include <stdio.h>
@@ -497,7 +498,30 @@ int wizard_engine_handle_input(wizard_engine_ctx_t *ctx, const char *input) {
     }
 
     if (step->type == STEP_TYPE_SELECT) {
-        int choice = atoi(input);
+        /* 【2026-08-22 定稿】回车默认值逻辑：
+         * - 有默认(default_value=选项id) → 回车=采用默认
+         * - 无默认 → 回车提示"尚未选择"，不进入下一阶段 */
+        int choice = 0;
+        if (!input || input[0] == '\0') {
+            if (step->default_value[0] != '\0') {
+                for (int i = 0; i < step->option_count; i++) {
+                    if (strcmp(step->options[i].id, step->default_value) == 0) {
+                        choice = i + 1;
+                        uart_puts(tr("\n[Using default]\n", "\n[采用默认]\n"));
+                        break;
+                    }
+                }
+                if (choice == 0) {
+                    uart_puts(tr("\n⚠ Not selected yet. Please choose.\n", "\n⚠ 尚未选择。请选择。\n"));
+                    return 0;
+                }
+            } else {
+                uart_puts(tr("\n⚠ Not selected yet. Please choose.\n", "\n⚠ 尚未选择。请选择。\n"));
+                return 0;
+            }
+        } else {
+            choice = atoi(input);
+        }
         if (choice < 1 || choice > step->option_count) {
             LOG_WARN_T("WizardEngine", "Input", "InvalidChoice", "choice=%d out of range", choice);
             return 0;
@@ -533,7 +557,18 @@ int wizard_engine_handle_input(wizard_engine_ctx_t *ctx, const char *input) {
         return 1;
     } else if (step->type == STEP_TYPE_INPUT) {
         char value[256];
-        safe_strncpy(value, input, sizeof(value));
+        /* 【2026-08-22 定稿】回车默认值逻辑：有默认→回车=默认；无默认→提示尚未选择 */
+        if (!input || input[0] == '\0') {
+            if (step->default_value[0] != '\0') {
+                safe_strncpy(value, step->default_value, sizeof(value));
+                uart_puts(tr("\n[Using default]\n", "\n[采用默认]\n"));
+            } else {
+                uart_puts(tr("\n⚠ Not selected yet. Please choose.\n", "\n⚠ 尚未选择。请选择。\n"));
+                return 0;
+            }
+        } else {
+            safe_strncpy(value, input, sizeof(value));
+        }
         char err_msg[256];
         if (config_validate(value, step->validate_rule, err_msg, sizeof(err_msg)) != 0) {
             LOG_WARN_T("WizardEngine", "Input", "ValidationFail", "%s", err_msg);

@@ -39,6 +39,8 @@ void log_system_init(void);
 void log_set_level(int level);
 int log_get_level(void);
 void log_set_console_output(int enable);
+void log_set_file_output(int enable);   /* 【2026-08-22 定稿】文件保存开关：1=开(默认DEBUG全量)，0=关(仅WARN+) */
+int  log_get_file_output(void);
 void log_set_module_level(const char *module, int level);
 int log_get_module_level(const char *module);
 void log_dump_module_levels(void);

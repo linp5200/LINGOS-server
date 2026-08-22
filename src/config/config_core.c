@@ -271,6 +271,20 @@ int config_core_load(wizard_config_t *cfg) {
     load_startup_conf(cfg);
     load_security_config(cfg);
     load_privilege_config(cfg);
+    /* 【2026-08-22 健康自检修复】从 state.json 恢复 system_configured → configured_at
+     * 防止重启后自检误判"配置不完整"（历史 Bug：验证标志与内存字段脱节） */
+    {
+        char spath[512];
+        get_config_path(spath, sizeof(spath), "state.json");
+        cJSON *sroot = load_json(spath);
+        if (sroot) {
+            cJSON *sc = cJSON_GetObjectItem(sroot, "system_configured");
+            if (sc && cJSON_IsTrue(sc)) {
+                if (cfg->configured_at == 0) cfg->configured_at = time(NULL);
+            }
+            cJSON_Delete(sroot);
+        }
+    }
     g_config = *cfg;
     g_config_loaded = 1;
     LOG_INFO_T("ConfigCore", "Load", "OK", "config loaded (backend=%s, language=%s)", cfg->ai_backend, cfg->language);
@@ -482,8 +496,13 @@ int config_core_mark_configured(void) {
     int ret = save_json(path, root);
     cJSON_Delete(root);
 
+    /* 【2026-08-22 健康自检修复】同步设置内存 configured_at——
+     * 原 Bug：configured_at 仅初始化=0 从未置位，自检(configured_at==0)永远判"配置不完整"
+     * 导致"配置完成但验证未更新 → 被误判重新配置"。 */
     if (ret == 0) {
-        LOG_INFO_T("ConfigCore", "MarkConfigured", "OK", "marked as configured at %s", time_str);
+        g_config.configured_at = now;
+        g_config_loaded = 1;
+        LOG_INFO_T("ConfigCore", "MarkConfigured", "OK", "marked as configured at %s (mem+state synced)", time_str);
     } else {
         LOG_ERROR_T("ConfigCore", "MarkConfigured", "Fail", "failed to save state.json");
     }
