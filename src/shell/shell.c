@@ -641,14 +641,49 @@ static void show_help_topic(const char *topic) {
                      COLOR_BOLD COLOR_CYAN "┌─────────────── LING OS 帮助 ───────────────┐\n" COLOR_RESET));
         uart_puts(tr("│ Use: help <topic> to view detailed help       │\n",
                      "│ 使用: help <主题> 查看详细帮助              │\n"));
-        uart_puts(tr("│  Topics: basic  ai  system  debug  app        │\n",
-                     "│  主题: basic  ai  system  debug  app        │\n"));
+        uart_puts(tr("│  Topics: basic  ai  system  debug  app  cmd   │\n",
+                     "│  主题: basic  ai  system  debug  app  cmd   │\n"));
         uart_puts("└─────────────────────────────────────────────┘\n");
         return;
     }
 
     const char *help_text = NULL;
-    if (strcmp(topic, "basic") == 0) {
+    if (strcmp(topic, "cmd") == 0) {
+        /* 【2026-08-22 定稿】动词子命令帮助（git/docker 风格——先生裁决）
+         * 形式一（领域 动作 值）=设置；形式二（动作 领域）=列出/查询 */
+        help_text = tr(
+            "Verb sub-commands (human readable):\n"
+            "  list model|session|skill|permission|mcp|alert|usage|personality|ha|memory\n"
+            "  view status|model|session|ha\n"
+            "  show status|model|ha\n"
+            "  query balance|usage|voice|ha\n"
+            "  model list|switch <id>\n"
+            "  session list|create <title>|delete <id>|history <id>\n"
+            "  skill list|enable <name>|disable <name>\n"
+            "  memory search <kw>|write <text>\n"
+            "  voice usage|query\n"
+            "  ha status|states\n"
+            "  provider list\n"
+            "  log level <debug|info|warn|error>\n"
+            "  config advanced   - advanced config (dedicated commands)\n"
+            "  ?                 - context hint (e.g. log ?)\n",
+            "动词子命令（人类可读——先生裁决）：\n"
+            "  list model|session|skill|permission|mcp|alert|usage|personality|ha|memory\n"
+            "  view status|model|session|ha\n"
+            "  show status|model|ha\n"
+            "  query balance|usage|voice|ha\n"
+            "  model list|switch <id>\n"
+            "  session list|create <标题>|delete <id>|history <id>\n"
+            "  skill list|enable <名称>|disable <名称>\n"
+            "  memory search <关键词>|write <内容>\n"
+            "  voice usage|query\n"
+            "  ha status|states\n"
+            "  provider list\n"
+            "  log level <debug|info|warn|error>\n"
+            "  config advanced   - 高级配置（特定指令）\n"
+            "  ?                 - 上下文提示（如 log ?）\n"
+        );
+    } else if (strcmp(topic, "basic") == 0) {
         help_text = tr(
             "Basic commands:\n"
             "  help [topic]   - Show help\n"

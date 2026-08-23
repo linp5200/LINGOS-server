@@ -29,7 +29,7 @@
 #include <dirent.h>
 
 #define LOG_DIR "/log"
-#define LOG_FILE_PREFIX "lingos_"
+#define LOG_FILE_PREFIX "lingos"
 #define MAX_LOG_PATH 512
 #define MAX_LOG_MSG 8192
 #define MAX_MODULES 32
@@ -139,24 +139,16 @@ static void ensure_log_dir(void) {
 }
 
 static void update_log_path(void) {
-    char new_date[11];
-    get_date_str(new_date, sizeof(new_date));
-
-    if (strcmp(new_date, current_date) != 0 || current_log_path[0] == '\0') {
-        if (current_date[0] != '\0') {
-            current_seq = 0;
-            emergency_write_simple("[LogExtra] Date changed, resetting seq\n");
-        }
-        safe_strncpy(current_date, new_date, sizeof(current_date));
-        current_seq = increment_startup_seq();
-
+    /* 【2026-08-22 定稿】单文件：/log/lingos.log（不再按日期+序号分文件——
+     * 修复"序号跨日期不重置"与多文件碎片问题） */
+    if (current_log_path[0] == '\0') {
         const char *root = lingos_data_root();
         safe_snprintf(current_log_path, sizeof(current_log_path),
-                      "%s%s/%s%s_son%03d.log", root, LOG_DIR, LOG_FILE_PREFIX, current_date, current_seq);
+                      "%s%s/%s.log", root, LOG_DIR, LOG_FILE_PREFIX);
         ensure_log_dir();
 
         char msg[256];
-        safe_snprintf(msg, sizeof(msg), "[LogExtra] New log file: %s\n", current_log_path);
+        safe_snprintf(msg, sizeof(msg), "[LogExtra] Log file: %s\n", current_log_path);
         emergency_write_simple(msg);
     }
 }
@@ -183,6 +175,8 @@ static void cleanup_old_logs(void) {
     while ((entry = readdir(d)) != NULL) {
         if (entry->d_name[0] == '.') continue;
         if (strncmp(entry->d_name, LOG_FILE_PREFIX, strlen(LOG_FILE_PREFIX)) != 0) continue;
+        /* 【2026-08-22 定稿】单文件 lingos.log 永不清理（活跃日志）；只清旧多文件 */
+        if (strcmp(entry->d_name, LOG_FILE_PREFIX ".log") == 0) continue;
 
         char full_path[MAX_LOG_PATH];
         safe_snprintf(full_path, sizeof(full_path), "%s/%s", log_dir, entry->d_name);
@@ -512,9 +506,9 @@ void log_output(int level, const char *module, const char *submodule,
 
     /* 【2026-08-22 定稿】文件：单文件 JSON 四字段 time/id/level/txt
      * - 开关 file_output=1(默认) → DEBUG 全量写；=0 → 仅 WARN+（level<=WARN）
-     * - txt = 原始终端内容（[LEVEL][模块][函数] 标识，无颜色码、无时间壳）
-     * - time = ISO8601 带时区毫秒；id = 进程内自增 */
-    if (file_output && level <= LOG_LEVEL_WARN) {
+     * 条件：开=写全部（level 恒<=DEBUG）；关=仅 WARN+ */
+    if ((file_output && level <= LOG_LEVEL_DEBUG) ||
+        (!file_output && level <= LOG_LEVEL_WARN)) {
         update_log_path();
         if (current_log_path[0] != '\0') {
             FILE *fp = fopen(current_log_path, "a");

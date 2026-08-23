@@ -9,6 +9,7 @@
 
 #include "startup_ui.h"
 #include "progress_bar.h"
+#include "../config/config_core.h"
 #include "../common/lang.h"
 #include "../common/safe_string.h"
 #include "../common/version.h"
@@ -121,25 +122,42 @@ void show_startup_banner(void) {
     char banner_en[1024];
     char banner_zh[1024];
 
-    snprintf(banner_en, sizeof(banner_en),
-        "\n╔════════════════════════════════════════════════════════════╗\n"
-        "║                    LING OS %-12s                  ║\n"
-        "║            Starting up, please wait...                    ║\n"
-        "║                                                           ║\n"
-        "║  First startup may take 5-20 minutes to download models.  ║\n"
-        "║  Progress will be shown below.                           ║\n"
-        "╚════════════════════════════════════════════════════════════╝\n",
-        LINGOS_VERSION);
+    /* 【2026-08-23 修复】已配置完成 → 简短横幅（不再显示"首次启动下载模型"误导提示） */
+    int configured = config_core_is_configured();
 
-    snprintf(banner_zh, sizeof(banner_zh),
-        "\n╔════════════════════════════════════════════════════════════╗\n"
-        "║                    LING OS %-12s                  ║\n"
-        "║            正在启动，请稍候...                             ║\n"
-        "║                                                           ║\n"
-        "║  首次启动可能需要5-20分钟下载模型。                       ║\n"
-        "║  进度将在下方显示。                                       ║\n"
-        "╚════════════════════════════════════════════════════════════╝\n",
-        LINGOS_VERSION);
+    if (configured) {
+        snprintf(banner_en, sizeof(banner_en),
+            "\n╔════════════════════════════════════════════════════════════╗\n"
+            "║                    LING OS %-12s                  ║\n"
+            "║                    Starting up...                         ║\n"
+            "╚════════════════════════════════════════════════════════════╝\n",
+            LINGOS_VERSION);
+        snprintf(banner_zh, sizeof(banner_zh),
+            "\n╔════════════════════════════════════════════════════════════╗\n"
+            "║                    LING OS %-12s                  ║\n"
+            "║                    正在启动...                             ║\n"
+            "╚════════════════════════════════════════════════════════════╝\n",
+            LINGOS_VERSION);
+    } else {
+        snprintf(banner_en, sizeof(banner_en),
+            "\n╔════════════════════════════════════════════════════════════╗\n"
+            "║                    LING OS %-12s                  ║\n"
+            "║            Starting up, please wait...                    ║\n"
+            "║                                                           ║\n"
+            "║  First startup may take 5-20 minutes to download models.  ║\n"
+            "║  Progress will be shown below.                           ║\n"
+            "╚════════════════════════════════════════════════════════════╝\n",
+            LINGOS_VERSION);
+        snprintf(banner_zh, sizeof(banner_zh),
+            "\n╔════════════════════════════════════════════════════════════╗\n"
+            "║                    LING OS %-12s                  ║\n"
+            "║            正在启动，请稍候...                             ║\n"
+            "║                                                           ║\n"
+            "║  首次启动可能需要5-20分钟下载模型。                       ║\n"
+            "║  进度将在下方显示。                                       ║\n"
+            "╚════════════════════════════════════════════════════════════╝\n",
+            LINGOS_VERSION);
+    }
 
     uart_puts(COLOR_CYAN);
     uart_puts(tr(banner_en, banner_zh));

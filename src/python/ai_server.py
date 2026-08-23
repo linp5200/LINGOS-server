@@ -114,9 +114,15 @@ class LingosJsonFormatter(logging.Formatter):
         return '{"time":"%s","id":%d,"level":"%s","txt":"%s"}' % (iso, _log_seq, record.levelname, txt)
 
 # 控制台：人类可读 [时间] 风格（定稿：保留原本格式仅时间改 [时间]）
+# 【修复】%f 不被 time.strftime 支持（musl/Python 均字面输出 %f）——自定义 Formatter 加毫秒
+class LingosConsoleFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        t = time.strftime("%H:%M:%S", time.localtime(record.created))
+        return "%s.%03d" % (t, int(record.msecs))
+
 console_handler = logging.StreamHandler(sys.stderr)
 console_handler.setLevel(logging.WARNING)
-console_formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s][%(funcName)s:%(lineno)d] %(message)s", "%H:%M:%S.%f")
+console_formatter = LingosConsoleFormatter("[%(asctime)s] [%(levelname)s] [%(name)s][%(funcName)s:%(lineno)d] %(message)s")
 console_handler.setFormatter(console_formatter)
 
 # 文件：单文件 JSON（默认 DEBUG 全量；文件保存开关由 set_log_level/file_log 控制）
@@ -137,6 +143,19 @@ def set_log_file_enabled(enabled: bool):
         file_handler.setLevel(logging.WARNING)
 
 logger.info("=== AI Server starting (LN-B-5.1.2.6-rc) ===")
+
+# 【2026-08-23 修复】统一日志体系——所有模块 logger（LLMUnified/Voice/Skill 等）
+# 接入同一 console+file handler（否则走 logging.lastResort 默认格式，不进 JSON 文件）
+for _mod in ("LLMUnified", "VoiceService", "SkillHandlers", "MemoryRetrieval",
+             "HA", "SkillLoader", "SkillInstall", "RepairEngine", "EmbedService",
+             "GitSkills", "WebSearch", "DiagnosisEngine", "SubAIScheduler",
+             "VisionTrain", "YoloService"):
+    _l = logging.getLogger(_mod)
+    _l.setLevel(logging.DEBUG)
+    if not _l.handlers:
+        _l.addHandler(console_handler)
+        _l.addHandler(file_handler)
+    _l.propagate = False
 
 CRASH_LOG = os.path.join(LOG_DIR, "ai_server_crash.log")
 
@@ -1736,14 +1755,21 @@ def _stream_final_reply(conn, messages, fallback_content):
     thinking_sent = False
     try:
         if current_backend == "deepseek":
-            gen = call_deepseek_stream(messages, tools=skill_schemas, timeout=60)
+            gen = call_deepseek_stream(messages, tools=skill_schemas, timeout=120)
         else:
-            gen = call_ollama_stream(messages, tools=skill_schemas, timeout=60)
+            gen = call_ollama_stream(messages, tools=skill_schemas, timeout=120)
         for block in gen:
             btype = block.get("type", "content")
-            # 【0.2.0】错误事件不拼入最终回复（前面已暴露）
+            # 【2026-08-23 修复】错误事件不再静默吞掉（原 continue→误报"模型返回空白"）——
+            # llm_unified 已内置重试，走到这里说明最终失败，透传真实错误给用户
             if btype == "error":
-                continue
+                err_text = block.get("text", "") or "模型返回错误"
+                err_type = block.get("error_type", "")
+                logger.error("react_stream: LLM error type=%s text=%s session=%s",
+                             err_type, err_text[:200], session_id)
+                _send_evt(conn, {"type": "content",
+                                 "delta": t("(AI 错误: %s)", "（AI错误：%s）") % err_text[:300]})
+                return "", usage_info
             text = block.get("text", "")
             if not text:
                 continue
@@ -1817,9 +1843,9 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
         thinking_sent = False
         try:
             if current_backend == "deepseek":
-                gen = call_deepseek_stream(messages, tools=skill_schemas, timeout=60)
+                gen = call_deepseek_stream(messages, tools=skill_schemas, timeout=120)
             else:
-                gen = call_ollama_stream(messages, tools=skill_schemas, timeout=60)
+                gen = call_ollama_stream(messages, tools=skill_schemas, timeout=120)
             for block in gen:
                 btype = block.get("type", "")
                 text = block.get("text", "")
@@ -1867,9 +1893,9 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
                                  "content": t("Model returned empty, retrying...", "模型返回空白，重试中……")})
                 try:
                     if current_backend == "deepseek":
-                        gen2 = call_deepseek_stream(messages, tools=skill_schemas, timeout=60)
+                        gen2 = call_deepseek_stream(messages, tools=skill_schemas, timeout=120)
                     else:
-                        gen2 = call_ollama_stream(messages, tools=skill_schemas, timeout=60)
+                        gen2 = call_ollama_stream(messages, tools=skill_schemas, timeout=120)
                     retry_parts = []
                     retry_reasoning = []
                     for block in gen2:
