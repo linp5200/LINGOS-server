@@ -109,6 +109,7 @@ LIB_SRCS = $(SRC_DIR)/lib/deb_parser.c \
            $(SRC_DIR)/lib/log_extra.c \
            $(SRC_DIR)/lib/path_utils.c \
            $(SRC_DIR)/lib/pkg_deps.c \
+           $(SRC_DIR)/lib/port_config.c \
            $(SRC_DIR)/lib/cJSON/cJSON.c \
            $(SRC_DIR)/lib/crypto/monocypher.c
 

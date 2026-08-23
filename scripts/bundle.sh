@@ -135,13 +135,14 @@ echo "==> 若无法运行，请确认宿主 glibc >= 2.35（Ubuntu 22.04+/Debian
 EOF
 chmod +x "$DEST/check_env.sh"
 
-# ---------- 6. 启动包装（LD_LIBRARY_PATH 兜底 dlopen 场景） ----------
+# ---------- 6. 启动包装（LD_LIBRARY_PATH 兜底 dlopen 场景 + 包根导出） ----------
 cat > "$DEST/start.sh" <<'EOF'
 #!/usr/bin/env bash
 # 启动包装：LD_LIBRARY_PATH 兜底（numpy 等 dlopen C 扩展不走 RPATH——DEPENDENCIES.md 全捆红利）
 DIR="$(cd "$(dirname "$0")" && pwd)"
 export LD_LIBRARY_PATH="$DIR/lib:${LD_LIBRARY_PATH:-}"
 export LINGOS_BUNDLED=1
+export LINGOS_ROOT="$DIR"          # 【2026-08-22】包根——active_repair 用它定位包内 venv
 exec "$DIR/lingos_linux" "$@"
 EOF
 chmod +x "$DEST/start.sh"

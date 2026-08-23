@@ -45,6 +45,7 @@
 #include "scan_analyzer.h"
 #include "ipc_core.h"
 #include "data_path.h"
+#include "../lib/port_config.h"
 #include "libling.h"
 #include "ai_config_cmd.h"
 #include "system_debug.h"
@@ -1329,8 +1330,48 @@ static int handle_verb_command(const char *cmd) {
     }
     if (strcmp(verb, "config") == 0) {
         if (strcmp(rest, "advanced") == 0) {
-            uart_puts(tr("Advanced config is managed via dedicated commands (e.g. log level, model switch).\n",
-                         "高级配置通过特定指令管理（如 log level、model switch）。\n"));
+            uart_puts(tr("Advanced config keys: temperature creativity max_context_tokens truncation_strategy max_agents memory_top_k socket_timeout auth_timeout search_backend search_max_urls search_rate_limit thinking_display\n  Use: config set <key> <value> (via WS)\n",
+                         "高级配置键：temperature creativity max_context_tokens truncation_strategy max_agents memory_top_k socket_timeout auth_timeout search_backend search_max_urls search_rate_limit thinking_display\n  使用：config set <键> <值>（经 WS）\n"));
+            return 1;
+        }
+        return 0;
+    }
+    /* ----- 【2026-08-22】端口指令族（先生裁决：端口用特定指令，不进配置向导） ----- */
+    if (strcmp(verb, "port") == 0) {
+        if (strcmp(rest, "list") == 0 || strcmp(rest, "show") == 0) {
+            char buf[256];
+            safe_snprintf(buf, sizeof(buf),
+                tr("ports: ws=%d http=%d tcp=%d (restart to apply changes)\n",
+                   "端口：ws=%d http=%d tcp=%d（改动重启生效）\n"),
+                port_config_get(PORT_WS), port_config_get(PORT_HTTP), port_config_get(PORT_TCP));
+            uart_puts(buf);
+            return 1;
+        }
+        if (strncmp(rest, "set ", 4) == 0) {
+            /* port set <name> <port> */
+            char pname[16];
+            int pval = 0;
+            if (sscanf(rest + 4, "%15s %d", pname, &pval) == 2) {
+                port_type_t pt;
+                if (strcmp(pname, "ws") == 0) pt = PORT_WS;
+                else if (strcmp(pname, "http") == 0) pt = PORT_HTTP;
+                else if (strcmp(pname, "tcp") == 0) pt = PORT_TCP;
+                else {
+                    uart_puts(tr("Unknown port name (ws/http/tcp)\n", "未知端口名（ws/http/tcp）\n"));
+                    return 1;
+                }
+                if (port_config_set(pt, pval) != 0) {
+                    uart_puts(tr("Invalid port (1024-65535)\n", "无效端口（1024-65535）\n"));
+                } else {
+                    char buf[128];
+                    safe_snprintf(buf, sizeof(buf),
+                        tr("port %s set to %d (restart to apply)\n", "端口 %s 已设为 %d（重启生效）\n"),
+                        pname, pval);
+                    uart_puts(buf);
+                }
+                return 1;
+            }
+            uart_puts(tr("Usage: port set <ws|http|tcp> <port>\n", "用法：port set <ws|http|tcp> <端口>\n"));
             return 1;
         }
         return 0;

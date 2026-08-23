@@ -2921,6 +2921,34 @@ def cmd_skill_list_custom() -> dict:
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
+def cmd_skill_market() -> dict:
+    """内置技能市场清单——{builtin: 内置不可删, custom: 自定义}"""
+    try:
+        from skill_handlers import SKILL_REGISTRY
+        builtin = []
+        custom = []
+        for name, info in SKILL_REGISTRY.items():
+            entry = {
+                "name": name,
+                "risk": info.get("risk", "low"),
+                "source": info.get("source", "builtin"),
+                "description": info.get("description", ""),
+            }
+            if info.get("source") == "builtin":
+                builtin.append(entry)
+            else:
+                custom.append(entry)
+        builtin.sort(key=lambda x: x["name"])
+        custom.sort(key=lambda x: x["name"])
+        return {"status": "ok", "data": {
+            "builtin": builtin,       # 内置基础技能——不可删除（先生定稿）
+            "custom": custom,         # 自定义技能——可增删
+            "builtin_count": len(builtin),
+            "custom_count": len(custom),
+        }}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
 # 人格配置（/LINGOS/system/config/personality.json）
 AI_PERSONALITY_FILE = "/LINGOS/system/config/personality.json"
 AI_PERSONALITIES = ["nook", "noma"]
@@ -2981,7 +3009,74 @@ def cmd_ai_config_set(provider: str = "", api_key: str = "", base_url: str = "",
 
 
 # =============================================================
+# =============================================================
+# 【2026-08-22 定稿】高级设置指令族（config advanced / config set）
+# 白名单键——需理解量的参数，避免用户随意改（先生裁决：高级设置用特定指令）
+# =============================================================
+ADVANCED_KEYS = {
+    # key: (类型, 范围, 描述)
+    "temperature": ("float", (0.0, 2.0), "生成温度（越低越确定，越高越发散）"),
+    "creativity": ("float", (0.0, 1.0), "创意度"),
+    "max_context_tokens": ("int", (4096, 131072), "上下文窗口 token 上限"),
+    "truncation_strategy": ("str", None, "上下文压缩策略（summary/sliding）"),
+    "max_agents": ("int", (1, 8), "子代理上限"),
+    "memory_top_k": ("int", (1, 10), "记忆检索注入条数"),
+    "socket_timeout": ("int", (30, 600), "socket 超时（秒）"),
+    "auth_timeout": ("int", (10, 300), "认证超时（秒）"),
+    "search_backend": ("str", None, "搜索后端（searxng/html）"),
+    "search_max_urls": ("int", (1, 100), "搜索最大 URL 数"),
+    "search_rate_limit": ("int", (1, 100), "搜索频率限制（次/分）"),
+    "thinking_display": ("str", None, "思考显示模式（off/hidden/visible）"),
+}
+
+def cmd_config_set(key: str = "", value: str = "") -> dict:
+    """高级设置写入——{key, value}（白名单校验 + 类型/范围校验）"""
+    if not key or key not in ADVANCED_KEYS:
+        return {"status": "error", "msg": "未知高级配置键（可用: config advanced 查看）"}
+    vtype, rng, _ = ADVANCED_KEYS[key]
+    try:
+        if vtype == "int":
+            val = int(value)
+            if rng and not (rng[0] <= val <= rng[1]):
+                return {"status": "error", "msg": f"{key} 范围 {rng[0]}-{rng[1]}"}
+        elif vtype == "float":
+            val = float(value)
+            if rng and not (rng[0] <= val <= rng[1]):
+                return {"status": "error", "msg": f"{key} 范围 {rng[0]}-{rng[1]}"}
+        else:
+            val = str(value)
+        cfg_path = CONFIG_PATH
+        cfg = {}
+        if os.path.exists(cfg_path):
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+        cfg[key] = val
+        os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+        with open(cfg_path, "w") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        return {"status": "ok", "data": {key: val}}
+    except ValueError:
+        return {"status": "error", "msg": f"{key} 需要 {vtype} 类型"}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_config_get() -> dict:
+    """高级设置清单——{key: 当前值}"""
+    try:
+        cfg = {}
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH) as f:
+                cfg = json.load(f)
+        data = {}
+        for k, (vtype, rng, desc) in ADVANCED_KEYS.items():
+            data[k] = {"value": cfg.get(k), "type": vtype, "range": rng, "desc": desc}
+        return {"status": "ok", "data": data}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+# =============================================================
 # 【0.2.0】模型提供商管理（provider.json——App 同步显示可切换，先生决策）
+# =============================================================
 # =============================================================
 def cmd_provider_list() -> dict:
     """模型提供商列表（App 同步显示——主机端配置哪些模型 App 可见）"""
@@ -3280,6 +3375,8 @@ def handle_client(conn, addr):
             _reply(conn, "skill_uninstall", cmd_skill_uninstall(str(req.get("name", "")))); return
         if cmd == "skill_list_custom":
             _reply(conn, "skill_list_custom", cmd_skill_list_custom()); return
+        if cmd == "skill_market":
+            _reply(conn, "skill_market", cmd_skill_market()); return
         if cmd == "personality_set":
             _reply(conn, "personality_set", cmd_personality_set(str(req.get("name", "")))); return
         if cmd == "personality_get":
@@ -3294,6 +3391,10 @@ def handle_client(conn, addr):
             _reply(conn, "mcp_test", cmd_mcp_test(str(req.get("name", "")))); return
         if cmd == "ai_config_set":
             _reply(conn, "ai_config_set", cmd_ai_config_set(str(req.get("provider", "")), str(req.get("api_key", "")), str(req.get("base_url", "")), str(req.get("model", "")))); return
+        if cmd == "config_set":
+            _reply(conn, "config_set", cmd_config_set(str(req.get("key", "")), str(req.get("value", "")))); return
+        if cmd == "config_get":
+            _reply(conn, "config_get", cmd_config_get()); return
         # ---- 【0.2.0】模型提供商（App 同步显示 + 切换） ----
         if cmd == "provider_list":
             _reply(conn, "provider_list", cmd_provider_list()); return

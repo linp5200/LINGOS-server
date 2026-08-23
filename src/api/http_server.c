@@ -11,6 +11,7 @@
 #include "nook.h"
 #include "system_health.h"
 #include "connection_handler.h"
+#include "port_config.h"
 #include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
@@ -26,6 +27,11 @@ static struct MHD_Daemon *mhd_daemon = NULL;
 static pthread_t server_thread;
 static volatile int running = 0;
 static int server_port = DEFAULT_PORT;
+
+/* 【2026-08-22】端口可配（port 指令族）——初始化时从 ports.json 覆盖 */
+static void http_server_init_port(void) {
+    server_port = port_config_get(PORT_HTTP);
+}
 
 static const char WEBUI_HTML[] = "<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>LING OS Console</title>\n<style>\n:root{--bg:#0D0D10;--surface:#1A1A1F;--red:#E53935;--cyan:#00BCD4;--text:#EEE;--sub:#999}\n*{margin:0;padding:0;box-sizing:border-box}\nbody{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}\nheader{padding:12px 20px;border-bottom:1px solid #222;display:flex;align-items:center;gap:10px}\n.dot{width:10px;height:10px;border-radius:50%;background:#E53935}\n.dot.on{background:#4CAF50}\n#chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}\n.msg{max-width:75%;padding:10px 14px;border-radius:14px;line-height:1.5;white-space:pre-wrap}\n.user{align-self:flex-end;background:#E53935;color:#fff}\n.ai{align-self:flex-start;background:var(--surface);color:var(--text)}\n.sys{align-self:center;background:#222;color:var(--sub);font-size:12px;border-radius:8px;padding:4px 10px}\nfooter{padding:12px;border-top:1px solid #222;display:flex;gap:10px}\ninput{flex:1;background:var(--surface);border:1px solid #333;color:var(--text);border-radius:10px;padding:12px;font-size:14px;outline:none}\nbutton{background:var(--red);color:#fff;border:none;border-radius:10px;padding:12px 20px;font-size:14px;cursor:pointer}\nbutton:disabled{opacity:.5}\n</style></head>\n<body>\n<header><div class=\"dot\" id=\"dot\"></div><b>LING OS</b><span id=\"status\" style=\"color:var(--sub);font-size:13px\">checking...</span></header>\n<div id=\"chat\"></div>\n<footer>\n<input id=\"input\" placeholder=\"Type a message...\" autocomplete=\"off\">\n<button id=\"send\">Send</button>\n</footer>\n<script>\nvar chat=document.getElementById('chat'),input=document.getElementById('input'),btn=document.getElementById('send');\nfunction addMsg(t,c){var d=document.createElement('div');d.className='msg '+c;d.textContent=t;chat.appendChild(d);chat.scrollTop=chat.scrollHeight}\nasync function health(){try{var r=await fetch('/system/health');var j=await r.json();document.getElementById('dot').className='dot '+(j.status==='ok'?'on':'');document.getElementById('status').textContent=j.status==='ok'?('healthy | load '+j.load_avg):'error'}catch(e){document.getElementById('status').textContent='offline'}}\nasync function ask(){var p=input.value.trim();if(!p)return;addMsg(p,'user');input.value='';btn.disabled=true;var d=document.createElement('div');d.className='msg ai';d.textContent='...';chat.appendChild(d);chat.scrollTop=chat.scrollHeight;\ntry{var r=await fetch('/nook/ask?prompt='+encodeURIComponent(p));var j=await r.json();d.textContent=j.response||(j.error||'no response')}catch(e){d.textContent='AI service unavailable'}btn.disabled=false;chat.scrollTop=chat.scrollHeight}\nbtn.onclick=ask;input.onkeydown=function(e){if(e.key==='Enter')ask()};addMsg('Connected to LING OS.','sys');health();setInterval(health,10000);\n</script>\n</body></html>";
 
@@ -309,7 +315,8 @@ static void* server_loop(void *arg) {
 
 int http_server_start(int port) {
     if (running) return 0;
-    server_port = port;
+    /* 【2026-08-22】端口可配：port<=0 时用 ports.json 配置值 */
+    server_port = (port > 0) ? port : port_config_get(PORT_HTTP);
     int ret = pthread_create(&server_thread, NULL, server_loop, NULL);
     if (ret != 0) {
         LOG_ERROR_T("HTTPServer", "Start", "ThreadFail", "pthread_create error %d", ret);

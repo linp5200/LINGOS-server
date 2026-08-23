@@ -356,8 +356,25 @@ static int execute_action(const repair_action_t *action, char *out_msg, size_t o
         case ACTION_RESTART_AI_SERVER: {
             system("pkill -f ai_server.py || true");
             usleep(500000);
-            system("python3 /LINGOS/bin/ai_server.py &");
-            LOG_INFO_T("ActiveRepair", "Execute", "AIServer", "AI server restarted");
+            /* 【2026-08-22 定稿】全捆包 Python 同步长期修复：
+             * 优先用包内 venv（$LINGOS_ROOT/python/bin/python $LINGOS_ROOT/python/server/ai_server.py）
+             * ——部署零脚本（历史 Bug：/LINGOS/bin 是旧文件，需 fix_python_sync.sh 手动同步）
+             * 无包内 venv 时回落 /LINGOS/bin（旧环境兼容——跛脚） */
+            const char *broot = getenv("LINGOS_ROOT");
+            char venv_py[512], venv_server[512], cmd[1024];
+            int use_venv = 0;
+            if (broot && broot[0]) {
+                safe_snprintf(venv_py, sizeof(venv_py), "%s/python/bin/python", broot);
+                safe_snprintf(venv_server, sizeof(venv_server), "%s/python/server/ai_server.py", broot);
+                if (access(venv_py, X_OK) == 0 && access(venv_server, F_OK) == 0) use_venv = 1;
+            }
+            if (use_venv) {
+                safe_snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" &", venv_py, venv_server);
+            } else {
+                safe_snprintf(cmd, sizeof(cmd), "python3 /LINGOS/bin/ai_server.py &");
+            }
+            system(cmd);
+            LOG_INFO_T("ActiveRepair", "Execute", "AIServer", "AI server restarted (venv=%d cmd=%s)", use_venv, cmd);
             safe_snprintf(out_msg, out_len, tr("AI server restarted", "AI 服务器已重启"));
             return 0;
         }

@@ -13,6 +13,7 @@
 #include "../common/data_path.h"
 #include "../common/lang.h"
 #include "../lib/log_extra.h"
+#include "../lib/port_config.h"
 #include "../lib/cJSON/cJSON.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1007,7 +1008,7 @@ static void* ws_loop(void *arg) {
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(WEBSOCKET_PORT);
+    addr.sin_port = htons(port_config_get(PORT_WS));  // 【2026-08-22】端口可配（port 指令族）
 
     if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         LOG_ERROR_T("WebSocket", "Loop", "BindFail", "%s", strerror(errno));
