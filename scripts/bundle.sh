@@ -174,7 +174,7 @@ python3 + requests/websocket-client；glibc >= 2.35
 部署：解压到目标目录，参考 DEPENDENCIES.md 安装依赖后 ./lingos_linux
 Web UI：浏览器访问 http://<host>:8080/ui（本包已含 share/webui）
 EOF
-cd "$OUT" && tar czf "$SYS_PKG.tar.gz" "$SYS_PKG" && rm -rf "$SYS_PKG"
+( cd "$OUT" && tar czf "$SYS_PKG.tar.gz" "$SYS_PKG" && rm -rf "$SYS_PKG" )
 echo "✅ sysbin 包: $OUT/$SYS_PKG.tar.gz"
 
 # ---------- 7d. plugin 包（0.4.3——先生三包型裁决：非基础功能插件集，可增删） ----------
@@ -195,7 +195,7 @@ LING OS plugin 包（系统插件集——先生 2026-09-04 三包型裁决）
 适用范围：LINGOS_server_linux 0.4.3（插件支持的系统版本范围内可插入）
 非基础功能——可按需删减/扩展
 EOF
-cd "$OUT" && tar czf "$PLG_PKG.tar.gz" "$PLG_PKG" && rm -rf "$PLG_PKG"
+( cd "$OUT" && tar czf "$PLG_PKG.tar.gz" "$PLG_PKG" && rm -rf "$PLG_PKG" )
 echo "✅ plugin 包: $OUT/$PLG_PKG.tar.gz"
 
 # ---------- 7c. 压缩（allbin） ----------
