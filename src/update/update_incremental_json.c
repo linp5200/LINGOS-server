@@ -1,7 +1,7 @@
 /**
  * @file    update_incremental_json.c
  * @brief   增量更新 JSON manifest 实现（2026-08-22 定稿）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C-C 防弹/防御/容错/跛脚 + C1 分级日志
  * @changes 新增：JSON manifest（path/action/size/hash）+ base_ver 匹配
  *          + sha256 校验 + 应用前备份（可回滚）

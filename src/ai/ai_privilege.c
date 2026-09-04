@@ -1,7 +1,7 @@
 /**
  * @file    src/ai/ai_privilege.c
  * @brief   AI 权限管理核心实现（L0-L3 分级 + 自动授权 + 临时权限）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C3, C-C, AI-CTL
  * @changes 修复头文件引用与并发问题：
  *          - 【新增】#include <pthread.h>（此前 pthread_mutex_t 未声明导致编译失败）

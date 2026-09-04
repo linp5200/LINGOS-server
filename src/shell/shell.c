@@ -1,7 +1,7 @@
 /**
  * @file    src/shell/shell.c
  * @brief   LING OS 命令行核心 - 完整版（含 --force 支持 + 提示符增强）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C3, C-C, AI-CTL
  * @changes 增加 --force 参数支持（配置强制覆盖）；
  *          增强提示符（支持 LINGOS_PROMPT 环境变量自定义）；

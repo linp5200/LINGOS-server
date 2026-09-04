@@ -1,7 +1,7 @@
 /**
  * @file    src/core/repair_mode.h
  * @brief   修复模式头文件（异常关闭后的恢复选项）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  */
 
 #ifndef CORE_REPAIR_MODE_H

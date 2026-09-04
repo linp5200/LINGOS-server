@@ -1,7 +1,7 @@
 /**
  * @file    src/registry/registry.c
  * @brief   注册表核心实现（增加超时保护 + 锁修复）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes registry_load() 添加 3 秒超时保护；
  *          修复超时分支未释放锁导致死锁的问题；
  *          添加详细调试日志

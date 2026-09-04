@@ -1,7 +1,7 @@
 /**
  * @file    src/tui/tui_renderer.c
  * @brief   Notcurses 渲染器实现（适配 3.x API + 键盘防抖动 + 防御检查 + 健康计数）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, AI-CTL
  * @changes 所有渲染函数返回状态码；增加防御检查；适配 ncplane_create；
  *          增加渲染超时检测；双文支持；
@@ -172,7 +172,7 @@ int tui_renderer_init(tui_renderer_t *renderer) {
                            tr("LING OS Setup Wizard", "LING OS 设置向导"));
     ncplane_set_fg_rgb(renderer->title_plane, TUI_COLOR_GRAY);
     ncplane_putstr_aligned(renderer->title_plane, 1, NCALIGN_CENTER,
-                           tr("Version: LN-B-5.1.2.6-rc", "版本：LN-B-5.1.2.6-rc"));
+                           tr("Version: LN-0.4.3", "版本：LN-0.4.3"));
     ncplane_set_fg_rgb(renderer->title_plane, 0x444444);
     /* 修正：分隔线绘制前将光标归位到第 3 行起点，避免与版本号粘连 */
     ncplane_cursor_move_yx(renderer->title_plane, 2, 0);

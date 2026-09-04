@@ -1,7 +1,7 @@
 /**
  * @file    src/core/install.c
  * @brief   首次安装检测与标记
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 增强 installed.state 创建逻辑，确保持久化。
  */
 

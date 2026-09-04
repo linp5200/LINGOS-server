@@ -1,7 +1,7 @@
 /**
  * @file    src/ui/progress_bar.h
  * @brief   进度条系统头文件（单行动态刷新）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：防弹编程
  */
 

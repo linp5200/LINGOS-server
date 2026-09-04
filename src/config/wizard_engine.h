@@ -1,7 +1,7 @@
 /**
  * @file    src/config/wizard_engine.h
  * @brief   向导引擎接口定义
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 移除了 wizard_config_t 定义（改用 config_core.h）
  *          添加 force_skip_verify 成员
  */

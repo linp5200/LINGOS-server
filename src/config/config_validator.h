@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_validator.h
  * @brief   配置验证函数声明
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  */
 

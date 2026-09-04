@@ -1,7 +1,7 @@
 /**
  * @file    src/install/install_progress.h
  * @brief   安装进度显示与汇总
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  */
 

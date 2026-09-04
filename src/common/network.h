@@ -1,7 +1,7 @@
 /**
  * @file    src/common/network.h
  * @brief   网络检测功能头文件
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  */
 
 #ifndef COMMON_NETWORK_H

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 LING OS Skill Install（技能安装管理——2026-08-22 定稿 OpenClaw 式）
-版本: LN-B-5.1.2.6-rc
+版本: LN-0.4.3
 功能：
   - 技能包格式：目录（或 git 仓库）含 SKILL.md + handler.py + requirements.txt
   - SKILL.md: YAML front-matter（name/description/risk）+ 描述正文

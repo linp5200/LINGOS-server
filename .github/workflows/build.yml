@@ -3,7 +3,7 @@ name: build-bundle
 # LING OS 服务端全捆打包 CI（0.2.1 定稿——先生裁决 H4：CI 出全捆包，解压即用）
 # 矩阵：x86_64 原生 + arm64 qemu 容器（DEPENDENCIES.md 平台定位）
 # 【先生裁决 2026-08-14】发行版本号 0.0.1（独立于内部 LN-B-5.1.2.6-rc）
-# 包名：LINGOS-<版本>-server-<架构>.tar.gz
+# 包名（0.4.3 规范）：LINGOS_server_linux_v<版本>_<架构>_<allbin|sysbin>.tar.gz
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  VERSION: 0.0.6
+  VERSION: 0.4.3
 
 jobs:
   build:
@@ -94,7 +94,7 @@ jobs:
       - name: 下载全部架构产物
         uses: actions/download-artifact@v4
         with:
-          pattern: 'LINGOS-*'
+          pattern: 'LINGOS_*'
           path: /tmp/artifacts
 
       - name: 整理 Release 文件

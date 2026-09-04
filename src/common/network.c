@@ -1,7 +1,7 @@
 /**
  * @file    src/common/network.c
  * @brief   网络检测功能实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  */
 
 #include "network.h"

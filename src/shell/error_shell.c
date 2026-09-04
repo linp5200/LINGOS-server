@@ -1,7 +1,7 @@
 /**
  * @file    src/shell/error_shell.c
  * @brief   紧急修复终端（修复 repair 自动返回，增加权限修复指导）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 增加 fix-perms 命令；增加权限修复指导信息；
  *          添加 safe_string.h 头文件；
  *          移除 ensure_daemon_running/ensure_ai_server_running 依赖，改用 system 启动服务

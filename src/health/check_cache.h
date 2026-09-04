@@ -1,7 +1,7 @@
 /**
  * @file    src/health/check_cache.h
  * @brief   自检缓存管理（避免重复检查）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, CM
  */
 

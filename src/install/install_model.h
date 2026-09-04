@@ -1,7 +1,7 @@
 /**
  * @file    src/install/install_model.h
  * @brief   模型下载（支持断点续传）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  */
 

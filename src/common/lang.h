@@ -1,7 +1,7 @@
 /**
  * @file    src/common/lang.h
  * @brief   多语言支持头文件
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 新增 lang_set_system_default() 声明
  */
 

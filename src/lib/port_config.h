@@ -1,7 +1,7 @@
 /**
  * @file    port_config.h
  * @brief   端口配置接口（2026-08-22 先生裁决：port 指令族）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  */
 
 #ifndef PORT_CONFIG_H

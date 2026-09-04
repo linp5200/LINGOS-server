@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_renderer_cli.c
  * @brief   CLI 渲染器实现（完整版：健康检查 + 快捷键 + 空输入防错 + 心跳喂狗）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     在 read_line_uart 循环中添加 feed_heartbeat()，防止监督者超时重启。
  */
 

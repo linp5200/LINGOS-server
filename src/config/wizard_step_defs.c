@@ -1,7 +1,7 @@
 /**
  * @file    src/config/wizard_step_defs.c
  * @brief   向导步骤定义加载器实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     修正内置步骤初始化列表字段顺序
  */
 

@@ -1,7 +1,7 @@
 /**
  * @file    src/health/repair/active_repair.c
  * @brief   主动健康修复（自愈）实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, AI-CTL
  * @changes 集成 Python 诊断引擎调用；
  *          修复 Socket 超时处理；

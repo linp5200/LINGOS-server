@@ -1,7 +1,7 @@
 /**
  * @file    src/core/main.c
  * @brief   LING OS 主入口
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 调整 lang_init() 调用时机至 config_core 加载后；
  *          配置向导保存后调用 lang_reload()；
  *          增加 config_core.h 包含；

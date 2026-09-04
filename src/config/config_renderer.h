@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_renderer.h
  * @brief   配置渲染器统一接口
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     包含 renderer_ctx_t 定义，self_test 和 is_healthy 包装函数。
  */
 

@@ -1,7 +1,7 @@
 /**
  * @file    src/core/repair_mode.c
  * @brief   修复模式实现（异常关闭后的恢复选项）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：防弹编程
  */
 

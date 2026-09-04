@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_core.h
  * @brief   配置核心：数据模型、加载/保存、热重载
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 新增 config_core_save_force() 声明。
  */
 

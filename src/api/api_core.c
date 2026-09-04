@@ -1,7 +1,7 @@
 /**
  * @file    src/api/api_core.c
  * @brief   内部 API 框架（注册和调用端点）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, AI-CTL
  * @changes 增加所有模块端点注册；
  *          集成 WebSocket 服务器；

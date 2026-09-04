@@ -1,7 +1,7 @@
 /**
  * @file    src/common/markdown_renderer.c
  * @brief   Markdown → ANSI 富文本渲染（终端）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  * @par     支持：**粗体** *斜体* `代码` | 表格 | --- 分隔线 - 列表 ```代码块```
  *          链接/图片不渲染（终端环境，按需求确认）

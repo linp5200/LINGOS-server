@@ -1,7 +1,7 @@
 /**
  * @file    src/api/api_routes.c
  * @brief   API 路由注册 - 完整版（含系统状态、AI对话、技能执行、记忆操作）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, AI-CTL
  * @changes 扩展所有模块端点；增加 POST 支持；集成 AI 和系统功能
  */
@@ -492,7 +492,7 @@ int api_route_update(struct MHD_Connection *conn, const char *path, const char *
     }
 
     if (strcmp(path, "check") == 0) {
-        send_ok(conn, "{\"update_available\":false,\"latest\":\"LN-B-5.1.2.6-rc\"}");
+        send_ok(conn, "{\"update_available\":false,\"latest\":\"LN-0.4.3\"}");
         return MHD_YES;
     }
 

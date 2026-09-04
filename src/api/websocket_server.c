@@ -1,7 +1,7 @@
 /**
  * @file    src/api/websocket_server.c
  * @brief   WebSocket 服务器（实时推送 + 多客户端管理）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, AI-CTL
  * @changes 多客户端管理；主题订阅；消息广播；心跳保活
  */

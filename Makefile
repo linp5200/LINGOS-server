@@ -1,4 +1,4 @@
-# LING OS Linux Build System (LN-B-5.1.2.6-rc)
+# LING OS Linux Build System (LN-0.4.3)
 # 开发版：确保 lingos_linux lingosd lingos_supervisor 三核心编译
 # 包含 test-render 目标用于渲染测试
 # 其他目标保留，用户可手动编译
@@ -46,7 +46,7 @@ MINIMAL_LDFLAGS = $(BASE_LDFLAGS) -lmicrohttpd
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-VERSION = "LN-B-5.1.2.6-rc"
+VERSION = "LN-0.4.3"
 CFLAGS += -DLINGOS_VERSION="\"$(VERSION)\""
 
 SRC_DIR = src
@@ -434,8 +434,9 @@ lingos_visiond: $(VISION_MAIN_SRCS) $(VISION_CORE_SRCS) $(CORE_DAEMON)
 lingos_voiced: $(VOICE_MAIN_SRCS) $(VOICE_CORE_SRCS) $(CORE_DAEMON)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread -lm
 
-lingos_gui: $(GUI_SRCS)
-	$(CC) $(CFLAGS) $(INCLUDES) $(GTK_CFLAGS) $^ -o $@ $(GTK_LIBS)
+# 【0.4.3 先生裁决】GTK3 lingos_gui 直接废弃（Qt UI 取代）——构建目标移除，源留档
+# lingos_gui: $(GUI_SRCS)
+#	$(CC) $(CFLAGS) $(INCLUDES) $(GTK_CFLAGS) $^ -o $@ $(GTK_LIBS)
 
 # ================================================================
 # 测试目标
@@ -468,7 +469,7 @@ install_python_script:
 	done
 
 clean:
-	rm -f $(TARGETS) lingos_gui lingos_alertd lingos_visiond lingos_voiced
+	rm -f $(TARGETS) lingos_alertd lingos_visiond lingos_voiced
 
 run: lingos_linux
 	./lingos_linux

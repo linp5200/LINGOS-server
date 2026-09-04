@@ -142,7 +142,7 @@ def set_log_file_enabled(enabled: bool):
     else:
         file_handler.setLevel(logging.WARNING)
 
-logger.info("=== AI Server starting (LN-B-5.1.2.6-rc) ===")
+logger.info("=== AI Server starting (LN-0.4.3) ===")
 
 # 【2026-08-23 修复】统一日志体系——所有模块 logger（LLMUnified/Voice/Skill 等）
 # 接入同一 console+file handler（否则走 logging.lastResort 默认格式，不进 JSON 文件）
@@ -190,6 +190,181 @@ def _broadcast_vision_event(evt: dict) -> None:
             c.send(payload)
         except Exception:
             pass
+
+
+def _broadcast_alert_event(evt: dict) -> None:
+    """【0.4.3】alertd 新预警实时广播（type=alert_event——App/Qt/Web 预警页消费）"""
+    payload = (json.dumps(evt, ensure_ascii=False) + "\n").encode()
+    with _ACTIVE_CONNS_LOCK:
+        conns = list(_ACTIVE_CONNS)
+    for c in conns:
+        try:
+            c.send(payload)
+        except Exception:
+            pass
+
+
+WEATHER_CACHE_PATH = "/LINGOS/data/weather_cache.json"
+WEATHER_CACHE_TTL = 600          # 当前天气缓存 10 分钟
+WEATHER_DAILY_TTL = 21600        # 预报缓存 6 小时
+OPENMETEO_BASE = "https://api.open-meteo.com/v1/forecast"
+OPENMETEO_GEO = "https://geocoding-api.open-meteo.com/v1/search"
+
+
+def _weather_fetch(url: str, timeout: int = 12) -> Optional[Dict]:
+    """通用天气 HTTP 拉取（Open-Meteo / 用户自定义源——异常安全）"""
+    try:
+        r = requests.get(url, timeout=timeout)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        return None
+
+
+def _weather_cache_get() -> Dict:
+    try:
+        with open(WEATHER_CACHE_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _weather_cache_set(cache: Dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(WEATHER_CACHE_PATH), exist_ok=True)
+        with open(WEATHER_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _weather_city_config() -> Dict:
+    """读取天气城市配置（/LINGOS/system/config/weather.json——可被 config set 管理）"""
+    cfg = {"city": "上海", "lat": 31.2304, "lon": 121.4737, "api": "open-meteo", "custom_url": ""}
+    try:
+        with open("/LINGOS/system/config/weather.json", encoding="utf-8") as f:
+            c = json.load(f)
+        if isinstance(c, dict):
+            cfg.update(c)
+    except Exception:
+        pass
+    return cfg
+
+
+def cmd_weather_current() -> dict:
+    """【0.4.3】当前天气（Open-Meteo 默认 / wttr.in 备选 / 自定义 API——可切换）"""
+    cfg = _weather_city_config()
+    cache = _weather_cache_get()
+    now = time.time()
+    key = "current_%s_%s" % (cfg.get("api"), cfg.get("city"))
+    if key in cache and now - cache[key].get("ts", 0) < WEATHER_CACHE_TTL:
+        return {"status": "ok", "source": cfg.get("api"), "city": cfg.get("city"), "cache": True, "data": cache[key].get("data")}
+    lat, lon = cfg.get("lat", 31.2304), cfg.get("lon", 121.4737)
+    data = None
+    api = cfg.get("api", "open-meteo")
+    if api == "custom" and cfg.get("custom_url"):
+        raw = _weather_fetch(cfg["custom_url"])
+        if raw:  # 用户自定义源——透传
+            data = {"custom": raw}
+    if data is None and api in ("open-meteo", "custom", "wttr.in"):
+        url = "%s?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure,visibility,uv_index&timezone=auto" % (OPENMETEO_BASE, lat, lon)
+        d = _weather_fetch(url)
+        if d and "current" in d:
+            cur = d["current"]
+            data = {
+                "temp": cur.get("temperature_2m"),
+                "feels": cur.get("apparent_temperature"),
+                "humidity": cur.get("relative_humidity_2m"),
+                "code": cur.get("weather_code"),
+                "wind": cur.get("wind_speed_10m"),
+                "wind_dir": cur.get("wind_direction_10m"),
+                "pressure": cur.get("surface_pressure"),
+                "visibility": cur.get("visibility"),
+                "uv": cur.get("uv_index"),
+                "time": cur.get("time"),
+            }
+    if data is None:
+        # wttr.in 兜底（天气码缺失时）
+        raw = _weather_fetch("https://wttr.in/?format=j1")
+        if raw and "current_condition" in raw:
+            c = raw["current_condition"][0]
+            data = {"temp": c.get("temp_C"), "feels": c.get("FeelsLikeC"),
+                    "humidity": c.get("humidity"), "code": c.get("weatherCode"),
+                    "wind": c.get("windspeedKmph"), "desc": c.get("lang_zh", [{}])[0].get("value") if c.get("lang_zh") else None}
+    if data is None:
+        return {"status": "error", "msg": "weather source unreachable"}
+    cache[key] = {"ts": now, "data": data}
+    _weather_cache_set(cache)
+    return {"status": "ok", "source": api, "city": cfg.get("city"), "lat": lat, "lon": lon, "cache": False, "data": data}
+
+
+def cmd_weather_forecast() -> dict:
+    """【0.4.3】逐小时 24h + 未来 7 日预报（Open-Meteo）"""
+    cfg = _weather_city_config()
+    cache = _weather_cache_get()
+    now = time.time()
+    key = "daily_%s_%s" % (cfg.get("api"), cfg.get("city"))
+    if key in cache and now - cache[key].get("ts", 0) < WEATHER_DAILY_TTL:
+        return {"status": "ok", "city": cfg.get("city"), "cache": True, "data": cache[key].get("data")}
+    lat, lon = cfg.get("lat", 31.2304), cfg.get("lon", 121.4737)
+    url = "%s?latitude=%.4f&longitude=%.4f&hourly=temperature_2m,precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&forecast_days=7&timezone=auto" % (OPENMETEO_BASE, lat, lon)
+    d = _weather_fetch(url)
+    if not d:
+        return {"status": "error", "msg": "forecast source unreachable"}
+    h = d.get("hourly", {})
+    hour = []
+    for i in range(min(24, len(h.get("time", [])))):
+        hour.append({"t": h["time"][i], "temp": h["temperature_2m"][i],
+                     "pop": h["precipitation_probability"][i], "code": h["weather_code"][i]})
+    dl = d.get("daily", {})
+    day = []
+    for i in range(len(dl.get("time", []))):
+        day.append({"date": dl["time"][i], "code": dl["weather_code"][i],
+                    "hi": dl["temperature_2m_max"][i], "lo": dl["temperature_2m_min"][i],
+                    "pop": dl["precipitation_probability_max"][i],
+                    "sunrise": dl.get("sunrise", [""] * 8)[i] if len(dl.get("sunrise", [])) > i else "",
+                    "sunset": dl.get("sunset", [""] * 8)[i] if len(dl.get("sunset", [])) > i else ""})
+    data = {"hourly": hour, "daily": day}
+    cache[key] = {"ts": now, "data": data}
+    _weather_cache_set(cache)
+    return {"status": "ok", "city": cfg.get("city"), "cache": False, "data": data}
+
+
+def cmd_weather_set_city(city: str = "", lat: float = 0.0, lon: float = 0.0, api: str = "", custom_url: str = "") -> dict:
+    """【0.4.3】设置天气城市/数据源（city 名称经 Open-Meteo geocoding 解析经纬度；api=open-meteo/wttr.in/custom）
+    配置存 /LINGOS/system/config/weather.json——网页/App/Qt 设置页共用"""
+    try:
+        cfg = _weather_city_config()
+        if city:
+            cfg["city"] = city
+        if lat or lon:
+            cfg["lat"] = float(lat)
+            cfg["lon"] = float(lon)
+        if api:
+            cfg["api"] = api
+        if custom_url:
+            cfg["custom_url"] = custom_url
+        # 若只给城市名无经纬度 → geocoding 解析
+        if city and not (lat or lon):
+            geo = _weather_fetch("%s?name=%s&count=1&language=zh" % (OPENMETEO_GEO, requests.utils.quote(city)))
+            if geo and geo.get("results"):
+                r = geo["results"][0]
+                cfg["lat"] = r.get("latitude", cfg.get("lat", 31.2304))
+                cfg["lon"] = r.get("longitude", cfg.get("lon", 121.4737))
+                if not cfg.get("city") or city:
+                    cfg["city"] = r.get("name", city)
+        os.makedirs("/LINGOS/system/config", exist_ok=True)
+        with open("/LINGOS/system/config/weather.json", "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        # 清缓存
+        try:
+            os.remove(WEATHER_CACHE_PATH)
+        except Exception:
+            pass
+        return {"status": "ok", "config": cfg}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
 SKILL_INDEX_PATH = "/LINGOS/registry/skills/index.json"
 SKILL_HELP_PATH = "/LINGOS/system/config/skill_help.json"
 USER_PROFILE_PATH = "/LINGOS/system/config/user_profile.json"
@@ -3317,6 +3492,17 @@ def handle_client(conn, addr):
             _reply(conn, "ha_search", cmd_ha_search(str(req.get("query", "")))); return
         if cmd == "alert_query":
             _reply(conn, "alert_query", cmd_alert_query()); return
+        if cmd == "weather_current":
+            _reply(conn, "weather_current", cmd_weather_current()); return
+        if cmd == "weather_forecast":
+            _reply(conn, "weather_forecast", cmd_weather_forecast()); return
+        if cmd == "weather_set_city":
+            _reply(conn, "weather_set_city", cmd_weather_set_city(
+                str(req.get("city", "")),
+                float(req.get("lat", 0) or 0),
+                float(req.get("lon", 0) or 0),
+                str(req.get("api", "")),
+                str(req.get("custom_url", "")))); return
         if cmd == "memory_search":
             _reply(conn, "memory_search", cmd_memory_search(str(req.get("keyword", "")))); return
         if cmd == "memory_write":
@@ -3963,6 +4149,21 @@ class _VoiceHTTPHandler(BaseHTTPRequestHandler):
         self.wfile.write(b'{"error":"not found"}')
 
     def do_POST(self):
+        # 【0.4.3 alert】alertd 新预警上报 → 广播（alert_event）
+        if self.path.startswith("/api/alert_event"):
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(ln).decode("utf-8"))
+                evt = {"type": "alert_event", "data": data}
+                _broadcast_alert_event(evt)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok"}')
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(('{"error":"%s"}' % str(e)).encode())
+            return
         # 【0.2.2 vision】visiond 检测事件上报 → 广播 App（vision_event）
         if self.path.startswith("/api/vision_event"):
             try:

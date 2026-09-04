@@ -1,7 +1,7 @@
 /**
  * @file    src/ui/startup_ui.c
  * @brief   启动界面 UI 辅助函数实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 集成进度条系统 (progress_bar.h)；
  *          新增详细进度显示函数；
  *          所有用户可见输出双文支持

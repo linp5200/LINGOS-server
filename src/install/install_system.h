@@ -1,7 +1,7 @@
 /**
  * @file    src/install/install_system.h
  * @brief   系统包安装（多发行版支持）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  */
 

@@ -1,7 +1,7 @@
 /**
  * @file    src/shell/install_helpers.c
  * @brief   多发行版安装辅助函数实现（扩展版）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 增加多发行版预检查（dpkg/rpm/pacman/apk）；
  *          新增包管理器可用性检测函数；
  *          增加 safe_exec_with_timeout_output 返回完整输出

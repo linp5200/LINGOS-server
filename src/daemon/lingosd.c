@@ -1,7 +1,7 @@
 /**
  * @file    src/daemon/lingosd.c
  * @brief   LING OS Daemon - Unix socket server for syscall & AI commands
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 新增 registry_list 命令；新增 set_log_level 命令转发；
  *          修改 skill_schemas 读取注册表路径；
  *          在 forward_to_python 中增加响应有效性检查，记录无效响应。
@@ -716,7 +716,7 @@ int main(int argc, char **argv) {
         LOG_WARN_T("Lingosd", "Main", "PIDFail", "cannot write PID file %s: %s", PID_PATH, strerror(errno));
     }
 
-    LOG_INFO_T("Lingosd", "Main", "Ready", "Daemon listening on %s (version LN-B-5.1.2.6-rc)", SOCKET_PATH);
+    LOG_INFO_T("Lingosd", "Main", "Ready", "Daemon listening on %s (version LN-0.4.3)", SOCKET_PATH);
 
     /* 【新增】创建 registry.sock（供 Python skill_loader/registry_client 查询注册表） */
     int reg_fd = -1;

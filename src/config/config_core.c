@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_core.c
  * @brief   配置核心实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 增强 config_core_mark_configured()，确保 state.json 写入成功；
  *          增加 config_files_exist() 检查，防止覆盖已有配置；
  *          新增 config_core_save_force() 支持 --force。

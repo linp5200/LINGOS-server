@@ -1,7 +1,7 @@
 /**
  * @file    src/lib/log_extra.h
  * @brief   分级日志系统头文件
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 新增全局级别管理、模块重置、字符串转换等函数声明
  */
 

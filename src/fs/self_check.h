@@ -1,7 +1,7 @@
 /**
  * @file    src/fs/self_check.h
  * @brief   启动自检头文件
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  */
 
 #ifndef FS_SELF_CHECK_H

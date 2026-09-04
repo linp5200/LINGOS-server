@@ -1,7 +1,7 @@
 /**
  * @file    src/core/backup.c
  * @brief   系统备份与恢复管理（含注册表和安全配置备份）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 增加 backup_list() 和 backup_restore_latest() 函数；
  *          使用 fork+execvp 替代 system；
  *          新增注册表和 security.json 备份

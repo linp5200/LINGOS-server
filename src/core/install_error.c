@@ -1,7 +1,7 @@
 /**
  * @file    src/core/install_error.c
  * @brief   安装错误动态解析系统实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：防弹/容错编程
  */
 

@@ -1,7 +1,7 @@
 /**
  * @file    dependency_check.c
  * @brief   系统依赖检查实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 移除 check_system_library 定义，改用 env_detect 中的实现
  */
 

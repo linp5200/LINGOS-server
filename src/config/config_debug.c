@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_debug.c
  * @brief   配置调试模块实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  * @changes 实现 config_debug_test 和 config_debug_cut；
  *          支持自检输出和升降级模拟。

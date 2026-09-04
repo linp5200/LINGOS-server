@@ -13,6 +13,7 @@
 #include "../drivers/uart.h"
 #include "../lib/log_extra.h"
 #include "../net/mqtt/mqtt_client.h"
+#include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,60 @@
 
 static alert_config_t g_notify_config;
 static int g_mqtt_available = 0;
+
+/* ============================================================
+ * 【0.4.3】WS 实时广播上报（alert_event——仿 visiond /api/vision_event）
+ * alertd 检测到新预警 → libcurl POST ai_server /api/alert_event → WS 广播 App/Qt/Web
+ * 容错：失败静默（不影响主流程）；ai_server 未起时自动跳过
+ * ============================================================ */
+
+static void alert_report_ws(const alert_event_t *event) {
+    if (!event) return;
+
+    /* 用 json-c 或手拼——此处手拼 JSON（防弹：超长 desc 截断） */
+    char desc[192];
+    safe_strncpy(desc, event->description, sizeof(desc));
+
+    /* 简易 JSON 转义（引号/反斜杠/控制符） */
+    char esc[512];
+    memset(esc, 0, sizeof(esc));
+    int ei = 0;
+    for (int i = 0; desc[i] != '\0' && ei < (int)sizeof(esc) - 6; i++) {
+        char c = desc[i];
+        if (c == '"' || c == '\\') {
+            esc[ei++] = '\\';
+            esc[ei++] = c;
+        } else if (c == '\n') {
+            esc[ei++] = '\\';
+            esc[ei++] = 'n';
+        } else if ((unsigned char)c < 0x20) {
+            /* 跳过控制符 */
+        } else {
+            esc[ei++] = c;
+        }
+    }
+    esc[ei] = '\0';
+
+    char json[640];
+    /* title 用来源名，description 用转义描述（不重复塞两遍 desc） */
+    safe_snprintf(json, sizeof(json),
+                  "{\"type\":%d,\"level\":%d,\"title\":\"%s alert\",\"description\":\"%s\",\"source\":\"%s\",\"timestamp\":%ld}",
+                  event->type, event->level, event->source, esc, event->source, (long)event->timestamp);
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return;
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    curl_easy_setopt(curl, CURLOPT_URL, "http://127.0.0.1:8088/api/alert_event");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
+    curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    LOG_DEBUG_T("AlertNotify", "WSReport", "OK", "alert event reported (level=%d)", event->level);
+}
 
 /* ============================================================
  * 通知方式枚举
@@ -157,6 +212,9 @@ void alert_notify_send(const alert_event_t *event, const alert_config_t *config)
 
     int forced = (event->level >= 3);
 
+    /* 【0.4.3】WS 实时广播上报（新预警 → App/Qt/Web 实时弹条） */
+    alert_report_ws(event);
+
     /* Shell 通知（始终启用） */
     notify_shell(event);
 
@@ -179,6 +237,7 @@ void alert_notify_send(const alert_event_t *event, const alert_config_t *config)
 
 void alert_notify_force_send(const alert_event_t *event) {
     if (!event) return;
+    alert_report_ws(event);
     notify_shell(event);
     notify_tui(event);
     notify_mqtt(event);

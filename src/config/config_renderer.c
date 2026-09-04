@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_renderer.c
  * @brief   渲染器工厂与工具函数实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     实现 renderer_create 和工具函数。
  */
 

@@ -1,7 +1,7 @@
 /**
  * @file    src/core/background_init.c
  * @brief   后台初始化线程实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：容错编程（任何失败都不影响主进程）
  */
 

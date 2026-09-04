@@ -1,7 +1,7 @@
 /**
  * @file    src/fs/self_check.c
  * @brief   启动自检（调用新 check_manager）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 使用新的 check_manager 替代原有自检逻辑；
  *          保持 API 兼容性。
  */

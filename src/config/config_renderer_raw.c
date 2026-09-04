@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_renderer_raw.c
  * @brief   RAW 渲染器实现（最终兜底）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     在 read_line_uart 循环中添加 feed_heartbeat()
  */
 

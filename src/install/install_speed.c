@@ -1,7 +1,7 @@
 /**
  * @file    src/install/install_speed.c
  * @brief   速度自动计算实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  */
 

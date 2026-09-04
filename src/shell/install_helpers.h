@@ -1,7 +1,7 @@
 /**
  * @file    src/shell/install_helpers.h
  * @brief   多发行版安装辅助函数（安全冗余）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 增加预检查函数声明和包管理器检测声明
  */
 

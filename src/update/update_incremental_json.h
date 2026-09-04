@@ -1,7 +1,7 @@
 /**
  * @file    update_incremental_json.h
  * @brief   增量更新 JSON manifest 接口（2026-08-22 定稿）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  */
 
 #ifndef UPDATE_INCREMENTAL_JSON_H

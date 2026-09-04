@@ -1,7 +1,7 @@
 /**
  * @file    src/ai/ai_privilege.h
  * @brief   AI 权限管理接口
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C3, AI-CTL
  * @changes 新增 AI 权限分级接口
  */

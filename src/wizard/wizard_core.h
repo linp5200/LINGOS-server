@@ -1,7 +1,7 @@
 /**
  * @file    src/wizard/wizard_core.h
  * @brief   配置向导核心上下文定义（补充缺失源码：wizard_context_t）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 补全缺失的 wizard_context_t 定义（UI 上下文 = 引擎上下文 + 渲染快照）
  */
 

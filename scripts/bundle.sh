@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
 # ============================================================
-# LING OS 全捆打包脚本（0.2.1 定稿——先生裁决 H4：CI 出全捆包）
+# LING OS 打包脚本（0.4.3——先生裁决命名规范）
 # 用法: ./scripts/bundle.sh [输出目录]
 # 依赖: make 编译产物（lingos_linux lingosd lingos_supervisor）+ python3-venv
-# 产出: LINGOS-<ver>-<arch>-linux/ 目录（解压即用）
+# 产出(新命名规范 2026-09-04 先生定)：
+#   LINGOS_server_linux_v<发行版>_<arch>_allbin.tar.gz   ← 全捆（lib/venv/共享资源）
+#   LINGOS_server_linux_v<发行版>_<arch>_sysbin.tar.gz   ← 仅系统二进制（依赖用户自装）
+# allbin 结构:
 #   ├── lingos_linux / lingosd / lingos_supervisor  (rpath=$ORIGIN/../lib)
 #   ├── lib/          全捆 .so（ldd 递归——过滤 glibc 白名单）+ manifest.json
 #   ├── python/       venv --copies（含解释器副本 + 全部第三方库）
-#   └── bin/          espeak-ng/piper 等随包命令（可选——按需放入）
+#   ├── share/webui/  Web UI（0.4.3——浏览器 /ui 访问）
+#   └── bin/          espeak-ng/piper 等随包命令（可选）
 # ============================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/dist}"
-# 【先生裁决 2026-08-14】发行版本号独立于内部版本（LN-B-5.1.2.6-rc）：
-# 默认 0.0.1（CI 用 RELEASE_VER 覆盖）；内部版本仍由 Makefile 提供
-VER="${RELEASE_VER:-0.0.1}"
+# 【先生裁决 2026-08-14/09-04】发行版本号独立于内部版本：默认 0.4.3（CI 用 RELEASE_VER 覆盖）
+VER="${RELEASE_VER:-0.4.3}"
 ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64|amd64) ARCH=x86_64 ;;
     aarch64|arm64) ARCH=aarch64 ;;
 esac
-# 【先生裁决 2026-08-14】包名 = LINGOS-版本号-server.后缀（双架构加架构标识防覆盖）
-PKG="LINGOS-${VER}-server-${ARCH}"
+# 【先生裁决 2026-09-04】新命名规范：LINGOS_<server|app>_<系统>_v<版本>_<架构>_<plugin|allbin|sysbin>
+PKG="LINGOS_server_linux_v${VER}_${ARCH}_allbin"
 DEST="$OUT/$PKG"
 
 echo "==> 打包: $PKG  (内部版本: $(grep -oP 'VERSION = "\K[^"]+' "$ROOT/Makefile" | head -1))"
@@ -147,7 +150,55 @@ exec "$DIR/lingos_linux" "$@"
 EOF
 chmod +x "$DEST/start.sh"
 
-# ---------- 7. 压缩 ----------
+# ---------- 6b. Web UI（0.4.3——网页访问 http://host:8080/ui） ----------
+if [ -d "$ROOT/webui" ]; then
+    mkdir -p "$DEST/share/webui"
+    cp -a "$ROOT"/webui/* "$DEST/share/webui/" 2>/dev/null || true
+    echo "==> Web UI 已装入 share/webui/（浏览器访问 /ui）"
+fi
+
+# ---------- 7b. sysbin 包（0.4.3——仅系统二进制，依赖用户自装；先生裁决三包型） ----------
+SYS_PKG="LINGOS_server_linux_v${VER}_${ARCH}_sysbin"
+SYS_DEST="$OUT/$SYS_PKG"
+mkdir -p "$SYS_DEST" "$SYS_DEST/share/webui"
+for bin in lingos_linux lingosd lingos_supervisor; do
+    [ -f "$DEST/$bin" ] && cp -a "$DEST/$bin" "$SYS_DEST/"
+done
+cp -a "$ROOT"/src/python/*.py "$SYS_DEST/" 2>/dev/null || true
+# 【0.4.3】Web UI 随 sysbin（网页访问 http://host:8080/ui——先生重点要求）
+cp -a "$ROOT"/webui/* "$SYS_DEST/share/webui/" 2>/dev/null || true
+cat > "$SYS_DEST/README.txt" <<'EOF'
+LING OS sysbin 包（仅系统二进制 + Python 脚本 + Web UI）
+依赖（用户自行安装）：libcurl libseccomp libsqlite3 libmosquitto libmicrohttpd libnotcurses(可选)
+python3 + requests/websocket-client；glibc >= 2.35
+部署：解压到目标目录，参考 DEPENDENCIES.md 安装依赖后 ./lingos_linux
+Web UI：浏览器访问 http://<host>:8080/ui（本包已含 share/webui）
+EOF
+cd "$OUT" && tar czf "$SYS_PKG.tar.gz" "$SYS_PKG" && rm -rf "$SYS_PKG"
+echo "✅ sysbin 包: $OUT/$SYS_PKG.tar.gz"
+
+# ---------- 7d. plugin 包（0.4.3——先生三包型裁决：非基础功能插件集，可增删） ----------
+PLG_PKG="LINGOS_server_linux_v${VER}_${ARCH}_plugin"
+PLG_DEST="$OUT/$PLG_PKG"
+mkdir -p "$PLG_DEST/plugins/python" "$PLG_DEST/share/webui"
+# 扩展服务插件（非基础功能——核心不含时按需装入 /LINGOS 对应目录启用）
+cp -a "$ROOT"/src/python/rtsp_streamer.py "$ROOT"/src/python/ocr_service.py \
+      "$ROOT"/src/python/calibration_service.py "$ROOT"/src/python/yolo_service.py \
+      "$ROOT"/src/python/vision_ai.py "$ROOT"/src/python/vision_train.py \
+      "$ROOT"/src/python/ha_integration.py "$ROOT"/src/python/voice_service.py \
+      "$ROOT"/src/python/plugin/*.py "$PLG_DEST/plugins/python/" 2>/dev/null || true
+cp -a "$ROOT"/webui/* "$PLG_DEST/share/webui/" 2>/dev/null || true
+cat > "$PLG_DEST/README.txt" <<'EOF'
+LING OS plugin 包（系统插件集——先生 2026-09-04 三包型裁决）
+含扩展服务插件（python）：视觉(rtsp/ocr/标定/yolo/vision_ai/vision_train)、HA 桥、语音、Web UI
+安装：放入宿主 /LINGOS/plugins/（或 registry 注册）后由系统插件管理器加载/热重载
+适用范围：LINGOS_server_linux 0.4.3（插件支持的系统版本范围内可插入）
+非基础功能——可按需删减/扩展
+EOF
+cd "$OUT" && tar czf "$PLG_PKG.tar.gz" "$PLG_PKG" && rm -rf "$PLG_PKG"
+echo "✅ plugin 包: $OUT/$PLG_PKG.tar.gz"
+
+# ---------- 7c. 压缩（allbin） ----------
 cd "$OUT"
 tar czf "$PKG.tar.gz" "$PKG"
 echo "=========================================="

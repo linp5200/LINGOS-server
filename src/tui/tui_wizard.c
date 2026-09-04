@@ -1,7 +1,7 @@
 /**
  * @file    src/tui/tui_wizard.c
  * @brief   TUI 配置向导渲染器（集成 wizard_core 框架，三层降级）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 增强 is_tui_available() 诊断日志；
  *          新增 tui_ask_user() 交互函数，在检测失败时询问用户；
  *          修改 tui_wizard_run() 流程，支持用户强制使用 TUI；

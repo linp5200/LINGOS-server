@@ -1,7 +1,7 @@
 /**
  * @file    src/shell/skill_store.c
  * @brief   本地技能商店（OpenClaw 式技能市场，完全离线可用）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, UD-DR#S1
  * @par     功能：skill install/list/search/enable/disable/uninstall
  *          技能市场目录 /LINGOS/skills/market/<name>/（skill.json + 实现文件）

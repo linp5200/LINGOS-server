@@ -1,7 +1,7 @@
 /**
  * @file    src/tui/tui_renderer.h
  * @brief   Notcurses 渲染器声明
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C3, AI-CTL
  * @changes 添加 render_count、render_fail_count、last_render_time 成员
  */

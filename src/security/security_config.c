@@ -1,7 +1,7 @@
 /**
  * @file    security_config.c
  * @brief   安全配置读写实现（security.json）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 修复 self-deadlock：拆分 security_config_set_defaults 为内部/外部版本
  */
 

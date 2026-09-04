@@ -1,7 +1,7 @@
 /**
  * @file    src/health/check_items.h
  * @brief   具体检查项声明（语言、依赖、硬件、配置、网络、权限、版本）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  * @changes 对齐 check_manager 接口模型：
  *          - 检查函数改为无参、返回 check_result_t（0/1/2/4）

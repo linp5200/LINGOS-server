@@ -1,7 +1,7 @@
 /**
  * @file    src/ai/ai_config.c
  * @brief   AI 配置管理（统一从 config_core 读取）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C3, CM, UD-DR#S1, UD-SYS#W2, AI-CTL
  * @changes 对齐 ai_config.h 接口契约，修复编译错误：
  *          - 结构体成员改用 deepseek_api_key / deepseek_model / deepseek_base_url /

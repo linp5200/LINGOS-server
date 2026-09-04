@@ -1,7 +1,7 @@
 /**
  * @file    src/health/check_items.c
  * @brief   自检检查项实现（适配 check_manager 接口模型）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, CM
  * @changes 重写以对齐 check_manager.h/c 接口：
  *          - 检查函数改为无参，返回 check_result_t（0/1/2/4）

@@ -2,7 +2,7 @@
  * @file    port_config.c
  * @brief   端口配置（2026-08-22 先生裁决：端口不可在配置向导中更改——
  *          使用特定指令 port 指令族；本模块从 ports.json 读取覆盖默认宏）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C-C 防弹/容错/跛脚 + C1 分级日志
  */
 

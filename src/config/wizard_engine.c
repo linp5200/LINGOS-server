@@ -1,7 +1,7 @@
 /**
  * @file    src/config/wizard_engine.c
  * @brief   向导引擎实现
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, AI-CTL
  * @changes 添加 #include "config_renderer.h"；
  *          修正 builtin 步骤初始化列表字段顺序；

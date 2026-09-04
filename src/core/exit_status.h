@@ -1,7 +1,7 @@
 /**
  * @file    src/core/exit_status.h
  * @brief   退出状态管理头文件（检测异常关闭）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  */
 
 #ifndef CORE_EXIT_STATUS_H

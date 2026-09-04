@@ -1,7 +1,7 @@
 /**
  * @file    src/shell/config_wizard.c
  * @brief   配置向导 Shell 入口（集成 wizard_core 框架，三层回退）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 简化回退调度：移除 is_tui_available() 重复检测，由 tui_wizard_run 内部处理回退；
  *          增加模式检测日志
  */

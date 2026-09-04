@@ -1,7 +1,7 @@
 /**
  * @file    src/core/background_init.h
  * @brief   后台初始化线程头文件
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  */
 
 #ifndef CORE_BACKGROUND_INIT_H

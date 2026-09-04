@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_debug.h
  * @brief   配置调试模块声明
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C3
  * @changes 新增调试函数声明；定义 CONFIG_CUT_UP/DOWN 常量。
  */

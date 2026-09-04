@@ -1,7 +1,7 @@
 /**
  * @file    src/lib/log_extra.c
  * @brief   分级日志系统（彩色终端 + 按天轮转 + 启动序号）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, AI-CTL
  * @changes 增强 log_draw_progress_full 支持速度/大小/耗时；
  *          修复 log_draw_status_bar 空指针检查 + 行清除 + 换行；

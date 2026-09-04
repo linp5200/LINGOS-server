@@ -1,6 +1,31 @@
 # LING OS 服务端更新日志（CHANGELOG）
 
-版本线：发行版 0.0.x（独立于内部 LN-B-x.x.x.x-rc）· 包名：LINGOS-<版本>-server-<架构>.tar.gz
+版本线：发行版 0.4.3（server/app 统一——先生 2026-09-04 规范）· 内部 LN-0.4.3
+包名（新规范）：LINGOS_server_linux_v<版本>_<架构>_<allbin|sysbin|plugin>.tar.gz
+
+---
+
+## [0.4.3] - 2026-09-04（系统重构部署批次——先生全权授权）
+
+### 新增（Features）
+- **Web UI 网页访问（先生重点要求）**：
+  - `POST /api/cmd` 命令代理（http_server → ai.sock → JSON）——网页/任意 HTTP 客户端统一命令入口
+  - `GET /ui` `/console` `/` 静态 UI 页：从 `<root>/share/webui/index.html` 读（可热更新；缺文件回退内嵌页）
+  - 完整功能 Web UI 首版（webui/index.html——17 页：控制台/AI对话/会话/提供商/技能/记忆/人格/预警/天气/视觉/HA/文件/日志/端口/更新/系统/设置，FUI v2 地形风格）
+  - 真数据绑定：/system/health + /api/cmd 拉取会话/预警/健康实时填充（失败显示 -- 不模拟）
+- **预警实时广播**：alert_notify.c 增加 libcurl POST `/api/alert_event`（仿 visiond）→ ai_server WS 广播 `alert_event`——App/Qt/Web 实时弹条（原仅轮询）
+- **天气系统（Open-Meteo）**：
+  - `cmd_weather_current`——实时天气（温度/体感/湿度/风/气压/能见度/UV）+ JSON 缓存 10min
+  - `cmd_weather_forecast`——逐小时 24h + 7 日预报 + 缓存 6h
+  - 天气源可切换：open-meteo（默认）/ wttr.in 兜底 / 用户自定义 API（custom_url——先生裁决）
+  - 配置 `/LINGOS/system/config/weather.json`（城市 lat/lon/api/custom_url）
+- **命名规范 v0.4.3**（先生 09-04 定稿）：`LINGOS_<server|app>_<linux|win|android>_v<版本>_<架构>_<plugin|allbin|sysbin>`
+  - bundle.sh：allbin（原全捆）+ **sysbin**（仅二进制+py，README 注明依赖）双包产出
+- **内部版本统一**：`LN-B-5.1.2.6-rc` → **`LN-0.4.3`**（先生：去 B 跟发行版；100 文件全量替换）
+
+### 基础设施（0.4.3 路径集中化起步）
+- `lingos_data_root()` 支持 `LINGOS_ROOT` 环境变量覆盖（全捆 start.sh 已导出——包内 share/webui 随包生效，部署零拷贝）
+- env_bootstrap 目录清单增加 `/share` `/share/webui`
 
 ---
 

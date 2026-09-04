@@ -1,7 +1,7 @@
 /**
  * @file    src/config/config_renderer_tui.c
  * @brief   TUI 渲染器实现（卡片叠加式配置向导）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C, AI-CTL
  * @changes 完全重写：
  *          - 卡片叠加显示已完成步骤（步骤标题 + 选中的值）

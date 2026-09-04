@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LING OS Server UI v2 — 完整功能预览 · Qt6 桌面形态</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --w:#F4F6F8; --g:#A9B1BC; --d:#68717D; --dd:#3C434D;
+  --red:#FF4D4D; --green:#6CF59A; --amber:#FFBE4D; --blue:#5AB0FF;
+  --mono:'JetBrains Mono',monospace; --disp:'Rajdhani','Noto Sans SC',sans-serif; --zh:'Noto Sans SC',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;min-width:1180px}
+/* 顶栏 */
+.topbar{display:flex;align-items:center;gap:16px;height:52px;padding:0 20px;background:#1A1E23;border-bottom:1px solid rgba(255,255,255,.1);position:sticky;top:0;z-index:20}
+.topbar .logo{font-family:var(--disp);font-weight:700;font-size:20px;letter-spacing:4px}
+.topbar .logo em{font-style:normal;color:var(--red)}
+.topbar .sep{width:1px;height:22px;background:rgba(255,255,255,.12)}
+.topbar .host{font-family:var(--mono);font-size:10px;color:var(--g);letter-spacing:1px}
+.topbar .lk{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--green);margin-left:auto}
+.topbar .lk .p{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:bl 1.4s infinite}
+@keyframes bl{50%{opacity:.25}}
+.topbar .ver{font-family:var(--mono);font-size:9px;color:var(--d);border:1px solid rgba(255,255,255,.15);padding:3px 8px;letter-spacing:1px}
+.topbar .clock{font-family:var(--mono);font-size:11px;color:var(--w)}
+.layout{display:flex;min-height:calc(100vh - 52px)}
+/* 侧栏：分组 */
+.side{width:200px;background:#171B20;border-right:1px solid rgba(255,255,255,.08);padding:12px 8px;display:flex;flex-direction:column;position:sticky;top:52px;height:calc(100vh - 52px);overflow-y:auto}
+.side::-webkit-scrollbar{width:4px}.side::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08)}
+.sec{font-family:var(--mono);font-size:8px;color:var(--dd);letter-spacing:2px;padding:10px 10px 4px}
+.nav{display:flex;flex-direction:column;gap:1px}
+.nav .ni{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:2px;font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;color:var(--d);cursor:pointer;border-left:2px solid transparent;user-select:none}
+.nav .ni .ic{width:15px;text-align:center;font-size:11px;opacity:.75}
+.nav .ni:hover{color:var(--g);background:rgba(255,255,255,.03)}
+.nav .ni.on{color:var(--w);background:rgba(255,255,255,.05);border-left-color:var(--green)}
+.nav .ni.on .ic{color:var(--green);opacity:1}
+.nav .ni .b{font-size:7px;background:var(--red);color:#fff;border-radius:6px;padding:1px 5px;margin-left:auto}
+.side .foot{border-top:1px solid rgba(255,255,255,.07);padding:10px 8px 2px;font-family:var(--mono);font-size:8px;color:var(--dd);line-height:1.9;margin-top:8px}
+.main{flex:1;position:relative;overflow:hidden}
+#terrain{position:fixed;inset:52px 0 0 200px;width:calc(100% - 200px);height:calc(100% - 52px);z-index:0;pointer-events:none}
+.page{position:absolute;inset:0;overflow-y:auto;display:none;padding:18px 22px;z-index:1}
+.page.on{display:block}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1)}
+.phead{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:13px}
+.phead .l .k{font-family:var(--mono);font-size:9px;color:var(--d);letter-spacing:3px}
+.phead .l h1{font-family:var(--disp);font-weight:600;font-size:28px;letter-spacing:4px;color:var(--w);margin-top:3px}
+.phead .r{font-family:var(--mono);font-size:9px;color:var(--g);text-align:right;line-height:1.8}
+.phead .r b{color:var(--green);font-weight:500}
+.grid{display:grid;gap:10px}.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+.cols{display:grid;grid-template-columns:1.6fr 1fr;gap:10px}
+.card{border:1px solid rgba(255,255,255,.15);background:rgba(26,30,35,.62);padding:12px 13px;position:relative}
+.card .ct{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:8px;color:var(--d);letter-spacing:2px;margin-bottom:7px}
+.card .ct b{color:var(--g);font-weight:500}
+.big{font-family:var(--disp);font-weight:700;font-size:24px;color:var(--w)}
+.big .u{font-size:10px;color:var(--d);font-family:var(--mono);font-weight:400;margin-left:2px}
+.evlog{font-family:var(--mono);font-size:9px;line-height:1.85;color:var(--dd)}
+.evlog .e{display:flex;gap:9px;align-items:baseline;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.evlog .e .tm{color:var(--dd);flex-shrink:0;font-size:8.5px}
+.evlog .e .lv{width:36px;flex-shrink:0;color:var(--d);font-size:8.5px}
+.evlog .e .lv.d{color:var(--green)}.evlog .e .lv.a{color:var(--amber)}.evlog .e .lv.e{color:var(--red)}.evlog .e .lv.b{color:var(--blue)}
+.evlog .e .tx{color:var(--g)}.evlog .e .tx b{color:var(--w);font-weight:500}
+/* ===== 对话页 ===== */
+.chatwrap{display:flex;flex-direction:column;height:calc(100vh - 150px);border:1px solid rgba(255,255,255,.15);background:rgba(22,26,31,.8)}
+.chathead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08);font-family:var(--mono);font-size:9px;color:var(--d)}
+.chathead .mod{border:1px solid rgba(255,255,255,.2);padding:2px 8px;color:var(--green);letter-spacing:1px}
+.chathead .ctx{margin-left:auto;display:flex;gap:10px}
+.chathead .ctx .tok{color:var(--g)} .chathead .ctx .tok b{color:var(--w)}
+.chatmsgs{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.cmsg{display:flex;gap:10px;max-width:78%}
+.cmsg.u{align-self:flex-end;flex-direction:row-reverse}
+.cmsg .who{width:26px;height:26px;border:1px solid rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0}
+.cmsg.u .who{background:rgba(108,245,154,.12);border-color:rgba(108,245,154,.3)}
+.cmsg .bub{border:1px solid rgba(255,255,255,.14);background:rgba(30,34,40,.85);padding:9px 12px;font-size:13px;line-height:1.6}
+.cmsg.u .bub{background:rgba(108,245,154,.06);border-color:rgba(108,245,154,.2)}
+.cmsg .bub .meta{font-family:var(--mono);font-size:8px;color:var(--dd);margin-bottom:4px}
+.cmsg .bub pre{font-family:var(--mono);font-size:10px;background:rgba(0,0,0,.3);padding:7px;margin:6px 0;overflow-x:auto;color:var(--g)}
+.toolblk{border-left:2px solid var(--green);background:rgba(255,255,255,.03);padding:6px 10px;margin:6px 0;font-family:var(--mono);font-size:9.5px;color:var(--g)}
+.toolblk .nm{color:var(--w)} .toolblk .ok{color:var(--green)}
+.thinkblk{border-left:2px solid var(--dd);padding:5px 10px;margin:5px 0;font-family:var(--mono);font-size:9.5px;color:var(--d);background:rgba(255,255,255,.02)}
+.chatin{border-top:1px solid rgba(255,255,255,.08);padding:10px 14px;display:flex;gap:10px;align-items:flex-end;background:rgba(22,26,31,.9)}
+.chatin textarea{flex:1;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.18);color:var(--w);font-family:var(--zh);font-size:13px;padding:9px 12px;resize:none;height:44px;outline:none}
+.chatin textarea:focus{border-color:rgba(108,245,154,.4)}
+.chatin .mic{width:40px;height:40px;border:1px solid rgba(255,255,255,.2);background:transparent;color:var(--g);font-size:15px;cursor:pointer}
+.chatin .send{width:64px;height:40px;border:1px solid rgba(108,245,154,.4);background:rgba(108,245,154,.08);color:var(--green);font-family:var(--mono);font-size:11px;letter-spacing:1px;cursor:pointer}
+.chatstatus{display:flex;gap:14px;padding:6px 14px;border-top:1px solid rgba(255,255,255,.06);font-family:var(--mono);font-size:8px;color:var(--dd)}
+/* ===== 会话/技能/通用列表 ===== */
+.listwrap{border:1px solid rgba(255,255,255,.13);background:rgba(24,28,33,.6)}
+.lrow{display:flex;align-items:center;gap:12px;padding:10px 13px;border-bottom:1px solid rgba(255,255,255,.05)}
+.lrow:hover{background:rgba(255,255,255,.02)}
+.lrow .t{flex:1;min-width:0}
+.lrow .t .n{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lrow .t .s{font-family:var(--mono);font-size:8px;color:var(--dd);margin-top:2px}
+.lrow .st2{font-family:var(--mono);font-size:8.5px;color:var(--g);text-align:right;flex-shrink:0}
+.lrow .st2 .tok{color:var(--amber)}
+.lrow .ops{display:flex;gap:5px;flex-shrink:0}
+.lrow .ops button{background:transparent;border:1px solid rgba(255,255,255,.15);color:var(--d);font-size:9px;width:24px;height:24px;cursor:pointer;font-family:var(--mono)}
+.lrow .ops button:hover{border-color:var(--red);color:var(--red)}
+.tag{font-size:8px;font-family:var(--mono);border:1px solid rgba(255,255,255,.2);padding:1px 6px;letter-spacing:1px;flex-shrink:0}
+.tag.g{color:var(--green);border-color:rgba(108,245,154,.35)} .tag.a{color:var(--amber);border-color:rgba(255,190,77,.35)} .tag.r{color:var(--red);border-color:rgba(255,77,77,.35)} .tag.b{color:var(--blue);border-color:rgba(90,176,255,.35)}
+.tag.dim{color:var(--d)}
+.toolbar{display:flex;gap:8px;margin-bottom:10px;align-items:center}
+.toolbar input{background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.16);color:var(--w);font-family:var(--zh);font-size:12px;padding:6px 10px;width:230px;outline:none}
+.toolbar button{background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--g);font-family:var(--mono);font-size:9px;padding:6px 11px;cursor:pointer;letter-spacing:1px}
+.toolbar button:hover{border-color:var(--green);color:var(--green)}
+.toolbar .cnt{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--d)}
+.sw{width:30px;height:16px;border:1px solid rgba(255,255,255,.25);border-radius:8px;position:relative;background:rgba(255,255,255,.04);flex-shrink:0;cursor:pointer}
+.sw.on{border-color:var(--green);background:rgba(108,245,154,.1)}
+.sw:after{content:'';position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:var(--dd);transition:.15s}
+.sw.on:after{left:auto;right:2px;background:var(--green)}
+.risk{width:38px;text-align:center;font-family:var(--mono);font-size:8px;flex-shrink:0}
+.risk.H{color:var(--red)}.risk.M{color:var(--amber)}.risk.L{color:var(--green)}
+/* ===== 文件树 ===== */
+.fs{display:grid;grid-template-columns:250px 1fr;gap:10px}
+.fstree{border:1px solid rgba(255,255,255,.13);background:rgba(24,28,33,.6);padding:6px;overflow-y:auto;max-height:calc(100vh - 220px)}
+.fsnode{font-family:var(--mono);font-size:10px;padding:5px 8px;color:var(--d);cursor:pointer;border-radius:2px;display:flex;gap:7px;align-items:center}
+.fsnode:hover{color:var(--g);background:rgba(255,255,255,.03)}
+.fsnode.on{color:var(--green);background:rgba(108,245,154,.06)}
+.fsnode .sub{margin-left:16px;padding-left:8px;border-left:1px solid rgba(255,255,255,.06)}
+.fslist{border:1px solid rgba(255,255,255,.13);background:rgba(24,28,33,.55)}
+/* 更新/端口等 */
+.warnbox{border:1px solid rgba(255,190,77,.3);background:rgba(255,190,77,.05);padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--amber);display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.warnbox button{margin-left:auto;background:rgba(255,190,77,.1);border:1px solid rgba(255,190,77,.4);color:var(--amber);font-family:var(--mono);font-size:9px;padding:4px 10px;cursor:pointer}
+.metric .mb{height:3px;background:rgba(255,255,255,.08);margin-top:7px;position:relative}.metric .mb i{position:absolute;left:0;top:0;height:100%;background:var(--green)}
+.metric.warn .mb i{background:var(--amber)}
+.metric .row2{display:flex;align-items:baseline;gap:8px}
+.metric .dl{margin-left:auto;font-family:var(--mono);font-size:8px;color:var(--green)}
+.metric.warn .dl{color:var(--amber)}
+.metric .sp{position:absolute;right:10px;bottom:9px;width:70px;height:20px;opacity:.5}
+.portrow{display:flex;align-items:center;gap:12px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05)}
+.portrow .pn{font-family:var(--mono);font-size:12px;color:var(--w);width:70px}
+.portrow .pu{font-family:var(--mono);font-size:9px;color:var(--d);flex:1}
+.portrow .stat{font-family:var(--mono);font-size:8px}
+.portrow .stat.run{color:var(--green)} .portrow .stat.stop{color:var(--red)} .portrow .stat.idle{color:var(--dd)}
+.logview{border:1px solid rgba(255,255,255,.14);background:rgba(22,26,30,.7);font-family:var(--mono);font-size:9px;line-height:1.8;padding:10px 13px;height:calc(100vh - 260px);overflow-y:auto}
+.logview .l{display:flex;gap:10px;border-bottom:1px solid rgba(255,255,255,.03)}
+.logview .l .tm{color:var(--dd);flex-shrink:0}.logview .l .lvl{width:42px;flex-shrink:0}
+.logview .l .lvl.DEBUG{color:var(--dd)}.logview .l .lvl.INFO{color:var(--g)}.logview .l .lvl.WARN{color:var(--amber)}.logview .l .lvl.ERROR{color:var(--red)}
+.logview .l .mod{color:var(--d);width:80px;flex-shrink:0}.logview .l .msg{color:var(--g)}.logview .l .msg b{color:var(--w)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">LING<em>OS</em></div><div class="sep"></div>
+  <div class="host">//SERVER · 完整功能控制台</div>
+  <span class="lk"><span class="p"></span>LINKED · 192.168.1.20 · WS 2939</span>
+  <span class="ver">LN-0.4.3 · Qt6 UI</span>
+  <span class="clock" id="clock">--:--:--</span>
+</div>
+<div class="layout">
+<div class="side">
+  <div class="sec">总览</div>
+  <div class="nav"><div class="ni on" data-p="console"><span class="ic">▣</span>控制台</div></div>
+  <div class="sec">对话与 AI</div>
+  <div class="nav">
+    <div class="ni" data-p="chat"><span class="ic">◈</span>AI 对话</div>
+    <div class="ni" data-p="sessions"><span class="ic">▤</span>会话管理</div>
+    <div class="ni" data-p="providers"><span class="ic">⬡</span>模型与提供商</div>
+    <div class="ni" data-p="skills"><span class="ic">⌬</span>技能 <span class="b">68</span></div>
+    <div class="ni" data-p="memory"><span class="ic">▦</span>记忆</div>
+    <div class="ni" data-p="persona"><span class="ic">☺</span>人格</div>
+  </div>
+  <div class="sec">监控</div>
+  <div class="nav">
+    <div class="ni" data-p="alert"><span class="ic">▲</span>预警</div>
+    <div class="ni" data-p="weather"><span class="ic">☁</span>天气</div>
+    <div class="ni" data-p="vision"><span class="ic">◉</span>视觉</div>
+    <div class="ni" data-p="ha"><span class="ic">⬡</span>家居 HA</div>
+  </div>
+  <div class="sec">系统</div>
+  <div class="nav">
+    <div class="ni" data-p="files"><span class="ic">▤</span>文件</div>
+    <div class="ni" data-p="log"><span class="ic">≡</span>日志</div>
+    <div class="ni" data-p="ports"><span class="ic">⇄</span>端口与网络</div>
+    <div class="ni" data-p="update"><span class="ic">⇪</span>升级更新</div>
+    <div class="ni" data-p="sys"><span class="ic">⬢</span>系统与插件</div>
+  </div>
+  <div class="sec">配置</div>
+  <div class="nav"><div class="ni" data-p="setting"><span class="ic">⚙</span>设置与高级</div></div>
+  <div class="foot"><div style="display:flex;gap:5px;align-items:center;color:var(--d)"><span style="width:5px;height:5px;border-radius:50%;background:var(--green)"></span>lingosd · alertd · visiond</div>LING OS 0.4.3 · 功能预览 v2</div>
+</div>
+<canvas id="terrain"></canvas>
+<div class="main">
+
+<!-- 控制台 -->
+<div class="page on" id="p-console">
+  <div class="phead"><div class="l"><div class="k">▍CONTROL CONSOLE</div><h1>控制台</h1></div><div class="r">UPTIME <b>03:12:44</b> · MODEL <b>deepseek-chat</b><br>会话 #4 激活 · token 今日 <b>128K</b></div></div>
+  <div class="grid g4">
+    <div class="card metric"><div class="ct"><span>CPU</span></div><div class="row2"><span class="big">32<span class="u">%</span></span><span class="dl">▲4.2</span></div><div class="mb"><i style="width:32%"></i></div><svg class="sp" viewBox="0 0 70 20"><polyline fill="none" stroke="#6CF59A" stroke-width="1.2" points="0,16 9,12 18,14 27,8 36,11 45,5 54,9 70,4"/></svg></div>
+    <div class="card metric"><div class="ct"><span>MEM</span></div><div class="row2"><span class="big">31<span class="u">%</span></span><span class="dl">1.2/4.0G</span></div><div class="mb"><i style="width:31%"></i></div><svg class="sp" viewBox="0 0 70 20"><polyline fill="none" stroke="#6CF59A" stroke-width="1.2" points="0,5 9,8 18,6 27,12 36,9 45,14 54,12 70,15"/></svg></div>
+    <div class="card metric warn"><div class="ct"><span>DISK</span></div><div class="row2"><span class="big">64<span class="u">%</span></span><span class="dl">◆500M 余</span></div><div class="mb"><i style="width:64%"></i></div><svg class="sp" viewBox="0 0 70 20"><polyline fill="none" stroke="#FFBE4D" stroke-width="1.2" points="0,9 9,11 18,8 27,10 36,7 45,12 54,9 70,11"/></svg></div>
+    <div class="card metric"><div class="ct"><span>ALERT</span></div><div class="row2"><span class="big">3<span class="u">条</span></span><span class="dl">L2×1 L3×2</span></div><div class="mb"><i style="width:18%"></i></div></div>
+  </div>
+  <div class="cols" style="margin-top:10px">
+    <div class="card"><div class="ct"><span>TOKEN 趋势 · 近 6h</span><b>↓42.1k ↑8.4k</b></div><svg viewBox="0 0 400 70" preserveAspectRatio="none" style="width:100%;height:70px"><defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6CF59A" stop-opacity=".16"/><stop offset="1" stop-color="#6CF59A" stop-opacity="0"/></linearGradient></defs><line x1="0" y1="18" x2="400" y2="18" stroke="rgba(255,255,255,.05)"/><line x1="0" y1="36" x2="400" y2="36" stroke="rgba(255,255,255,.03)"/><line x1="0" y1="54" x2="400" y2="54" stroke="rgba(255,255,255,.03)"/><path d="M0,58 C26,50 45,54 66,42 S104,46 124,32 S158,38 178,25 S210,30 232,18 S262,25 284,12 S314,19 336,8 S366,13 400,5 L400,70 L0,70 Z" fill="url(#tg)"/><polyline fill="none" stroke="#6CF59A" stroke-width="1.4" points="0,58 26,50 45,54 66,42 104,46 124,32 158,38 178,25 210,30 232,18 262,25 284,12 314,19 336,8 366,13 400,5"/></svg></div>
+    <div class="card"><div class="ct"><span>SYSTEM EVENTS</span><b>WS LIVE</b></div><div class="evlog">
+      <div class="e"><span class="tm">14:04:58</span><span class="lv">INFO</span><span class="tx">sync delta <b>3 条</b></span></div>
+      <div class="e"><span class="tm">14:04:15</span><span class="lv d">DET</span><span class="tx">cam0 · car 0.88</span></div>
+      <div class="e"><span class="tm">14:03:30</span><span class="lv a">WARN</span><span class="tx">disk 余量 <b>500M</b></span></div>
+      <div class="e"><span class="tm">14:03:02</span><span class="lv">INFO</span><span class="tx">token <b>+2.1k</b></span></div>
+      <div class="e"><span class="tm">14:02:47</span><span class="lv d">DET</span><span class="tx">cam0 · person 0.92</span></div>
+      <div class="e"><span class="tm">14:02:11</span><span class="lv">INFO</span><span class="tx">session <b>#4</b> 同步完成</span></div></div></div>
+  </div>
+</div>
+
+<!-- AI 对话 -->
+<div class="page" id="p-chat">
+  <div class="phead"><div class="l"><div class="k">▍AI CHAT</div><h1>AI 对话</h1></div><div class="r">会话 <b>#4 系统架构讨论</b> · <span class="tag g">deepseek-chat</span><br>上下文 <b>62%</b> · 8.4k tok</div></div>
+  <div class="chatwrap">
+    <div class="chathead"><span>#4 系统架构讨论</span><span class="mod">deepseek-chat</span><span class="ctx"><span class="tok">↑1.2k ↓3.4k</span><span>缓存 <b style="color:var(--green)">on</b></span></span></div>
+    <div class="chatmsgs">
+      <div class="cmsg"><div class="who">N</div><div class="bub"><div class="meta">NOOK · 人格 诺克</div>好的，先生。我们继续系统架构讨论——上轮已定 0.4.3 命名与目录重构方向。<div class="thinkblk">▸ 继续话题 · 检查记忆中有 0.4.3 裁决</div></div></div>
+      <div class="cmsg u"><div class="who">我</div><div class="bub"><div class="meta">你 · 14:02</div>列出新命名规范的完整示例，含三包型</div></div>
+      <div class="cmsg"><div class="who">N</div><div class="bub"><div class="meta">NOOK · 思考 0.8s</div><div class="toolblk"><span class="nm">[ memory_search ]</span> 0.4.3 命名 <span class="ok">→ 3 条</span></div>好的先生，按新规范：<pre>LINGOS_server_linux_v0.4.3_aarch64_allbin.tar.gz
+LINGOS_server_linux_v0.4.3_aarch64_sysbin.tar.gz
+LINGOS_server_linux_v0.4.3_aarch64_plugin.tar.gz</pre>三包型齐出，架构保留原写法，apk 无包型后缀。</div></div>
+      <div class="cmsg"><div class="who">N</div><div class="bub"><div class="meta">NOOK</div>是否还需要我补充 App 端命名示例或进入目录重构细节？</div></div>
+    </div>
+    <div class="chatin">
+      <button class="mic">🎤</button>
+      <textarea placeholder="输入消息…… （/ 可切换模型 · Shift+Enter 换行）"></textarea>
+      <button class="send">SEND</button>
+    </div>
+    <div class="chatstatus"><span>MODEL deepseek-chat</span><span>TOKEN ↑1.2k ↓3.4k</span><span style="margin-left:auto">本地 · WS 2939 · 流式</span></div>
+  </div>
+</div>
+
+<!-- 会话管理 -->
+<div class="page" id="p-sessions">
+  <div class="phead"><div class="l"><div class="k">▍SESSIONS</div><h1>会话管理</h1></div><div class="r">共 <b>12</b> · token 总 <b>486K</b></div></div>
+  <div class="toolbar"><input placeholder="搜索会话…"><button>＋ 新建</button><span class="cnt">12 个会话</span></div>
+  <div class="listwrap">
+    <div class="lrow"><div class="t"><div class="n">系统架构讨论 · 0.4.3 重构</div><div class="s">2026-09-04 13:40 · 86 条消息</div></div><span class="tag g">deepseek-chat</span><span class="st2">token <span class="tok">128K</span><br>活跃</span><div class="ops"><button>▶</button><button>⋯</button></div></div>
+    <div class="lrow"><div class="t"><div class="n">FUI v2 UI 风格迭代</div><div class="s">2026-09-04 11:22 · 64 条消息</div></div><span class="tag g">deepseek-chat</span><span class="st2">token <span class="tok">92K</span><br>活跃</span><div class="ops"><button>▶</button><button>⋯</button></div></div>
+    <div class="lrow"><div class="t"><div class="n">摄像头后端技术方案</div><div class="s">2026-09-03 20:10 · 152 条消息</div></div><span class="tag dim">kimi</span><span class="st2">token <span class="tok">210K</span></span><div class="ops"><button>▶</button><button>⋯</button></div></div>
+    <div class="lrow"><div class="t"><div class="n">语音系统配置排查</div><div class="s">2026-09-02 · 23 条</div></div><span class="tag dim">deepseek-chat</span><span class="st2">token <span class="tok">31K</span></span><div class="ops"><button>▶</button><button>⋯</button></div></div>
+    <div class="lrow"><div class="t"><div class="n">临时 · 2026-09-04 09:30</div><div class="s">默认会话</div></div><span class="tag dim">deepseek-chat</span><span class="st2">token <span class="tok">12K</span></span><div class="ops"><button>▶</button><button>⋯</button></div></div>
+  </div>
+</div>
+
+<!-- 提供商 -->
+<div class="page" id="p-providers">
+  <div class="phead"><div class="l"><div class="k">▍PROVIDERS / MODELS</div><h1>模型与提供商</h1></div><div class="r">当前 <b>deepseek-chat</b> · 余额 <b>¥12.4</b></div></div>
+  <div class="toolbar"><button>＋ 添加提供商</button><button>↻ 获取模型列表</button><span class="cnt">3 提供商 · 5 模型</span></div>
+  <div class="grid g3">
+    <div class="card"><div class="ct"><span style="color:var(--green)">● DeepSeek</span><b>当前</b></div><div class="big" style="font-size:15px;font-family:var(--mono)">deepseek-chat</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px;line-height:1.8">格式 openai · 思考 开/中<br>余额 ¥12.4 · 上下文 64K</div></div>
+    <div class="card"><div class="ct"><span>Kimi</span></div><div class="big" style="font-size:15px;font-family:var(--mono)">moonshot-v1-8k</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px;line-height:1.8">格式 openai · 思考 关<br>上下文 8K</div></div>
+    <div class="card"><div class="ct"><span>Ollama 本地</span></div><div class="big" style="font-size:15px;font-family:var(--mono)">llama3:8b</div><div style="font-family:var(--mono);font-size:8px;color:var(--g);margin-top:5px;line-height:1.8">格式 openai · 本地 127.0.0.1:11434<br><span style="color:var(--green)">● 在线</span></div></div>
+  </div>
+</div>
+
+<!-- 技能 -->
+<div class="page" id="p-skills">
+  <div class="phead"><div class="l"><div class="k">▍SKILLS</div><h1>技能管理</h1></div><div class="r">共 <b>68</b> · 启用 <b>61</b> · <span style="color:var(--green)">内置核心不可删</span></div></div>
+  <div class="toolbar"><input placeholder="搜索技能…"><button>↻ 市场</button><button>＋ 安装(custom)</button><span class="cnt">68 技能 · schema A+B 分层</span></div>
+  <div class="cols"><div>
+  <div class="listwrap">
+    <div class="lrow"><div class="t"><div class="n">file_list / file_read / file_write <span class="tag g">内置核心</span></div><div class="s">文件系统 · 系统级</div></div><span class="risk L">LOW</span><div class="sw on"></div></div>
+    <div class="lrow"><div class="t"><div class="n">sys_command → <b style="color:var(--amber)">run_shell</b> <span class="tag a">高风险</span></div><div class="s">执行宿主命令 · 需权限审批 · 危险命令白名单</div></div><span class="risk H">HIGH</span><div class="sw"></div></div>
+    <div class="lrow"><div class="t"><div class="n">memory_search / memory_write / memory_delete</div><div class="s">记忆 L1/L2/L3</div></div><span class="risk L">LOW</span><div class="sw on"></div></div>
+    <div class="lrow"><div class="t"><div class="n">ha_search / ha_control <span class="tag dim">HA</span></div><div class="s">Help AI + 家居控制</div></div><span class="risk M">MED</span><div class="sw on"></div></div>
+    <div class="lrow"><div class="t"><div class="n">session_read / session_search</div><div class="s">跨会话检索</div></div><span class="risk L">LOW</span><div class="sw on"></div></div>
+    <div class="lrow"><div class="t"><div class="n">weather 查询 / alert 查询</div><div class="s">天气与预警工具</div></div><span class="risk L">LOW</span><div class="sw on"></div></div>
+    <div class="lrow"><div class="t"><div class="n">skill_install / skill_market</div><div class="s">技能安装 · 内置市场</div></div><span class="risk M">MED</span><div class="sw on"></div></div>
+  </div>
+  <div class="warnbox" style="margin-top:10px">⚠ 插件技能（开发者按系统 API 开发）将显示于此区——两种应用方式：二进制插件直调 / 终端过滤转发</div>
+  </div><div>
+    <div class="card"><div class="ct"><span>技能分组</span><b>DOMAIN</b></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <span class="tag g">系统</span><span class="tag">文件</span><span class="tag">记忆</span><span class="tag">会话</span><span class="tag">网络</span><span class="tag">HA</span><span class="tag">预警</span><span class="tag">天气</span><span class="tag">语音</span><span class="tag">视觉</span><span class="tag">技能</span><span class="tag a">高风险</span><span class="tag b">子AI</span><span class="tag dim">插件</span></div></div>
+    <div class="card" style="margin-top:10px"><div class="ct"><span>提示词层级</span><b>SYSTEM</b></div>
+      <div style="font-family:var(--mono);font-size:9px;line-height:2.1;color:var(--g)">
+        基础(内置) <span style="color:var(--d)">介绍/规定/方式</span><br>人格 <span style="color:var(--green)">诺克</span>（用户可改）<br>用户自定义 <span style="color:var(--amber)">有</span></div></div>
+  </div></div>
+</div>
+
+<!-- 记忆 -->
+<div class="page" id="p-memory">
+  <div class="phead"><div class="l"><div class="k">▍MEMORY</div><h1>记忆</h1></div><div class="r">三级 · <b>L1</b> 常驻 / L2 工作 / L3 检索</div></div>
+  <div class="toolbar"><input placeholder="搜索记忆…"><button>＋ 写入</button><span class="cnt">L1 12 · L2 31 · L3 286</span></div>
+  <div class="listwrap">
+    <div class="lrow"><div class="t"><div class="n"><span class="tag g">L1</span> 命名规范 0.4.3 甲案定稿</div><div class="s">2026-09-04 · 重要 · 自动注入</div></div><span class="st2"><span style="color:var(--green)">[重要]</span></span></div>
+    <div class="lrow"><div class="t"><div class="n"><span class="tag g">L1</span> 每次推送必升版本号</div><div class="s">2026-08-15 · 永久规则</div></div></div>
+    <div class="lrow"><div class="t"><div class="n"><span class="tag">L2</span> FUI v2 地形算法：高斯峰+Marching Squares+链化</div><div class="s">2026-09-04 · 工作</div></div></div>
+    <div class="lrow"><div class="t"><div class="n"><span class="tag">L3</span> DeepSeek 思考模式映射表</div><div class="s">2026-08-15 · 外部</div></div></div>
+  </div>
+</div>
+
+<!-- 人格 -->
+<div class="page" id="p-persona">
+  <div class="phead"><div class="l"><div class="k">▍PERSONALITY</div><h1>人格</h1></div><div class="r">当前 <b>诺克</b> · 用户可改</div></div>
+  <div class="cols"><div class="grid">
+    <div class="card"><div class="ct"><span>诺克 NOOK</span><b style="color:var(--green)">● 当前</b></div><div style="font-size:12px;color:var(--g);line-height:1.7">冷峻高效的分析人格 · 适合工程/系统任务<br><span style="font-family:var(--mono);font-size:8px;color:var(--d)">已启用</span></div></div>
+    <div class="card"><div class="ct"><span>诺玛 NORMA</span></div><div style="font-size:12px;color:var(--g);line-height:1.7">温和陪伴人格 · 适合日常/家居<br><span style="font-family:var(--mono);font-size:8px;color:var(--d)">可切换</span></div></div>
+  </div>
+  <div class="card"><div class="ct"><span>人格参数</span><b>personality_set</b></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-family:var(--mono);font-size:9px;color:var(--g)">
+      <div>温度 <b style="color:var(--w)">0.7</b> ▓▓▓▓▓▓▓░░░</div>
+      <div>创造度 <b style="color:var(--w)">0.5</b> ▓▓▓▓▓░░░░░</div>
+      <div>简洁度 <b style="color:var(--w)">0.8</b> ▓▓▓▓▓▓▓▓░░</div>
+    </div></div>
+  </div>
+</div>
+
+<!-- 预警 -->
+<div class="page" id="p-alert">
+  <div class="phead"><div class="l"><div class="k">▍ALERT</div><h1>预警</h1></div><div class="r">源 <b>4</b> · USGS/CMA/预警中心/自定义<br>更新 14:05 · 实时 WS</div></div>
+  <div class="grid g4" style="margin-bottom:10px">
+    <div class="card"><div class="ct"><span>L0 紧急</span></div><span class="big" style="color:var(--red)">0</span></div>
+    <div class="card"><div class="ct"><span>L1 严重</span></div><span class="big" style="color:#FF8C3A">0</span></div>
+    <div class="card"><div class="ct"><span>L2 警告</span></div><span class="big" style="color:var(--amber)">1</span></div>
+    <div class="card"><div class="ct"><span>L3 提醒</span></div><span class="big" style="color:var(--blue)">2</span></div>
+  </div>
+  <div class="cols">
+    <div>
+      <div class="lrow" style="border:1px solid rgba(255,190,77,.3);background:rgba(255,190,77,.05);border-radius:3px"><div style="width:4px;align-self:stretch;background:var(--amber)"></div><div class="t"><div class="n">暴雨黄色预警 · 浦东新区</div><div class="s">预计 6h 降雨量达 50mm · 建议减少外出 · 国家预警中心 14:02</div></div><span class="tag a">L2</span></div>
+      <div class="lrow"><div class="t"><div class="n">M3.2 级地震 · 距 128km</div><div class="s">北纬 31.2 东经 121.5 · USGS 13:47</div></div><span class="tag b">L3</span></div>
+      <div class="lrow"><div class="t"><div class="n">雷电黄色预警 · 全市</div><div class="s">2h 内可能雷电 · 中央气象台 13:20</div></div><span class="tag b">L3</span></div>
+    </div>
+    <div><div class="card"><div class="ct"><span>数据源健康</span></div><div class="evlog">
+      <div class="e"><span class="lv d">USGS</span><span class="tx">13:47 <b>OK</b></span></div>
+      <div class="e"><span class="lv d">CMA</span><span class="tx">13:30 <b>OK</b></span></div>
+      <div class="e"><span class="lv a">预警中心</span><span class="tx">慢 1.2s</span></div>
+      <div class="e"><span class="lv">自定义</span><span class="tx">未配置</span></div></div>
+      <div style="margin-top:8px"><button style="background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--g);font-family:var(--mono);font-size:9px;padding:5px 10px;cursor:pointer">配置源与规则 →</button></div></div></div>
+  </div>
+</div>
+
+<!-- 天气 -->
+<div class="page" id="p-weather">
+  <div class="phead"><div class="l"><div class="k">▍WEATHER</div><h1>天气</h1></div><div class="r">Open-Meteo · 可切 wttr.in/自定义<br>上海市 · 更新 14:00</div></div>
+  <div class="card" style="display:flex;align-items:center;gap:24px;padding:16px 22px"><div style="font-family:var(--disp);font-weight:700;font-size:64px;line-height:1">24<sup style="font-size:18px;color:var(--g)">°C</sup></div><div><div style="font-size:17px;font-weight:600">多云转阴 · 舒适</div><div style="font-family:var(--mono);font-size:9px;color:var(--d);margin-top:3px">体感 23° · 白天 26° / 夜 19°</div></div><div style="margin-left:auto;display:flex;gap:18px;font-family:var(--mono);font-size:9px;color:var(--d);text-align:center"><div><div style="font-size:16px;color:var(--w);font-weight:600">68%</div>湿度</div><div><div style="font-size:16px;color:var(--w);font-weight:600">3.2</div>风 m/s</div><div><div style="font-size:16px;color:var(--w);font-weight:600">1013</div>hPa</div><div><div style="font-size:16px;color:var(--w);font-weight:600">4</div>UV</div></div></div>
+  <div class="grid g2" style="margin-top:10px"><div class="card"><div class="ct"><span>逐小时 24h</span><b>温度/降水</b></div><svg viewBox="0 0 320 64" preserveAspectRatio="none" style="width:100%;height:64px"><defs><linearGradient id="rain2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5AB0FF" stop-opacity=".4"/><stop offset="1" stop-color="#5AB0FF" stop-opacity="0"/></linearGradient></defs><line x1="0" y1="16" x2="320" y2="16" stroke="rgba(255,255,255,.05)"/><line x1="0" y1="40" x2="320" y2="40" stroke="rgba(255,255,255,.05)"/><polyline fill="none" stroke="#6CF59A" stroke-width="1.5" points="0,26 26,22 53,18 80,26 106,32 133,40 160,44 186,42 213,36 240,30 266,32 293,36 320,40"/><rect x="30" y="42" width="18" height="22" fill="url(#rain2)"/><rect x="106" y="46" width="18" height="18" fill="url(#rain2)"/><rect x="212" y="48" width="18" height="16" fill="url(#rain2)"/></svg></div>
+  <div class="card"><div class="ct"><span>今日曲线</span><b>日出 05:44 日落 18:12</b></div><svg viewBox="0 0 320 64" preserveAspectRatio="none" style="width:100%;height:64px"><path d="M0,52 C30,47 55,28 85,18 C115,11 150,9 175,14 C205,20 230,18 260,27 C285,34 305,40 320,44" fill="none" stroke="rgba(255,255,255,.45)" stroke-width="1.6"/><circle cx="85" cy="18" r="3" fill="#6CF59A"/></svg></div></div>
+  <div class="grid g4" style="margin-top:10px;gap:6px">
+    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">今天 09/04</div><div style="font-size:18px;margin:4px 0">☁</div><div style="font-size:13px;font-weight:700">26°</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">19° · ☂40%</div></div>
+    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">周五 05</div><div style="font-size:18px;margin:4px 0">☂</div><div style="font-size:13px;font-weight:700">24°</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">18° · ☂80%</div></div>
+    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">周六 06</div><div style="font-size:18px;margin:4px 0">☀</div><div style="font-size:13px;font-weight:700">28°</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">20°</div></div>
+    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">周日 07</div><div style="font-size:18px;margin:4px 0">☀</div><div style="font-size:13px;font-weight:700">29°</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">21°</div></div>
+  </div>
+</div>
+
+<!-- 视觉 -->
+<div class="page" id="p-vision">
+  <div class="phead"><div class="l"><div class="k">▍VISION · CAM0</div><h1>视觉</h1></div><div class="r">RTSP 1080p30 · YOLO 0.50/0.40<br>世界坐标已标定</div></div>
+  <div class="cols" style="grid-template-columns:1.5fr 1fr">
+    <div class="card" style="padding:8px"><div style="border:1px solid rgba(255,255,255,.15);background:#14171C;aspect-ratio:16/9;position:relative;overflow:hidden">
+      <svg width="100%" height="100%" viewBox="0 0 480 270" preserveAspectRatio="xMidYMid slice"><rect width="480" height="270" fill="#14171C"/><path d="M0 168 L120 108 L360 108 L480 168 L480 270 L0 270 Z" fill="#1A1E24"/><path d="M120 108 L120 57 L360 57 L360 108" fill="none" stroke="rgba(255,255,255,.09)"/><path d="M120 57 L180 24 L360 57" fill="#171B21" stroke="rgba(255,255,255,.07)"/><rect x="380" y="130" width="34" height="34" fill="#151A20" stroke="rgba(255,255,255,.1)"/></svg>
+      <div style="position:absolute;top:8px;left:10px;display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:8.5px;color:var(--red)"><span style="width:6px;height:6px;border-radius:50%;background:var(--red);animation:bl 1s infinite"></span>REC</div>
+      <div style="position:absolute;top:8px;right:10px;font-family:var(--mono);font-size:8px;color:var(--g)">CAM0 · 客厅</div>
+      <div style="position:absolute;bottom:8px;left:10px;font-family:var(--mono);font-size:8px;color:var(--g)"><span style="color:var(--green)">2026-09-04 14:05:02</span> · CAM-0</div>
+      <div style="position:absolute;left:16%;top:18%;width:13%;height:40%;border:1px solid var(--green)"><span style="position:absolute;top:-14px;left:-1px;font-family:var(--mono);font-size:7px;background:var(--green);color:#08130b;padding:1px 4px">person 0.92 · 2.1m</span></div>
+      <div style="position:absolute;left:48%;top:30%;width:10%;height:34%;border:1px solid var(--green)"><span style="position:absolute;top:-14px;left:-1px;font-family:var(--mono);font-size:7px;background:var(--green);color:#08130b;padding:1px 4px">person 0.87</span></div>
+      <div style="position:absolute;left:74%;top:38%;width:9%;height:26%;border:1px solid var(--amber)"><span style="position:absolute;top:-14px;left:-1px;font-family:var(--mono);font-size:7px;background:var(--amber);color:#241300;padding:1px 4px">zone!</span></div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px"><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⏺ 录像</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">◉ 拍照</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⌖ 标定</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⚙ 设置</button></div></div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="card"><div class="ct"><span>检测事件流</span><b>vision_event</b></div><div class="evlog">
+        <div class="e"><span class="tm">14:05:01</span><span class="lv d">DET</span><span class="tx">person 0.92 · 沙发区</span></div>
+        <div class="e"><span class="tm">14:04:47</span><span class="lv d">DET</span><span class="tx">person 0.87 · 玄关</span></div>
+        <div class="e"><span class="tm">14:03:58</span><span class="lv a">ZONE</span><span class="tx">车道越界</span></div></div></div>
+      <div class="card"><div class="ct"><span>摄像头列表</span><b>2 路</b></div>
+        <div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px">CAM0 · 客厅</div><div class="s">RTSP 1080p</div></div><span class="tag g">LIVE</span></div>
+        <div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px">CAM1 · 门口</div><div class="s">USB /dev/video0</div></div><span class="tag dim">OFF</span></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- HA -->
+<div class="page" id="p-ha">
+  <div class="phead"><div class="l"><div class="k">▍HOME ASSISTANT / HELP AI</div><h1>智能家居</h1></div><div class="r">桥 MQTT+REST+WS · 在线<br>ha_control · 高风险需确认</div></div>
+  <div class="grid g3">
+    <div class="card"><div class="ct"><span>客厅灯</span><b style="color:var(--green)">● ON</b></div><div style="font-family:var(--disp);font-weight:700;font-size:19px">80%</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px">brightness · 客厅</div></div>
+    <div class="card"><div class="ct"><span>空调</span><b style="color:var(--green)">● 制冷</b></div><div style="font-family:var(--disp);font-weight:700;font-size:19px">24°C</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px">风速自动 · 卧室</div></div>
+    <div class="card"><div class="ct"><span>门锁</span><b style="color:var(--d)">○ 已锁</b></div><div style="font-family:var(--disp);font-weight:700;font-size:19px;color:var(--d)">锁定</div><div style="font-family:var(--mono);font-size:8px;color:var(--amber);margin-top:5px">开锁需二次确认</div></div>
+  </div>
+  <div class="grid g4" style="margin-top:10px">
+    <div class="card"><div class="ct"><span>温度</span></div><span class="big" style="font-size:20px">24.6<span class="u">°C</span></span></div>
+    <div class="card"><div class="ct"><span>湿度</span></div><span class="big" style="font-size:20px">62<span class="u">%</span></span></div>
+    <div class="card"><div class="ct"><span>人体存在</span></div><span class="big" style="font-size:20px;color:var(--green)">有人</span></div>
+    <div class="card"><div class="ct"><span>AQI</span></div><span class="big" style="font-size:20px">42</span></div>
+  </div>
+</div>
+
+<!-- 文件 -->
+<div class="page" id="p-files">
+  <div class="phead"><div class="l"><div class="k">▍FILES · /LINGOS</div><h1>文件管理</h1></div><div class="r">file_list/read/write · HTTP 上传/下载<br>磁盘 <b>64%</b> · 500M 余</div></div>
+  <div class="fs">
+    <div class="fstree">
+      <div class="fsnode on">▾ /LINGOS</div>
+      <div style="margin-left:16px;padding-left:8px;border-left:1px solid rgba(255,255,255,.06)">
+        <div class="fsnode">bin/ <span style="margin-left:auto;color:var(--dd)">6</span></div>
+        <div class="fsnode">etc/ <span style="margin-left:auto;color:var(--dd)">13</span></div>
+        <div class="fsnode">var/lib/ <span style="margin-left:auto;color:var(--dd)">21</span></div>
+        <div class="fsnode">run/ <span style="margin-left:auto;color:var(--dd)">5</span></div>
+        <div class="fsnode on">registry/ <span style="margin-left:auto;color:var(--green)">8</span></div>
+        <div class="fsnode">plugins/</div>
+        <div class="fsnode">share/ <span style="margin-left:auto;color:var(--dd)">14</span></div>
+        <div class="fsnode">log/</div>
+      </div>
+      <div class="fsnode">/Ensystem</div><div class="fsnode">/tmp</div>
+    </div>
+    <div>
+      <div class="toolbar"><button>⬆ 上传</button><button>＋ 新建</button><button>↻</button><span class="cnt" style="margin-left:auto">/LINGOS/registry/ · 8 项</span></div>
+      <div class="listwrap">
+        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">core/</div><div class="s">注册表核心</div></div><span class="st2">--</span></div>
+        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">modules/</div><div class="s">模块注册</div></div><span class="st2">--</span></div>
+        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">skills/</div><div class="s">技能注册</div></div><span class="st2">--</span></div>
+        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">plugins/</div><div class="s">插件注册</div></div><span class="st2">--</span></div>
+        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">hooks/</div><div class="s">钩子注册</div></div><span class="st2">--</span></div>
+        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">features/</div><div class="s">功能注册</div></div><span class="st2">--</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 日志 -->
+<div class="page" id="p-log">
+  <div class="phead"><div class="l"><div class="k">▍LOG · /LINGOS/log</div><h1>日志</h1></div><div class="r">time/id/level/txt · JSON · 最近 100 行<br>级别过滤: DEBUG+ <b style="color:var(--amber)">WARN</b> <b style="color:var(--red)">ERROR</b></div></div>
+  <div class="toolbar"><button style="width:auto">级别: ALL ▾</button><button style="width:auto">模块: ALL ▾</button><input placeholder="过滤关键字…" style="flex:1"><button style="width:auto">暂停</button><button style="width:auto">导出</button></div>
+  <div class="logview">
+    <div class="l"><span class="tm">14:05:02.312</span><span class="lvl INFO">INFO</span><span class="mod">[visiond]</span><span class="msg">detection push <b>person 0.92</b></span></div>
+    <div class="l"><span class="tm">14:05:00.104</span><span class="lvl INFO">INFO</span><span class="mod">[alertd]</span><span class="msg">sources fetch <b>4/4 OK</b></span></div>
+    <div class="l"><span class="tm">14:04:58.887</span><span class="lvl INFO">INFO</span><span class="mod">[sync]</span><span class="msg">delta push <b>3 条</b></span></div>
+    <div class="l"><span class="tm">14:04:15.221</span><span class="lvl WARN">WARN</span><span class="mod">[disk]</span><span class="msg">free <b>500M</b> below threshold</span></div>
+    <div class="l"><span class="tm">14:03:58.602</span><span class="lvl INFO">INFO</span><span class="mod">[visiond]</span><span class="msg">zone alarm 车道越界</span></div>
+    <div class="l"><span class="tm">14:03:30.110</span><span class="lvl INFO">INFO</span><span class="mod">[ai]</span><span class="msg">token <b>+2.1k</b> deepseek-chat</span></div>
+    <div class="l"><span class="tm">14:02:47.090</span><span class="lvl INFO">INFO</span><span class="mod">[visiond]</span><span class="msg">detection push car 0.88</span></div>
+    <div class="l"><span class="tm">14:02:31.776</span><span class="lvl ERROR">ERROR</span><span class="mod">[net]</span><span class="msg">ws client timeout retry 2s</span></div>
+    <div class="l"><span class="tm">14:02:11.405</span><span class="lvl INFO">INFO</span><span class="mod">[sync]</span><span class="msg">session #4 done</span></div>
+  </div>
+</div>
+
+<!-- 端口 -->
+<div class="page" id="p-ports">
+  <div class="phead"><div class="l"><div class="k">▍NETWORK / PORT</div><h1>端口与网络</h1></div><div class="r">端口改动用 <b>port set</b> 指令族 · 不进配置向导</div></div>
+  <div class="card"><div class="ct"><span>服务端口</span><b>port list</b></div>
+    <div class="portrow"><span class="pn">2937</span><span class="pu">TCP 认证 · lingosd</span><span class="stat run">● LISTEN</span></div>
+    <div class="portrow"><span class="pn">2939</span><span class="pu">WebSocket 事件 · ai_server</span><span class="stat run">● LISTEN · 4 客户端</span></div>
+    <div class="portrow"><span class="pn">8080</span><span class="pu">HTTP WebUI/API</span><span class="stat run">● LISTEN</span></div>
+    <div class="portrow"><span class="pn">8088</span><span class="pu">HTTP 音频 REST (TTS/STT)</span><span class="stat run">● LISTEN</span></div>
+    <div class="portrow"><span class="pn">8890-93</span><span class="pu">视觉流 (rtsp/mjpeg/ocr/标定)</span><span class="stat idle">○ 未启用(无摄像头)</span></div>
+  </div>
+</div>
+
+<!-- 更新 -->
+<div class="page" id="p-update">
+  <div class="phead"><div class="l"><div class="k">▍UPDATE</div><h1>升级更新</h1></div><div class="r">当前 <b>LN-0.4.3</b> · 内部 0.4.3</div></div>
+  <div class="warnbox">● 已是最新版本 <b>LN-0.4.3</b>（检查于 14:00）<button>检查更新</button></div>
+  <div class="grid g2">
+    <div class="card"><div class="ct"><span>更新历史</span></div><div class="evlog">
+      <div class="e"><span class="lv d">0.0.6</span><span class="tx">端口指令族/高级设置/venv → 0.4.3 重构</span></div>
+      <div class="e"><span class="lv">0.0.4</span><span class="tx">日志体系/指令翻译/技能安装/三级记忆</span></div>
+      <div class="e"><span class="lv">0.0.3</span><span class="tx">DeepSeek 思考/余额/模型列表</span></div></div></div>
+    <div class="card"><div class="ct"><span>升级 bin · lingos-upgrade</span></div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--g);line-height:2">迁移链 <b style="color:var(--w)">0.0.6 → 0.4.3</b><br>目录搬迁 etc/var/share · 配置转换<br>备份回滚 · sha256 校验 · 看门狗</div>
+      <div style="margin-top:8px"><button style="background:rgba(255,190,77,.08);border:1px solid rgba(255,190,77,.4);color:var(--amber);font-family:var(--mono);font-size:9px;padding:5px 12px;cursor:pointer">执行升级向导</button></div></div>
+  </div>
+</div>
+
+<!-- 系统与插件 -->
+<div class="page" id="p-sys">
+  <div class="phead"><div class="l"><div class="k">▍SYSTEM / PLUGIN</div><h1>系统与插件</h1></div><div class="r">自检 <b style="color:var(--green)">● 通过</b><br>aarch64 · glibc · proot</div></div>
+  <div class="grid g3">
+    <div class="card"><div class="ct"><span>lingosd</span><b style="color:var(--green)">● RUNNING</b></div><div style="font-family:var(--mono);font-size:9px;color:var(--g);margin-top:5px;line-height:1.8">pid 1821 · mem 24M · up 3:12:44</div></div>
+    <div class="card"><div class="ct"><span>alertd</span><b style="color:var(--green)">● RUNNING</b></div><div style="font-family:var(--mono);font-size:9px;color:var(--g);margin-top:5px;line-height:1.8">pid 1826 · 60s 周期 · 4 源</div></div>
+    <div class="card"><div class="ct"><span>ai_server</span><b style="color:var(--green)">● RUNNING</b></div><div style="font-family:var(--mono);font-size:9px;color:var(--g);margin-top:5px;line-height:1.8">pid 1830 · venv · WS 2939</div></div>
+  </div>
+  <div class="cols" style="margin-top:10px">
+    <div class="card"><div class="ct"><span>系统插件</span><b>registry plugins</b></div><div class="evlog">
+      <div class="e"><span class="lv d">vision</span><span class="tx">v0.1 检测引擎 · <b>加载</b></span></div>
+      <div class="e"><span class="lv d">weather</span><span class="tx">v0.1 Open-Meteo · <b>加载</b></span></div>
+      <div class="e"><span class="lv d">ha</span><span class="tx">v0.1 MQTT桥 · <b>加载</b></span></div>
+      <div class="e"><span class="lv">camera</span><span class="tx">v0.2 底座 · 待启用(插件)</span></div></div></div>
+    <div class="card"><div class="ct"><span>注册表 registry</span></div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"><span class="tag g">MODULE</span><span class="tag">COMPONENT</span><span class="tag">CONFIG</span><span class="tag">FEATURE</span><span class="tag">SKILL</span><span class="tag">PLUGIN</span><span class="tag">HOOK</span><span class="tag">SELFCHECK</span></div>
+      <div style="font-family:var(--mono);font-size:8px;color:var(--d)">socket /LINGOS/run/registry.sock · 统一注册中心</div></div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<div class="page" id="p-setting">
+  <div class="phead"><div class="l"><div class="k">▍SETTINGS</div><h1>设置与高级</h1></div><div class="r">分层：普通 / 显示性能 / 高级(二次确认)</div></div>
+  <div class="cols" style="grid-template-columns:220px 1fr">
+    <div class="card" style="padding:6px">
+      <div style="padding:8px 10px;border-left:2px solid var(--green);background:rgba(255,255,255,.04);font-family:var(--mono);font-size:10px;letter-spacing:1px">▍主机连接</div>
+      <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">对话与 AI 配置</div>
+      <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">预警与天气源</div>
+      <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">摄像头设置</div>
+      <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">语音</div>
+      <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">通知</div>
+      <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">权限</div>
+      <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">高级 config</div>
+      <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">关于</div></div>
+    <div>
+      <div class="card" style="margin-bottom:10px"><div class="ct"><span>主机连接</span><b style="color:var(--green)">● LINKED 192.168.1.20</b></div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:10px;color:var(--g);line-height:2.2"><span>WS <b style="color:var(--w)">2939</b></span><span>HTTP <b style="color:var(--w)">8080</b></span><span>认证 token</span><span>本地 Unix sock</span></div></div>
+      <div class="card"><div class="ct"><span>高级设置 · config 白名单</span><b>config get/set</b></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 16px;font-family:var(--mono);font-size:9px;color:var(--g)">
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">temperature <b style="color:var(--w)">0.7</b></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">max_tokens <b style="color:var(--w)">4096</b></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">context_window <b style="color:var(--w)">64K</b></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">heartbeat <b style="color:var(--w)">30s</b></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">log_level <b style="color:var(--w)">INFO</b></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">weather_api <b style="color:var(--w)">open-meteo</b></div>
+        </div>
+        <div style="margin-top:10px;border:1px solid rgba(255,190,77,.3);background:rgba(255,190,77,.05);padding:8px 10px;display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:9px;color:var(--amber)">⚠ 修改需理解量参数——类型/范围校验，保存前二次确认<span style="border:1px solid rgba(255,190,77,.4);padding:2px 8px">进入</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div></div>
+<script>
+setInterval(function(){var d=new Date(),p=function(n){return(n<10?'0':'')+n};document.getElementById('clock').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())},1000);
+document.querySelectorAll('.nav .ni').forEach(function(ni){ni.onclick=function(){document.querySelectorAll('.nav .ni').forEach(function(x){x.classList.remove('on')});ni.classList.add('on');document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on')});document.getElementById('p-'+ni.getAttribute('data-p')).classList.add('on')}});
+var cv=document.getElementById('terrain'),ctx=cv.getContext('2d');
+function resize(){var W=window.innerWidth-200,H=window.innerHeight-52;cv.style.width=W+'px';cv.style.height=H+'px';cv.width=W;cv.height=H;draw()}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function draw(){var W=cv.width,H=cv.height;if(W<10)return;var gw=Math.max(42,Math.round(W/10)),gh=Math.max(34,Math.round(H/10));var f=new Float32Array(gw*gh),rng=mulberry32(20260904),ps=[];for(var i=0;i<6;i++)ps.push({cx:rng(),cy:rng(),rx:0.09+rng()*0.2,ry:0.09+rng()*0.2,a:0.9+rng()*1.4,rot:rng()*Math.PI});for(var y=0;y<gh;y++)for(var x=0;x<gw;x++){var nx=x/(gw-1),ny=y/(gh-1),v=0;for(var k=0;k<ps.length;k++){var p=ps[k],dx=nx-p.cx,dy=ny-p.cy,cr=Math.cos(p.rot),sr=Math.sin(p.rot),ex=dx*cr+dy*sr,ey=-dx*sr+dy*cr,vv=(ex/p.rx)*(ex/p.rx)+(ey/p.ry)*(ey/p.ry);v+=p.a*Math.exp(-vv)}v+=0.16*(Math.sin(nx*7.1)+Math.cos(ny*5.7)+0.5*Math.sin((nx+ny)*11.9));f[y*gw+x]=v}var mn=1e9,mx=-1e9;for(i=0;i<f.length;i++){if(f[i]<mn)mn=f[i];if(f[i]>mx)mx=f[i]}var gr=ctx.createLinearGradient(0,0,0,H);gr.addColorStop(0,'#23272E');gr.addColorStop(1,'#181B20');ctx.fillStyle=gr;ctx.fillRect(0,0,W,H);ctx.lineCap='round';for(var lv=0;lv<9;lv++){var th=mn+(mx-mn)*(lv+1)/10;ctx.strokeStyle='rgba(255,255,255,'+(lv%4===3?0.08:0.035)+')';ctx.lineWidth=lv%4===3?1.1:0.55;ctx.beginPath();for(y=0;y<gh-1;y++)for(x=0;x<gw-1;x++){var i2=y*gw+x,tl=f[i2],tr=f[i2+1],br=f[i2+gw+1],bl=f[i2+gw],cps=[];function lerp(a,b,av,bv){var t=(th-av)/(bv-av);return t<0?0:t>1?1:t}if((tl>th)!==(tr>th))cps.push([x+lerp(tl,tr,tl,tr),y]);if((tr>th)!==(br>th))cps.push([x+1,y+lerp(tr,br,tr,br)]);if((bl>th)!==(br>th))cps.push([x+lerp(bl,br,bl,br),y+1]);if((tl>th)!==(bl>th))cps.push([x,y+lerp(tl,bl,tl,bl)]);if(cps.length===2){ctx.moveTo(cps[0][0]/(gw-1)*W,cps[0][1]/(gh-1)*H);ctx.lineTo(cps[1][0]/(gw-1)*W,cps[1][1]/(gh-1)*H)}else if(cps.length===4){var ct2=(tl+tr+bl+br)*.25;if(ct2>th){ctx.moveTo(cps[0][0]/(gw-1)*W,cps[0][1]/(gh-1)*H);ctx.lineTo(cps[1][0]/(gw-1)*W,cps[1][1]/(gh-1)*H);ctx.moveTo(cps[2][0]/(gw-1)*W,cps[2][1]/(gh-1)*H);ctx.lineTo(cps[3][0]/(gw-1)*W,cps[3][1]/(gh-1)*H)}else{ctx.moveTo(cps[0][0]/(gw-1)*W,cps[0][1]/(gh-1)*H);ctx.lineTo(cps[3][0]/(gw-1)*W,cps[3][1]/(gh-1)*H);ctx.moveTo(cps[1][0]/(gw-1)*W,cps[1][1]/(gh-1)*H);ctx.lineTo(cps[2][0]/(gw-1)*W,cps[2][1]/(gh-1)*H)}}}ctx.stroke()}
+window.addEventListener('resize',resize);setTimeout(function(){resize()},30);
+</script>
+
+<!-- 【0.4.3】真实数据绑定：/system/health + POST /api/cmd（失败显示 -- 不模拟） -->
+<script>
+async function apiCmd(cmd, params){
+  try{
+    var r = await fetch('/api/cmd', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cmd:cmd, params:params||{}})});
+    return await r.json();
+  }catch(e){ return null; }
+}
+function setTxt(sel, txt){ var el=document.querySelector(sel); if(el) el.innerHTML=txt; }
+async function bindData(){
+  // 1) 健康（CPU 用 load、内存、磁盘——真值）
+  try{
+    var h = await (await fetch('/system/health')).json();
+    if(h && h.status==='ok'){
+      setTxt('.topbar .lk', '<span class="p"></span>LINKED · /system/health OK');
+      if(typeof h.disk_usage==='number'){ setTxt('.metric:nth-of-type(3) .big', h.disk_usage+'<span class="u">%</span>'); var m=document.querySelectorAll('.metric .mb i')[2]; if(m) m.style.width=h.disk_usage+'%'; }
+      if(typeof h.memory_usage==='number'){ setTxt('.metric:nth-of-type(2) .big', h.memory_usage+'<span class="u">%</span>'); var m2=document.querySelectorAll('.metric .mb i')[1]; if(m2) m2.style.width=h.memory_usage+'%'; }
+      if(typeof h.load_avg==='number'){ setTxt('.metric:nth-of-type(1) .dl', 'load '+h.load_avg.toFixed(2)); }
+    }
+  }catch(e){ setTxt('.topbar .lk', '<span class="p"></span>OFFLINE · server 未连'); }
+  // 2) 会话数
+  var s = await apiCmd('session_list');
+  if(s && s.status==='ok' && s.data){ setTxt('.metric:nth-of-type(5) .big', (Array.isArray(s.data)?s.data.length:0)+'<span class="u">个</span>'); }
+  // 3) 预警
+  var a = await apiCmd('alert_query');
+  if(a && a.status==='ok' && a.data){ setTxt('.metric:nth-of-type(7) .big', (Array.isArray(a.data)?a.data.length:0)+'<span class="u">条</span>'); }
+  // 4) 模型/提供商
+  var p = await apiCmd('provider_list');
+  if(p && p.data){ }
+}
+bindData();
+setInterval(bindData, 30000);
+</script>
+</body>
+</html>

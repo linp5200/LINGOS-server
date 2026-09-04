@@ -12,12 +12,15 @@
 #include "system_health.h"
 #include "connection_handler.h"
 #include "port_config.h"
+#include "../ai/ai_server_protocol.h"
 #include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <errno.h>
 #include <limits.h>
 
@@ -144,17 +147,122 @@ static int handle_files_delete(struct MHD_Connection *connection, const char *pa
     return MHD_YES;
 }
 
-/* ---- upload 状态机（MHD 分块回调） ---- */
+/* ---- upload/命令状态机（MHD 分块回调） ---- */
 struct upload_ctx {
     FILE *fp;
     char path[MAX_FILE_PATH];
     int failed;
+    int mode;              /* 0=文件上传 1=/api/cmd 命令代理 */
+    char *buf;             /* mode=1: 累积请求体 */
+    size_t buf_len;
+    size_t buf_cap;
 };
 
 static void free_upload_ctx(struct upload_ctx *ctx) {
     if (!ctx) return;
     if (ctx->fp) fclose(ctx->fp);
+    if (ctx->buf) free(ctx->buf);
     free(ctx);
+}
+
+/* ============================================================
+ * 【0.4.3】POST /api/cmd —— 网页/任意 HTTP 客户端统一命令代理
+ * body: {"cmd":"session_list","params":{...}} → ai.sock → JSON 响应
+ * （网页 UI 借此读取全部真实数据——与 WS/App 命令同源）
+ * ============================================================ */
+static void api_cmd_forward(struct MHD_Connection *connection, const char *body) {
+    if (!body || !*body) {
+        send_json_response(connection, MHD_HTTP_BAD_REQUEST,
+                           "{\"status\":\"error\",\"msg\":\"empty body\"}");
+        return;
+    }
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        send_json_response(connection, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                           "{\"status\":\"error\",\"msg\":\"socket error\"}");
+        return;
+    }
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    safe_strncpy(addr.sun_path, AI_SOCKET_PATH, sizeof(addr.sun_path));
+    struct timeval tv;
+    tv.tv_sec = 15;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        send_json_response(connection, MHD_HTTP_SERVICE_UNAVAILABLE,
+                           "{\"status\":\"error\",\"msg\":\"ai server unavailable\"}");
+        return;
+    }
+    char req[8192];
+    safe_snprintf(req, sizeof(req), "%s\n", body);
+    ssize_t n = write(fd, req, strlen(req));
+    if (n <= 0) {
+        close(fd);
+        send_json_response(connection, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                           "{\"status\":\"error\",\"msg\":\"write failed\"}");
+        return;
+    }
+    char buf[32768];
+    ssize_t r = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (r <= 0) {
+        send_json_response(connection, MHD_HTTP_GATEWAY_TIMEOUT,
+                           "{\"status\":\"error\",\"msg\":\"no response\"}");
+        return;
+    }
+    buf[r] = '\0';
+    if (r > 0 && buf[r - 1] == '\n') buf[--r] = '\0';
+    /* 透传 ai_server 的 JSON（含 cmd 标识） */
+    struct MHD_Response *resp = MHD_create_response_from_buffer(
+        (size_t)r, buf, MHD_RESPMEM_MUST_COPY);
+    MHD_add_response_header(resp, "Content-Type", "application/json");
+    MHD_add_response_header(resp, "Access-Control-Allow-Origin", "*");
+    MHD_queue_response(connection, MHD_HTTP_OK, resp);
+    MHD_destroy_response(resp);
+}
+
+/* ============================================================
+ * 【0.4.3】网页 UI 静态页（share/webui/index.html——可热更新）
+ * 文件不存在时回退内嵌 WEBUI_HTML（防弹）
+ * ============================================================ */
+static int handle_ui_page(struct MHD_Connection *connection) {
+    const char *root = lingos_data_root();
+    char path[512];
+    safe_snprintf(path, sizeof(path), "%s/share/webui/index.html", root);
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        return handle_root(connection);
+    }
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (sz <= 0 || sz > 4 * 1024 * 1024) {
+        fclose(fp);
+        return handle_root(connection);
+    }
+    char *data = (char *)malloc((size_t)sz);
+    if (!data) {
+        fclose(fp);
+        return handle_root(connection);
+    }
+    size_t rd = fread(data, 1, (size_t)sz, fp);
+    fclose(fp);
+    if (rd != (size_t)sz) {
+        free(data);
+        return handle_root(connection);
+    }
+    struct MHD_Response *resp = MHD_create_response_from_buffer(
+        (size_t)sz, data, MHD_RESPMEM_MUST_COPY);
+    MHD_add_response_header(resp, "Content-Type", "text/html; charset=utf-8");
+    MHD_add_response_header(resp, "Access-Control-Allow-Origin", "*");
+    MHD_queue_response(connection, MHD_HTTP_OK, resp);
+    MHD_destroy_response(resp);
+    free(data);
+    return MHD_YES;
 }
 
 static enum MHD_Result upload_handler(struct MHD_Connection *connection,
@@ -178,6 +286,27 @@ static enum MHD_Result upload_handler(struct MHD_Connection *connection,
         return MHD_YES;
     }
     if (*upload_data_size != 0) {
+        if (ctx->mode == 1) {
+            /* 命令代理：累积 body */
+            size_t need = ctx->buf_len + *upload_data_size + 1;
+            if (need > ctx->buf_cap) {
+                size_t ncap = ctx->buf_cap ? ctx->buf_cap * 2 : 1024;
+                while (ncap < need) ncap *= 2;
+                char *nb = realloc(ctx->buf, ncap);
+                if (!nb) {
+                    ctx->failed = 1;
+                    *upload_data_size = 0;
+                    return MHD_YES;
+                }
+                ctx->buf = nb;
+                ctx->buf_cap = ncap;
+            }
+            memcpy(ctx->buf + ctx->buf_len, upload_data, *upload_data_size);
+            ctx->buf_len += *upload_data_size;
+            ctx->buf[ctx->buf_len] = '\0';
+            *upload_data_size = 0;
+            return MHD_YES;
+        }
         if (ctx->fp && !ctx->failed) {
             size_t w = fwrite(upload_data, 1, *upload_data_size, ctx->fp);
             if (w != *upload_data_size) ctx->failed = 1;
@@ -186,6 +315,18 @@ static enum MHD_Result upload_handler(struct MHD_Connection *connection,
         return MHD_YES;
     }
     if (strcmp(method, "POST") == 0) {
+        if (ctx->mode == 1) {
+            /* 完成：转发 ai.sock 返回 JSON */
+            if (ctx->failed || !ctx->buf || !ctx->buf_len) {
+                send_json_response(connection, MHD_HTTP_BAD_REQUEST,
+                                   "{\"status\":\"error\",\"msg\":\"empty body\"}");
+            } else {
+                api_cmd_forward(connection, ctx->buf);
+            }
+            free_upload_ctx(ctx);
+            *con_cls = NULL;
+            return MHD_YES;
+        }
         int status = (ctx->fp && !ctx->failed) ? MHD_HTTP_OK : MHD_HTTP_INTERNAL_SERVER_ERROR;
         send_json_response(connection, status, (ctx->fp && !ctx->failed)
                            ? "{\"status\":\"ok\"}" : "{\"error\":\"upload failed\"}");
@@ -243,6 +384,15 @@ static enum MHD_Result request_handler(void *cls,
         return upload_handler(connection, url, method, upload_data, upload_data_size, con_cls);
     }
 
+    /* 【0.4.3】POST /api/cmd —— 命令代理（网页 UI 数据源） */
+    if (strcmp(url, "/api/cmd") == 0 && strcmp(method, "POST") == 0) {
+        struct upload_ctx *ctx = calloc(1, sizeof(struct upload_ctx));
+        if (!ctx) return MHD_NO;
+        ctx->mode = 1;
+        *con_cls = ctx;
+        return MHD_YES;
+    }
+
     /* 文件端点：Bearer token 认证 */
     if (strncmp(url, "/api/files", 10) == 0) {
         if (!http_auth_check(connection)) {
@@ -281,8 +431,8 @@ static enum MHD_Result request_handler(void *cls,
         send_json_response(connection, MHD_HTTP_METHOD_NOT_ALLOWED, "{\"error\":\"method not allowed\"}");
         return MHD_YES;
     }
-    if (strcmp(url, "/") == 0 || strcmp(url, "/console") == 0) {
-        return handle_root(connection);
+    if (strcmp(url, "/") == 0 || strcmp(url, "/console") == 0 || strcmp(url, "/ui") == 0) {
+        return handle_ui_page(connection);
     } else if (strcmp(url, "/system/health") == 0) {
         return handle_health(connection);
     } else if (strcmp(url, "/nook/ask") == 0) {

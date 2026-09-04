@@ -1,7 +1,7 @@
 /**
  * @file    src/core/env_bootstrap.c
  * @brief   运行时环境自举：目录创建、脚本复制、默认配置生成
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 防止默认配置覆盖已有配置；若 state.json 缺失但 installed.state 存在则自动重建。
  */
 
@@ -65,7 +65,8 @@ static void ensure_directories(void) {
         "/registry/configs", "/registry/features",
         "/registry/skills", "/registry/plugins",
         "/registry/hooks", "/registry/selfcheck",
-        "/Debug/backups", "/system/backups"
+        "/Debug/backups", "/system/backups",
+        "/share", "/share/webui"          /* 【0.4.3】只读资源——Web UI 网页访问 */
     };
 
     for (size_t i = 0; i < sizeof(dirs)/sizeof(dirs[0]); i++) {

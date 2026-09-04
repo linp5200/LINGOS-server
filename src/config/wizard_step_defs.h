@@ -1,7 +1,7 @@
 /**
  * @file    src/config/wizard_step_defs.h
  * @brief   向导步骤定义加载器（动态模块 → JSON → 内置）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  */
 

@@ -1,7 +1,7 @@
 /**
  * @file    src/common/lang.c
  * @brief   多语言支持实现（流式风格 + 配置记忆 + 系统默认语言检测）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @changes 语言来源改为 config_core_get()，保留文件回退；
  *          新增 lang_set_system_default() 用于根据 LANG 环境变量设置临时语言；
  *          添加 lang_reload() 供配置重载时调用。

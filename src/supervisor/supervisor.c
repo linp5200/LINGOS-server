@@ -1,7 +1,7 @@
 /**
  * @file    src/supervisor/supervisor.c
  * @brief   LING OS 监督者进程（独立恢复）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：防弹编程（独立进程，最小依赖）
  * @changes 移除空闲超时逻辑，仅依赖心跳监控；心跳间隔改为 2 秒。
  */

@@ -1,7 +1,7 @@
 /**
  * @file    src/install/install_python.h
  * @brief   Python 包安装（pipx → venv → pip）
- * @version LN-B-5.1.2.6-rc
+ * @version LN-0.4.3
  * @par     核心协议：C1, C-C
  */
 

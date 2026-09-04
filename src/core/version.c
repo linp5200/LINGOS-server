@@ -1,8 +1,8 @@
 /**
  * @file    src/core/version.c
  * @brief   版本号读取/写入/确保（版本文件只读，仅由 system update 写入）
- * @version LN-B-5.1.2.6-rc
- * @changes 版本号更新至 LN-B-5.1.2.6-rc；
+ * @version LN-0.4.3
+ * @changes 版本号更新至 LN-0.4.3；
  *          version_ensure() 自动修复版本不匹配
  */
 
@@ -20,7 +20,7 @@
  * ============================================================ */
 
 #ifndef LINGOS_VERSION
-#define LINGOS_VERSION "LN-B-5.1.2.6-rc"
+#define LINGOS_VERSION "LN-0.4.3"
 #endif
 
 /* ============================================================
