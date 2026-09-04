@@ -94,7 +94,7 @@ jobs:
       - name: 下载全部架构产物
         uses: actions/download-artifact@v4
         with:
-          pattern: 'LINGOS_*'
+          pattern: 'LINGOS-*'
           path: /tmp/artifacts
 
       - name: 整理 Release 文件
