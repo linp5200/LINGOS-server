@@ -2593,6 +2593,172 @@ def cmd_vision_config_get() -> dict:
         pass
     return {"status": "ok", "data": cfg}
 
+
+# ========== 【0.4.3】视觉系统完善（先生部署指示——命令族化/状态/配置/摄像头/快照） ==========
+
+VISION_CONF_PATH = "/LINGOS/system/config/vision.conf"
+VISION_KEYS = {  # vision.conf 白名单（写回校验：类型）
+    "camera_source": str, "device_path": str, "rtsp_url": str,
+    "rtsp_frame_port": int, "rtsp_http_port": int,
+    "width": int, "height": int, "fps": int,
+    "confidence_threshold": float, "enable_tracking": int,
+    "enable_spatial_mapping": int, "model_path": str,
+    "calibration_path": str, "enable_yolo": int, "camera_device": int,
+}
+
+
+def _proc_alive(pid: int) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def _port_open(port: int) -> bool:
+    try:
+        s = socket.create_connection(("127.0.0.1", int(port)), timeout=1.0)
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
+def cmd_vision_status() -> dict:
+    """【0.4.3】视觉系统状态：visiond/yolo 进程 + RTSP/MJPEG/标定/OCR 端口 + 配置摘要"""
+    st = {"visiond": False, "yolo": False, "rtsp_frame": False, "rtsp_http": False,
+          "ocr": False, "calibration": False, "config": {}, "cameras": []}
+    # 进程
+    try:
+        out = subprocess.run(["pgrep", "-f", "lingos_visiond"], capture_output=True, text=True, timeout=3).stdout.strip()
+        if out: st["visiond"] = True
+        out2 = subprocess.run(["pgrep", "-f", "yolo_service"], capture_output=True, text=True, timeout=3).stdout.strip()
+        if out2: st["yolo"] = True
+    except Exception:
+        pass
+    # 端口
+    for port in (8890, 8891):
+        st["rtsp_frame"] = st["rtsp_frame"] or _port_open(port)
+        st["rtsp_http"] = st["rtsp_http"] or _port_open(port + 1) if port == 8890 else st["rtsp_http"]
+    st["rtsp_frame"] = _port_open(8890)
+    st["rtsp_http"] = _port_open(8891)
+    st["ocr"] = _port_open(8892)
+    st["calibration"] = _port_open(8893)
+    # 配置
+    cfg = cmd_vision_config_get().get("data", {})
+    st["config"] = cfg
+    # 摄像头列表（/dev/video* 探测 + 配置 RTSP）
+    cams = []
+    for i in range(4):
+        if os.path.exists("/dev/video%d" % i):
+            cams.append({"id": "cam%d" % i, "type": "usb", "path": "/dev/video%d" % i})
+    if cfg.get("camera_source") == "rtsp" and cfg.get("rtsp_url"):
+        cams.append({"id": "cam-rtsp", "type": "rtsp", "url": cfg["rtsp_url"],
+                     "preview": "http://127.0.0.1:%s" % (cfg.get("rtsp_http_port") or 8891)})
+    st["cameras"] = cams
+    return {"status": "ok", "data": st}
+
+
+def cmd_vision_config_set(key: str = "", value: str = "") -> dict:
+    """【0.4.3】修改 vision.conf 配置项（白名单+类型校验，热生效需 visiond 重读）"""
+    if key not in VISION_KEYS:
+        return {"status": "error", "msg": "unknown key: %s（白名单 %s）" % (key, list(VISION_KEYS))}
+    try:
+        typ = VISION_KEYS[key]
+        if typ is int:
+            v = int(value)
+        elif typ is float:
+            v = float(value)
+        else:
+            v = str(value)
+    except Exception:
+        return {"status": "error", "msg": "value type error: %s 应为 %s" % (value, typ.__name__)}
+    # 读现有 → 改 → 写回
+    lines = []
+    try:
+        with open(VISION_CONF_PATH, encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception:
+        lines = []
+    found = False
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith(key + "="):
+            lines[i] = "%s=%s\n" % (key, v)
+            found = True
+            break
+    if not found:
+        lines.append("%s=%s\n" % (key, v))
+    os.makedirs(os.path.dirname(VISION_CONF_PATH), exist_ok=True)
+    with open(VISION_CONF_PATH, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    return {"status": "ok", "key": key, "value": v, "msg": "已写入 vision.conf（visiond 需重启生效）"}
+
+
+def cmd_vision_process(action: str = "") -> dict:
+    """【0.4.3】启动/停止/重启视觉进程组（visiond 主进程 + Python 流服务）——需授权"""
+    if action not in ("start", "stop", "restart", "status"):
+        return {"status": "error", "msg": "action ∈ start/stop/restart/status"}
+    try:
+        if action == "status":
+            return cmd_vision_status()
+        if action == "stop":
+            subprocess.run(["pkill", "-f", "lingos_visiond"], capture_output=True, timeout=5)
+            subprocess.run(["pkill", "-f", "rtsp_streamer"], capture_output=True, timeout=5)
+            subprocess.run(["pkill", "-f", "yolo_service"], capture_output=True, timeout=5)
+            return {"status": "ok", "msg": "视觉进程已停止"}
+        if action == "start":
+            # 主 visiond（若存在二进制）
+            subprocess.Popen(["nohup", "./lingos_visiond"], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, cwd="/LINGOS/bin")
+            # rtsp_streamer（若配置 rtsp 源且文件存在）
+            cfg = cmd_vision_config_get().get("data", {})
+            if cfg.get("camera_source") == "rtsp" and cfg.get("rtsp_url"):
+                sp = "/LINGOS/bin/rtsp_streamer.py"
+                if os.path.exists(sp):
+                    subprocess.Popen(["nohup", "python3", sp, "--url", cfg["rtsp_url"]],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return {"status": "ok", "msg": "视觉进程已启动"}
+        if action == "restart":
+            subprocess.run(["pkill", "-f", "lingos_visiond"], capture_output=True, timeout=5)
+            import time as _t
+            _t.sleep(1)
+            subprocess.Popen(["nohup", "./lingos_visiond"], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, cwd="/LINGOS/bin")
+            return {"status": "ok", "msg": "视觉进程已重启"}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+    return {"status": "error", "msg": "unknown"}
+
+
+def cmd_camera_snapshot() -> dict:
+    """【0.4.3】抓拍：RTSP 源走 rtsp_streamer HTTP MJPEG(8891) 取首帧；返回 JPEG base64"""
+    try:
+        import base64 as _b64
+        # 从 MJPEG 流读第一帧（multipart/x-mixed-replace）
+        if _port_open(8891):
+            import urllib.request as _ur
+            try:
+                r = _ur.urlopen("http://127.0.0.1:8891/", timeout=5)
+                data = b""
+                boundary = b"--frame"
+                while True:
+                    chunk = r.read(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                    idx = data.find(b"\xff\xd8")          # JPEG SOI
+                    end = data.find(b"\xff\xd9", idx + 2)  # JPEG EOI
+                    if idx >= 0 and end > idx:
+                        jpeg = data[idx:end + 2]
+                        return {"status": "ok", "mime": "image/jpeg",
+                                "data": _b64.b64encode(jpeg).decode(), "source": "rtsp-8891"}
+            except Exception:
+                pass
+        return {"status": "error", "msg": "无可用帧源（RTSP 流未运行/8891 未开）"}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
 # ========== 【0.2.2】DeepSeek 官方 API 扩展（先生指示 2026-08-15） ==========
 def cmd_balance_query(provider_id: str = "") -> dict:
     """查询余额（DeepSeek GET /user/balance）——App 显示在 token 上传/下行一行
@@ -2864,6 +3030,50 @@ def cmd_alert_query() -> dict:
         return {"status": "ok", "data": records}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
+
+
+def cmd_alert_summary() -> dict:
+    """【0.4.3】预警统计：级别分布/近 7 日趋势/源健康——Qt/Web 预警页图表数据源"""
+    try:
+        q = cmd_alert_query()
+        records = q.get("data", []) if q.get("status") == "ok" else []
+        lv = {"L0": 0, "L1": 0, "L2": 0, "L3": 0, "info": 0}
+        src_health = {}
+        daily = {}
+        for r in records:
+            l = str(r.get("level") or "info").upper()
+            if l not in lv:
+                l = "info"
+            lv[l] = lv.get(l, 0) + 1
+            s = r.get("source", "unknown")
+            if s not in src_health:
+                src_health[s] = {"count": 0, "last": r.get("time", "")}
+            src_health[s]["count"] += 1
+            src_health[s]["last"] = r.get("time", src_health[s]["last"])
+            d = (r.get("time") or "")[:10]
+            if d:
+                daily[d] = daily.get(d, 0) + 1
+        trend = [{"date": d, "count": daily[d]} for d in sorted(daily.keys())[-7:]]
+        return {"status": "ok", "data": {"levels": lv, "sources": src_health,
+                                         "trend": trend, "total": len(records)}}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_weather_code_map() -> dict:
+    """【0.4.3】WMO 天气码 → 中/英描述 + 图标（Qt/Web 天气页共用映射）"""
+    codes = {
+        0: ["晴", "Clear"], 1: ["基本晴", "Mainly clear"], 2: ["多云", "Partly cloudy"],
+        3: ["阴", "Overcast"], 45: ["雾", "Fog"], 48: ["雾凇", "Rime fog"],
+        51: ["毛毛雨", "Drizzle"], 53: ["小毛毛雨", "Drizzle"], 55: ["浓毛毛雨", "Drizzle"],
+        61: ["小雨", "Rain"], 63: ["中雨", "Rain"], 65: ["大雨", "Heavy rain"],
+        71: ["小雪", "Snow"], 73: ["中雪", "Snow"], 75: ["大雪", "Heavy snow"],
+        80: ["阵雨", "Showers"], 81: ["强阵雨", "Showers"], 82: ["暴阵雨", "Showers"],
+        95: ["雷暴", "Thunderstorm"], 96: ["雷暴+冰雹", "Thunderstorm hail"],
+        99: ["强雷暴", "Severe thunderstorm"],
+    }
+    return {"status": "ok", "data": [{"code": k, "zh": v[0], "en": v[1]} for k, v in codes.items()]}
+
 
 def cmd_memory_search(keyword: str = "") -> dict:
     """记忆搜索（复用 memory_retrieval——降级简单文件搜索）"""
@@ -3492,6 +3702,10 @@ def handle_client(conn, addr):
             _reply(conn, "ha_search", cmd_ha_search(str(req.get("query", "")))); return
         if cmd == "alert_query":
             _reply(conn, "alert_query", cmd_alert_query()); return
+        if cmd == "alert_summary":
+            _reply(conn, "alert_summary", cmd_alert_summary()); return
+        if cmd == "weather_code_map":
+            _reply(conn, "weather_code_map", cmd_weather_code_map()); return
         if cmd == "weather_current":
             _reply(conn, "weather_current", cmd_weather_current()); return
         if cmd == "weather_forecast":
@@ -3628,6 +3842,14 @@ def handle_client(conn, addr):
         # ---- 【0.2.2 vision】摄像头配置查询（App 摄像头页） ----
         if cmd == "vision_config_get":
             _reply(conn, "vision_config_get", cmd_vision_config_get()); return
+        if cmd == "vision_config_set":
+            _reply(conn, "vision_config_set", cmd_vision_config_set(str(req.get("key", "")), str(req.get("value", "")))); return
+        if cmd == "vision_status":
+            _reply(conn, "vision_status", cmd_vision_status()); return
+        if cmd == "vision_process":
+            _reply(conn, "vision_process", cmd_vision_process(str(req.get("action", "status")))); return
+        if cmd == "camera_snapshot":
+            _reply(conn, "camera_snapshot", cmd_camera_snapshot()); return
         if cmd == "ha_config_set":
             _reply(conn, "ha_config_set", ha_integration.cmd_ha_config_set(
                 str(req.get("host", "")), str(req.get("token", "")), int(req.get("port", 8123)))); return
