@@ -578,15 +578,16 @@ async function bindVision(){
 }
 /* ===== 日志 ===== */
 async function bindLog(){
-  var lv = await apiCmd('read_log');
+  var lv = await apiCmd('file_read', {path:'/LINGOS/log/lingos.log'});
   var box = $('#p-log .logview');
   if(!box) return;
-  var txt = (lv&&lv.status==='ok')? (lv.data||lv.log||'') : '';
+  var txt = (lv&&lv.status==='ok')? String(lv.data||'') : '';
   if(!txt){ box.innerHTML='<div style="color:var(--d);font-family:var(--mono);padding:10px">'+(lv&&lv.status==='error'?'日志读取失败':'暂无日志')+'</div>'; return; }
-  var lines = String(txt).split('\n').slice(-25).reverse();
+  var lines = txt.split('
+').filter(Boolean).slice(-30).reverse();
   box.innerHTML = lines.map(function(l){
-    var cls=''; if(l.indexOf('[ERROR]')>=0)cls='ERROR'; else if(l.indexOf('[WARN]')>=0)cls='WARN';
-    return '<div class="l"><span class="lvl '+(cls||'INFO')+'">'+(cls||'INFO')+'</span><span class="msg">'+l.replace(/</g,'&lt;')+'</span></div>';
+    var cls='INFO'; if(l.indexOf('[ERROR]')>=0)cls='ERROR'; else if(l.indexOf('[WARN')>=0)cls='WARN'; else if(l.indexOf('[DEBUG')>=0)cls='DEBUG';
+    return '<div class="l"><span class="lvl '+cls+'">'+cls+'</span><span class="msg">'+l.replace(/</g,'&lt;')+'</span></div>';
   }).join('');
 }
 /* ===== 文件(系统目录) ===== */
