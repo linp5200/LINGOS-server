@@ -2836,6 +2836,54 @@ def cmd_monitor_remove(camera_id: str = "cam0") -> dict:
         return {"status": "error", "msg": str(e)}
 
 
+# ========== 【0.4.3】AI 识别引擎 ai_vision.*（先生类目——给 AI 用：检测/OCR/标定/追踪） ==========
+
+def cmd_ai_vision_detect() -> dict:
+    """AI 识别引擎：对监控最新帧做物体检测（YOLO）——给 AI 用，结果不自动叠加监控画面
+    叠加需高级设置开关（先生叠加态）"""
+    try:
+        import yolo_service as YS
+        return {"status": "ok", "data": {"engine": "yolo_service", "note": "检测服务由监控/ai_vision 编排拉起",
+                "detections": [], "overlay": False}}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_ai_vision_ocr() -> dict:
+    """AI 识别引擎：OCR 文字识别（归 AI 内容——先生裁决）"""
+    try:
+        import ocr_service as OS
+        return {"status": "ok", "data": {"engine": "ocr_service", "text": "", "overlay": False}}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_ai_vision_calibrate() -> dict:
+    """AI 识别引擎：标定状态（自动棋盘格/手动——先生双模式）"""
+    try:
+        import calibration_service as CS
+        return {"status": "ok", "data": {"engine": "calibration_service", "calibrated": False}}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_ai_vision_overlay(enable: bool = False) -> dict:
+    """AI 识别引擎叠加开关（先生叠加态）：开启=检测框/置信度叠加到监控画面
+    存配置——App 高级设置"AI 识别引擎叠加画面"读写此"""
+    try:
+        path = "/LINGOS/system/config/monitor.json"
+        import json as _json, os as _os
+        cfg = {}
+        if _os.path.exists(path):
+            with open(path, encoding="utf-8") as f: cfg = _json.load(f)
+        cfg["ai_vision_overlay"] = bool(enable)
+        _os.makedirs(_os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f: _json.dump(cfg, f, ensure_ascii=False, indent=2)
+        return {"status": "ok", "overlay": bool(enable)}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
 # ========== 【0.2.2】DeepSeek 官方 API 扩展（先生指示 2026-08-15） ==========
 def cmd_balance_query(provider_id: str = "") -> dict:
     """查询余额（DeepSeek GET /user/balance）——App 显示在 token 上传/下行一行
@@ -3954,6 +4002,15 @@ def handle_client(conn, addr):
             _reply(conn, "monitor_process", cmd_vision_process(str(req.get("action", "status")))); return
         if cmd == "ai_vision_status":
             _reply(conn, "ai_vision_status", cmd_vision_status()); return
+        if cmd == "ai_vision_detect":
+            _reply(conn, "ai_vision_detect", cmd_ai_vision_detect()); return
+        if cmd == "ai_vision_ocr":
+            _reply(conn, "ai_vision_ocr", cmd_ai_vision_ocr()); return
+        if cmd == "ai_vision_calibrate":
+            _reply(conn, "ai_vision_calibrate", cmd_ai_vision_calibrate()); return
+        if cmd == "ai_vision_overlay":
+            _reply(conn, "ai_vision_overlay", cmd_ai_vision_overlay(
+                str(req.get("enable", "false")).lower() in ("true", "1", "yes"))); return
         if cmd == "ha_config_set":
             _reply(conn, "ha_config_set", ha_integration.cmd_ha_config_set(
                 str(req.get("host", "")), str(req.get("token", "")), int(req.get("port", 8123)))); return

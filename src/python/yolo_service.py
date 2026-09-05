@@ -134,6 +134,7 @@ def run_inference(image_data: bytes, confidence: float = DEFAULT_CONFIDENCE) -> 
 # ========== Socket 服务器 ==========
 def handle_client(conn: socket.socket, addr: Tuple) -> None:
     """处理客户端请求"""
+    global _model, _model_loaded, _model_load_error
     try:
         data = b""
         while True:
@@ -207,7 +208,6 @@ def handle_client(conn: socket.socket, addr: Tuple) -> None:
             conn.send((json.dumps(resp) + "\n").encode())
 
         elif cmd == "reload":
-            global _model, _model_loaded, _model_load_error
             _model = None
             _model_loaded = False
             _model_load_error = None
