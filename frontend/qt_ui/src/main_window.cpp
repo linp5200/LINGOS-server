@@ -32,6 +32,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_api(new ApiClie
     connect(m_api, &ApiClient::cmdFinished, this, &MainWindow::onCmdResult);
     m_refreshTimer = new QTimer(this);
     connect(m_refreshTimer, &QTimer::timeout, this, &MainWindow::refreshConsole);
+    connect(m_refreshTimer, &QTimer::timeout, this, &MainWindow::refreshAlert);
     m_refreshTimer->start(10000);   // 10s 轮询（真数据）
     refreshConsole();
     refreshHealth();
@@ -110,6 +111,30 @@ void MainWindow::refreshConsole() {
     }
 }
 
+void MainWindow::refreshAlert() {
+    if (!m_alertView) return;
+    const QJsonObject r = callCmd(QStringLiteral("alert_query"));
+    if (r.value("status").toString() == "ok") {
+        const QJsonArray arr = r.value("data").toArray();
+        m_alertView->clear();
+        if (arr.isEmpty()) {
+            m_alertView->append(QStringLiteral("[ 暂无预警 —— 系统正常 ]"));
+            return;
+        }
+        for (int i = 0; i < arr.size(); ++i) {
+            const QJsonObject e = arr.at(i).toObject();
+            const QString lv = e.value("level").toString("?").toUpper();
+            m_alertView->append(QStringLiteral("[%1] %2  [%3]\n    %4")
+                                    .arg(lv,
+                                         e.value("title").toString(),
+                                         e.value("time").toString(),
+                                         e.value("content").toString()));
+        }
+    } else {
+        m_alertView->setPlainText(QStringLiteral("预警读取失败/主机未连 —— 显示 -- 不模拟"));
+    }
+}
+
 void MainWindow::promptServer() {
     bool ok = false;
     const QString h = QInputDialog::getText(this, QStringLiteral("连接主机"),
@@ -142,6 +167,26 @@ QWidget *MainWindow::buildConsolePage() {
     connect(btn, &QPushButton::clicked, this, &MainWindow::refreshConsole);
     row->addWidget(btn);
     row->addStretch();
+    lay->addLayout(row);
+    return w;
+}
+
+QWidget *MainWindow::buildAlertPage() {
+    auto *w = new QWidget;
+    auto *lay = new QVBoxLayout(w);
+    lay->setContentsMargins(18, 14, 18, 14);
+    auto *t = new QLabel(QStringLiteral("▍ALERT  预警"));
+    t->setStyleSheet(QStringLiteral("font-size:20px;font-weight:700;letter-spacing:3px;color:%1;font-family:monospace").arg(kFuiWhite));
+    lay->addWidget(t);
+    m_alertView = new QTextEdit;
+    m_alertView->setReadOnly(true);
+    m_alertView->setStyleSheet(QStringLiteral("QTextEdit{background:%1;color:%2;border:1px solid rgba(255,255,255,50);font-family:monospace;font-size:12px;}").arg(kFuiBg, kFuiAmber));
+    lay->addWidget(m_alertView);
+    auto *row = new QHBoxLayout;
+    auto *btn = new QPushButton(QStringLiteral("↻ 刷新预警"));
+    btn->setStyleSheet(QStringLiteral("QPushButton{background:transparent;border:1px solid rgba(255,255,255,80);color:%1;padding:6px 14px;}").arg(kFuiAmber));
+    connect(btn, &QPushButton::clicked, this, &MainWindow::refreshAlert);
+    row->addWidget(btn); row->addStretch();
     lay->addLayout(row);
     return w;
 }
@@ -223,7 +268,7 @@ void MainWindow::buildUi() {
     m_stack = new QStackedWidget(this);
     m_stack->addWidget(buildConsolePage());   // 0
     m_stack->addWidget(new QWidget);          // 1 连接占位（promptServer 直接弹）
-    m_stack->addWidget(new QWidget);          // 2 预警（后续完善页）
+    m_stack->addWidget(buildAlertPage());     // 2 预警（alert_query 真数据）
     m_stack->addWidget(new QWidget);          // 3 天气占位
     m_stack->addWidget(new QWidget);          // 4 视觉占位
     m_stack->addWidget(buildLogPage());       // 5
@@ -231,6 +276,7 @@ void MainWindow::buildUi() {
     m_stack->addWidget(buildAboutPage());     // 7
 
     m_nav->setCurrentRow(0);
+    refreshAlert();                           // 预警初载
     relayout();
 }
 

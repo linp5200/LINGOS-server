@@ -21,12 +21,14 @@ private slots:
     void onNavChanged(int row);
     void onCmdResult(const QString &cmd, CmdResult res);
     void refreshConsole();
+    void refreshAlert();
     void refreshHealth();
     void promptServer();
 
 private:
     void buildUi();
     QWidget *buildConsolePage();
+    QWidget *buildAlertPage();
     QWidget *buildLogPage();
     QWidget *buildAboutPage();
     void log(const QString &line);
@@ -41,6 +43,7 @@ private:
     QWidget *m_top = nullptr;
     TerrainBackground *m_bg = nullptr;
     QTextEdit *m_console = nullptr;
+    QTextEdit *m_alertView = nullptr;
     QTextEdit *m_logView = nullptr;
     QTimer *m_refreshTimer = nullptr;
     QString m_host = "127.0.0.1";
