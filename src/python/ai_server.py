@@ -419,7 +419,10 @@ exam_blackout_dates = []
 user_country_cache = {}
 skill_help_cache = {}
 timeout_exempt_sessions = set()
-PARENT_PID = os.getppid()
+PARENT_PID = int(os.environ.get("LINGOS_PARENT_PID", "0") or 0) or os.getppid()
+# 【0.4.3 修复】LINGOS_NO_PARENT_MONITOR=1 时跳过父进程监控（独立常驻跑 ai_server——
+# 父 shell/守护退出不再自杀；lingos.sh/start 拉起建议设此）
+NO_PARENT_MONITOR = os.environ.get("LINGOS_NO_PARENT_MONITOR", "") == "1"
 _knowledge_base = None
 
 # 颜色（用于终端输出）
@@ -534,6 +537,8 @@ def auth_service_monitor():
     logger.debug("auth_service_monitor: Enter")
     while True:
         time.sleep(30)
+        if NO_PARENT_MONITOR:
+            continue
         try:
             os.kill(PARENT_PID, 0)
         except OSError:
@@ -4719,6 +4724,8 @@ def main():
     def monitor_parent():
         while True:
             time.sleep(5)
+            if NO_PARENT_MONITOR:
+                continue
             try:
                 os.kill(PARENT_PID, 0)
             except OSError:
