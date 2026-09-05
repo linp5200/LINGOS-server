@@ -571,10 +571,23 @@ async function bindWeather(){
 }
 /* ===== 视觉状态 ===== */
 async function bindVision(){
-  var v = await apiCmd('vision_status');
-  var cfg = (v&&v.status==='ok')? (v.data&&v.data.config||{}) : null;
-  setTxt('#p-vision .phead .r', cfg? ('源 '+(cfg.camera_source||'--')+' · '+(cfg.width||'--')+'x'+(cfg.height||'--'))
-         :(v&&v.status==='ok'?'视觉正常':'视觉未连接 —— --'));
+  var m = await apiCmd('monitor_status');
+  var a = await apiCmd('ai_vision_status');
+  var mok = m && m.status==='ok' && m.data;
+  var aok = a && a.status==='ok' && a.data;
+  if(mok){
+    var md = m.data.data||m.data;
+    var cams = md.cameras||[];
+    var online = cams.filter(function(c){return c.connected}).length;
+    setTxt('#p-vision .phead .r', '监控 <b>'+online+'/'+cams.length+'</b> 路在线 · 存储 '+(md.record_dir||'--')+'<br>预览 :'+(md.preview_port||8891)+' · AI识别 '+(aok?'就绪':'--'));
+    // 摄像头列表渲染
+    var box=document.querySelector('#p-vision .cols');
+    if(box && cams.length){
+      var lb=box.querySelector('.card .evlog'); 
+    }
+  } else {
+    setTxt('#p-vision .phead .r', '监控未连接 —— 显示 -- 不模拟');
+  }
 }
 /* ===== 日志 ===== */
 async function bindLog(){
