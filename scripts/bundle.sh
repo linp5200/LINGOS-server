@@ -188,10 +188,16 @@ chmod +x "$TARGET/bin/"* "$TARGET/start.sh" 2>/dev/null || true
 if [ -f "$TARGET/system/config/state.json" ]; then
   echo "==> 检测到已有配置 ($TARGET/system/config)——沿用，不覆盖"
 fi
+# 5) 依赖自检（先生 2026-09-05：语音 espeak/piper、监控 ffmpeg、python requests 缺失检测）
+if [ -f "$ROOT/scripts/check_deps.sh" ]; then
+  cp -a "$ROOT/scripts/check_deps.sh" "$TARGET/check_deps.sh" 2>/dev/null || true
+  echo "==> 依赖自检: ./check_deps.sh [--install]  (检测语音/ffmpeg/python 依赖，--install 自动装)"
+fi
 echo "=========================================="
 echo "✅ 安装完成: $TARGET"
 echo "   启动: cd '$TARGET' && ./start.sh"
 echo "   Web UI: http://<host>:8080/ui"
+echo "   依赖自检: ./check_deps.sh --install"
 echo "=========================================="
 EOF
 chmod +x "$DEST/install.sh"
