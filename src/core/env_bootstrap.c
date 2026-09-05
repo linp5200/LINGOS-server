@@ -56,7 +56,7 @@ int ensure_runtime_environment(void) {
 static void ensure_directories(void) {
     const char *root = lingos_data_root();
     const char *dirs[] = {
-        "/bin", "/run", "/Debug", "/system/config",
+        "/bin", "/run", "/Debug", "/system", "/system/config",
         "/state", "/data", "/Ensystem", "/apps",
         "/backups", "/cache", "/Dump", "/repairs",
         "/AH", "/snapshots", "/plugins", "/skills",
@@ -72,6 +72,15 @@ static void ensure_directories(void) {
     for (size_t i = 0; i < sizeof(dirs)/sizeof(dirs[0]); i++) {
         char path[512];
         safe_snprintf(path, sizeof(path), "%s%s", root, dirs[i]);
+        /* 【0.4.3 修复】逐级 mkdir（mkdir -p 语义）——父目录缺失时不再失败 */
+        char tmp[512];
+        safe_strncpy(tmp, path, sizeof(tmp));
+        char *p = tmp;
+        while ((p = strchr(p + 1, '/')) != NULL) {
+            *p = '\0';
+            if (tmp[0] != '\0') mkdir(tmp, 0755);
+            *p = '/';
+        }
         if (mkdir(path, 0755) != 0 && errno != EEXIST) {
             LOG_WARN_T("EnvBootstrap", "Dir", "MkdirFail", "mkdir %s: %s", path, strerror(errno));
         }

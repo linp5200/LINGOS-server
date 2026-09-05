@@ -623,7 +623,7 @@ int main(int argc, char **argv) {
         sleep(1);
     }
 
-    if (system_install_check_and_run() != 0) {
+    if (system_install_check_and_run() < 0) {
         emergency_output(tr(
             "First installation setup failed. Exiting.\n",
             "首次安装设置失败。退出。\n"
