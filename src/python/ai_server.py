@@ -32,6 +32,7 @@ import agent_orchestrator  # 【批次3】子 AI 对话协作编排器（Hub 模
 import llm_unified  # 【0.2.0】统一 LLM 调用层（openai/anthropic 原生直连 + 错误分类 + 调试落盘）
 import voice_service  # 【0.2.0】语音服务（TTS/STT + 降级链 + 用量 + 清理）
 import ha_integration  # 【0.2.1】Home Assistant 集成（AI-AGENT#10：B REST 控制 + C WS 实时事件）
+import monitor_service  # 【0.4.3】监控系统（先生类目：monitor.* 给人看——采集/预览/快照/录像）
 
 # 【批次C】本地技能商店：已启用技能目录加入模块搜索路径
 for _skill_dir in ("/LINGOS/skills/enabled",):
@@ -2759,6 +2760,59 @@ def cmd_camera_snapshot() -> dict:
         return {"status": "error", "msg": str(e)}
 
 
+# ========== 【0.4.3】监控系统 monitor.*（先生类目定稿——给人看：采集/预览/快照/录像/存储） ==========
+
+def cmd_monitor_list() -> dict:
+    """监控系统：列出全部摄像头及状态（V4L2 探测/RTSP 可达性）"""
+    try:
+        monitor_service.load_cfg()
+        return monitor_service.cmd_list()
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_monitor_status() -> dict:
+    """监控系统：整体状态（服务/路数/存储目录/预览端口）"""
+    try:
+        monitor_service.load_cfg()
+        return monitor_service.cmd_status()
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_monitor_config_get() -> dict:
+    try:
+        monitor_service.load_cfg()
+        return monitor_service.cmd_config_get()
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_monitor_config_set(key: str = "", value: str = "") -> dict:
+    try:
+        monitor_service.load_cfg()
+        return monitor_service.cmd_config_set(str(key), str(value))
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_monitor_add(cam_type: str = "v4l2", device: str = "/dev/video0", url: str = "", cam_id: str = "") -> dict:
+    try:
+        monitor_service.load_cfg()
+        return monitor_service.cmd_add_camera(str(cam_type), str(device), str(url), str(cam_id))
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_monitor_snapshot(camera_id: str = "cam0") -> dict:
+    """监控系统抓拍（V4L2/RTSP 单帧 JPEG；无设备/无 ffmpeg 返回明确错误）"""
+    try:
+        monitor_service.load_cfg()
+        return monitor_service.cmd_snapshot(str(camera_id))
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
 # ========== 【0.2.2】DeepSeek 官方 API 扩展（先生指示 2026-08-15） ==========
 def cmd_balance_query(provider_id: str = "") -> dict:
     """查询余额（DeepSeek GET /user/balance）——App 显示在 token 上传/下行一行
@@ -3853,13 +3907,19 @@ def handle_client(conn, addr):
         # 【0.4.3 类目归位（先生 2026-09-05 定）】监控系统 monitor.*（给人看）/ AI 识别引擎 ai_vision.*（给 AI）
         # 旧 vision_*/camera_* 命令保留兼容（跛脚——历史 App/脚本仍可用），新命令族为现行
         if cmd == "monitor_status":
-            _reply(conn, "monitor_status", cmd_vision_status()); return
+            _reply(conn, "monitor_status", cmd_monitor_status()); return
+        if cmd == "monitor_list":
+            _reply(conn, "monitor_list", cmd_monitor_list()); return
         if cmd == "monitor_snapshot":
-            _reply(conn, "monitor_snapshot", cmd_camera_snapshot()); return
+            _reply(conn, "monitor_snapshot", cmd_monitor_snapshot(str(req.get("camera_id", "cam0")))); return
         if cmd == "monitor_config_get":
-            _reply(conn, "monitor_config_get", cmd_vision_config_get()); return
+            _reply(conn, "monitor_config_get", cmd_monitor_config_get()); return
         if cmd == "monitor_config_set":
-            _reply(conn, "monitor_config_set", cmd_vision_config_set(str(req.get("key", "")), str(req.get("value", "")))); return
+            _reply(conn, "monitor_config_set", cmd_monitor_config_set(str(req.get("key", "")), str(req.get("value", "")))); return
+        if cmd == "monitor_add":
+            _reply(conn, "monitor_add", cmd_monitor_add(
+                str(req.get("type", "v4l2")), str(req.get("device", "/dev/video0")),
+                str(req.get("url", "")), str(req.get("cam_id", "")))); return
         if cmd == "monitor_process":
             _reply(conn, "monitor_process", cmd_vision_process(str(req.get("action", "status")))); return
         if cmd == "ai_vision_status":
