@@ -51,6 +51,7 @@ typedef struct ws_client {
     int topic_count;
     time_t connected_at;
     time_t last_heartbeat;
+    time_t last_ping_sent;   /* 【0.4.3】server 主动 ping 探活时间 */
     volatile int chat_active;    /* 【修复A2】chat 转发线程运行中 */
     volatile int chat_interrupt; /* 【修复A2】收到 interrupt 帧——请求中断当前 chat */
     struct ws_client *next;
@@ -180,8 +181,22 @@ static int read_ws_frame(int fd, char *payload, size_t payload_size) {
     int mask = (header[1] & 0x80) >> 7;
     int payload_len = header[1] & 0x7F;
 
+    /* 【0.4.3 修复】控制帧处理：ping(0x9)/pong(0xA)/close(0x8)——
+       返回 -2 表示"连接活但无业务消息"，上层续命(更新心跳)不断开 */
+    if (opcode == 0x9 || opcode == 0xA || opcode == 0x8) {
+        /* 读掉控制帧负载(可能带 mask) */
+        if (payload_len >= 126) { unsigned char ext[2]; if (read(fd, ext, 2) != 2) return -1; payload_len = (ext[0]<<8)|ext[1]; }
+        if (mask) { unsigned char mk[4]; if (read(fd, mk, 4) != 4) return -1; }
+        if (payload_len > 0) { char junk[256]; size_t rd=0; while (rd < (size_t)payload_len) { ssize_t r2=read(fd, junk, payload_len-rd > 255 ? 255 : payload_len-rd); if (r2<=0) break; rd+=r2; } }
+        if (opcode == 0x9) {
+            /* 收到 ping——回 pong(0xA) */
+            char pong[2] = {(char)0x8A, 0x00};
+            (void)write(fd, pong, 2);
+        }
+        return -2;
+    }
+
     (void)fin;
-    (void)opcode;
 
     if (payload_len >= 126) {
         unsigned char ext[2];
@@ -265,6 +280,7 @@ static ws_client_t* add_client(int fd) {
     client->active = 1;
     client->connected_at = time(NULL);
     client->last_heartbeat = time(NULL);
+    client->last_ping_sent = time(NULL);   /* 【0.4.3】server 主动 ping */
     pthread_mutex_init(&client->lock, NULL);
     safe_snprintf(client->id, sizeof(client->id), "ws_%d_%ld", fd, time(NULL));
 
@@ -915,17 +931,34 @@ static void handle_client(void *argp) {
         int ret = poll(&pfd, 1, 1000);
         if (ret < 0) break;
         if (ret == 0) {
-            /* 心跳检测 */
+            /* 心跳检测：超时断；空闲 HEARTBEAT_INTERVAL 主动发 ping 探活（先生 2026-09-05：
+               不依赖客户端心跳——App raw/native 心跳可能未达，server 主动 ping 更稳） */
             time_t now = time(NULL);
-            if (now - client->last_heartbeat > HEARTBEAT_INTERVAL * 2) {
+            if (now - client->last_heartbeat > HEARTBEAT_INTERVAL * 3) {
                 LOG_WARN_T("WebSocket", "Heartbeat", "Timeout", "client %s heartbeat timeout", client->id);
                 break;
+            }
+            if (now - client->last_ping_sent > HEARTBEAT_INTERVAL) {
+                /* 发 WS ping 帧(0x9) */
+                char ping[2] = {(char)0x89, 0x00}; /* FIN|PING, len 0 */
+                ssize_t w = write(client_fd, ping, 2);
+                client->last_ping_sent = now;
+                if (w <= 0) {
+                    LOG_WARN_T("WebSocket", "Heartbeat", "PingFail", "client %s ping send fail", client->id);
+                    break;
+                }
+                LOG_DEBUG_T("WebSocket", "Heartbeat", "Ping", "sent ping to %s", client->id);
             }
             continue;
         }
 
         char payload[BUFFER_SIZE];
         int len = read_ws_frame(client_fd, payload, sizeof(payload));
+        if (len == -2) {
+            /* 【0.4.3】控制帧(ping/pong)——续命，不业务处理 */
+            client->last_heartbeat = time(NULL);
+            continue;
+        }
         if (len <= 0) break;
 
         client->last_heartbeat = time(NULL);
