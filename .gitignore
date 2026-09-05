@@ -25,3 +25,4 @@ data/
 .vscode/
 .idea/
 *.swp
+webui/index.static.bak
