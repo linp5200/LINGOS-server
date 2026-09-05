@@ -27,6 +27,7 @@ import hashlib
 from typing import Dict, Any, List, Optional, Tuple, Generator
 from datetime import datetime, timedelta
 
+import paths  # 【0.4.3】路径集中（先生 FHS——lingos_path Python 版）
 import memory_retrieval  # 【批次1】双模式记忆检索（语义/关键词降级）
 import agent_orchestrator  # 【批次3】子 AI 对话协作编排器（Hub 模式）
 import llm_unified  # 【0.2.0】统一 LLM 调用层（openai/anthropic 原生直连 + 错误分类 + 调试落盘）
@@ -205,7 +206,7 @@ def _broadcast_alert_event(evt: dict) -> None:
             pass
 
 
-WEATHER_CACHE_PATH = "/LINGOS/data/weather_cache.json"
+WEATHER_CACHE_PATH = paths.P_DATA + "/weather_cache.json"
 WEATHER_CACHE_TTL = 600          # 当前天气缓存 10 分钟
 WEATHER_DAILY_TTL = 21600        # 预报缓存 6 小时
 OPENMETEO_BASE = "https://api.open-meteo.com/v1/forecast"
@@ -2597,7 +2598,7 @@ def cmd_vision_config_get() -> dict:
 
 # ========== 【0.4.3】视觉系统完善（先生部署指示——命令族化/状态/配置/摄像头/快照） ==========
 
-VISION_CONF_PATH = "/LINGOS/system/config/vision.conf"
+VISION_CONF_PATH = paths.P_ETC + "/vision.conf"
 VISION_KEYS = {  # vision.conf 白名单（写回校验：类型）
     "camera_source": str, "device_path": str, "rtsp_url": str,
     "rtsp_frame_port": int, "rtsp_http_port": int,
@@ -3244,7 +3245,7 @@ def _reply(conn, cmd_name, resp):
     except Exception as e:
         logger.debug("reply send failed cmd=%s: %s", cmd_name, e)
 
-TOKEN_USAGE_FILE = "/LINGOS/state/token_usage.jsonl"
+TOKEN_USAGE_FILE = paths.P_STATE + "/token_usage.jsonl"
 
 def _token_usage_append(provider: str, model: str, prompt_tokens: int, completion_tokens: int, session_id: str = "") -> None:
     """Token 用量落盘（JSONL 追加——每次模型调用后）"""
