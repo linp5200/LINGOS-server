@@ -2813,6 +2813,29 @@ def cmd_monitor_snapshot(camera_id: str = "cam0") -> dict:
         return {"status": "error", "msg": str(e)}
 
 
+def cmd_monitor_record_start(camera_id: str = "cam0", segment_min: int = 0) -> dict:
+    try:
+        monitor_service.load_cfg()
+        return monitor_service.cmd_record_start(str(camera_id), int(segment_min or 0))
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_monitor_record_stop(camera_id: str = "cam0") -> dict:
+    try:
+        return monitor_service.cmd_record_stop(str(camera_id))
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_monitor_remove(camera_id: str = "cam0") -> dict:
+    try:
+        monitor_service.load_cfg()
+        return monitor_service.cmd_remove_camera(str(camera_id))
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
 # ========== 【0.2.2】DeepSeek 官方 API 扩展（先生指示 2026-08-15） ==========
 def cmd_balance_query(provider_id: str = "") -> dict:
     """查询余额（DeepSeek GET /user/balance）——App 显示在 token 上传/下行一行
@@ -3920,6 +3943,13 @@ def handle_client(conn, addr):
             _reply(conn, "monitor_add", cmd_monitor_add(
                 str(req.get("type", "v4l2")), str(req.get("device", "/dev/video0")),
                 str(req.get("url", "")), str(req.get("cam_id", "")))); return
+        if cmd == "monitor_record_start":
+            _reply(conn, "monitor_record_start", cmd_monitor_record_start(
+                str(req.get("camera_id", "cam0")), int(req.get("segment_min", 0) or 0))); return
+        if cmd == "monitor_record_stop":
+            _reply(conn, "monitor_record_stop", cmd_monitor_record_stop(str(req.get("camera_id", "cam0")))); return
+        if cmd == "monitor_remove":
+            _reply(conn, "monitor_remove", cmd_monitor_remove(str(req.get("camera_id", "cam0")))); return
         if cmd == "monitor_process":
             _reply(conn, "monitor_process", cmd_vision_process(str(req.get("action", "status")))); return
         if cmd == "ai_vision_status":

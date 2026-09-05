@@ -183,6 +183,48 @@ def cmd_add_camera(cam_type="v4l2", device="/dev/video0", url="", cam_id=""):
     save_cfg()
     return {"status": "ok", "data": cam}
 
+
+def cmd_record_start(camera_id="cam0", segment_min=0):
+    """monitor_record_start：开始录像（ffmpeg 拉流→分段 mp4；后台进程）
+    返回 PID/文件模板；按 segment_min 分段（默认 config）"""
+    cam = None
+    for c in _cfg.get("cameras", []):
+        if c.get("id") == camera_id: cam = c; break
+    if not cam:
+        return {"status": "error", "msg": "camera %s not found" % camera_id}
+    src = cam.get("url") if cam.get("type") == "rtsp" else cam.get("device", "/dev/video0")
+    seg = segment_min or _cfg.get("record_segment_min", 10)
+    recdir = _cfg.get("record_dir", "/LINGOS/data/monitor/recordings")
+    os.makedirs(recdir, exist_ok=True)
+    fn = "%s/%s_%%Y%%m%%d_%%H%%M%%S.mp4" % (recdir, camera_id)
+    try:
+        p = subprocess.Popen(["ffmpeg", "-y", "-i", src, "-c", "copy", "-map", "0",
+                              "-f", "segment", "-segment_time", str(seg), "-reset_timestamps", "1",
+                              fn], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _state["record_pid_%s" % camera_id] = p.pid
+        _state["record_src_%s" % camera_id] = src
+        return {"status": "ok", "data": {"pid": p.pid, "camera": camera_id,
+                "segment_min": seg, "dir": recdir, "pattern": fn}}
+    except FileNotFoundError:
+        return {"status": "error", "msg": "ffmpeg 未安装——录像需 ffmpeg（apt install ffmpeg）"}
+
+def cmd_record_stop(camera_id="cam0"):
+    """monitor_record_stop：停止录像"""
+    pid = _state.pop("record_pid_%s" % camera_id, None)
+    if pid:
+        try: os.kill(pid, 15)
+        except Exception: pass
+        return {"status": "ok", "msg": "recording stopped", "pid": pid}
+    return {"status": "error", "msg": "no recording for %s" % camera_id}
+
+def cmd_remove_camera(camera_id="cam0"):
+    """monitor_remove：移除一路摄像头"""
+    for i, c in enumerate(_cfg.get("cameras", [])):
+        if c.get("id") == camera_id:
+            del _cfg["cameras"][i]; save_cfg()
+            return {"status": "ok", "msg": "camera %s removed" % camera_id}
+    return {"status": "error", "msg": "camera %s not found" % camera_id}
+
 # ---------- HTTP：预览 MJPEG + 状态 API（供 App/Web/Qt） ----------
 class MonitorHTTP(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
