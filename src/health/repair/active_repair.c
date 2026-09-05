@@ -356,33 +356,61 @@ static int execute_action(const repair_action_t *action, char *out_msg, size_t o
         case ACTION_RESTART_AI_SERVER: {
             system("pkill -f ai_server.py || true");
             usleep(500000);
-            /* 【0.4.3 定稿】数据根=/LINGOS；venv 在包内（LINGOS_VENV 指向）——
-             * 优先包内 venv（$LINGOS_VENV/bin/python $LINGOS_VENV/server/ai_server.py）
-             * 无则回落 /LINGOS/bin（旧环境兼容——跛脚） */
+            /* 【0.4.3 完善】Python 启动决策——先生环境（sysbin/系统 python）与 allbin 全兼容：
+             * 候选解释器依次探测可用性（坏 venv 会 init 失败——弃用）：
+             *   1) LINGOS_PYTHON（显式指定——先生可用系统 python3）
+             *   2) LINGOS_VENV/bin/python（allbin 包内 venv，健康才用）
+             *   3) python3（系统——先生环境已有依赖）
+             * ai_server.py 候选路径：
+             *   a) LINGOS_VENV/server/ai_server.py   b) /LINGOS/bin/ai_server.py
+             *   c) /LINGOS/python/server/ai_server.py d) $LINGOS_VENV/../python/server  (包根)
+             * 优先组合：解释器健康 + 脚本存在，用 system() 后台拉起 */
             const char *venv_root = getenv("LINGOS_VENV");
-            char venv_py[512], venv_server[512], cmd[1024];
-            int use_venv = 0;
+            const char *py_override = getenv("LINGOS_PYTHON");
+            char py[6][512]; int np = 0;
+            /* 候选解释器（去重） */
+            if (py_override && py_override[0]) {
+                safe_snprintf(py[np++], sizeof(py[0]), "%s", py_override);
+            }
             if (venv_root && venv_root[0]) {
-                safe_snprintf(venv_py, sizeof(venv_py), "%s/bin/python", venv_root);
-                safe_snprintf(venv_server, sizeof(venv_server), "%s/server/ai_server.py", venv_root);
-                if (access(venv_py, X_OK) == 0 && access(venv_server, F_OK) == 0) use_venv = 1;
+                safe_snprintf(py[np], sizeof(py[0]), "%s/bin/python", venv_root);
+                if (access(py[np], X_OK) == 0) np++;
             }
-            /* 兼容旧 LINGOS_ROOT 指向的 venv（历史包） */
-            if (!use_venv) {
-                const char *broot = getenv("LINGOS_ROOT");
-                if (broot && broot[0]) {
-                    safe_snprintf(venv_py, sizeof(venv_py), "%s/python/bin/python", broot);
-                    safe_snprintf(venv_server, sizeof(venv_server), "%s/python/server/ai_server.py", broot);
-                    if (access(venv_py, X_OK) == 0 && access(venv_server, F_OK) == 0) use_venv = 1;
+            safe_snprintf(py[np], sizeof(py[0]), "python3");
+            if (access("/usr/bin/python3", X_OK) == 0 || access("/usr/local/bin/python3", X_OK) == 0) np++;
+            else np++; /* 让 PATH 解析 */
+
+            char script[6][512]; int ns = 0;
+            if (venv_root && venv_root[0])
+                safe_snprintf(script[ns++], sizeof(script[0]), "%s/server/ai_server.py", venv_root);
+            safe_snprintf(script[ns++], sizeof(script[0]), "/LINGOS/bin/ai_server.py");
+            safe_snprintf(script[ns++], sizeof(script[0]), "/LINGOS/python/server/ai_server.py");
+
+            /* 探测某解释器是否健康：运行 `-c "import sys"` 快检（坏 venv 报错退出） */
+            char chosen_py[512] = "", chosen_script[512] = "", probe[800];
+            for (int a = 0; a < np; a++) {
+                if (!py[a][0]) continue;
+                for (int b = 0; b < ns; b++) {
+                    if (access(script[b], F_OK) != 0) continue;
+                    safe_snprintf(probe, sizeof(probe), "\"%s\" -c \"import sys\" >/dev/null 2>&1", py[a]);
+                    int ok = (system(probe) == 0);
+                    if (ok) {
+                        safe_strncpy(chosen_py, py[a], sizeof(chosen_py));
+                        safe_strncpy(chosen_script, script[b], sizeof(chosen_script));
+                        break;
+                    }
                 }
+                if (chosen_py[0]) break;
             }
-            if (use_venv) {
-                safe_snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" &", venv_py, venv_server);
+            char cmd[1024];
+            if (chosen_py[0] && chosen_script[0]) {
+                safe_snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\" &", chosen_py, chosen_script);
             } else {
-                safe_snprintf(cmd, sizeof(cmd), "python3 /LINGOS/bin/ai_server.py &");
+                /* 全不行——最后尝试系统 python3 + 任一脚本（日志会暴露真实错） */
+                safe_snprintf(cmd, sizeof(cmd), "python3 %s &", script[ns-1]);
             }
             system(cmd);
-            LOG_INFO_T("ActiveRepair", "Execute", "AIServer", "AI server restarted (venv=%d cmd=%s)", use_venv, cmd);
+            LOG_INFO_T("ActiveRepair", "Execute", "AIServer", "AI server restart cmd=%s", cmd);
             safe_snprintf(out_msg, out_len, tr("AI server restarted", "AI 服务器已重启"));
             return 0;
         }

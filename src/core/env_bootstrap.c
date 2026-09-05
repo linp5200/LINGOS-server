@@ -91,8 +91,21 @@ static void ensure_directories(void) {
  * 复制 Python 脚本
  * ============================================================ */
 static void copy_python_scripts(void) {
-    /* 【0.2.1 全捆优化】捆绑形态（包内 python/ venv 存在）下跳过——
-       venv 已含全部 Python 脚本，无需从源码复制 */
+    const char *root = lingos_data_root();
+    char bin_path[512];
+    safe_snprintf(bin_path, sizeof(bin_path), "%s/bin", root);
+    mkdir(bin_path, 0755);
+    char bin_ai[512];
+    safe_snprintf(bin_ai, sizeof(bin_ai), "%s/bin/ai_server.py", root);
+
+    /* 【0.4.3 完善】判断是否需要拷贝：
+     * - /LINGOS/bin/ai_server.py 已存在 → 无需（先生 sysbin 已就位）
+     * - 包内 venv（../python 或 $LINGOS_VENV）健康 → venv 自带脚本，无需拷贝（allbin）
+     * - 否则：从源码/包内 python/server 拷到 /LINGOS/bin（先生环境系统 python 用） */
+    if (access(bin_ai, F_OK) == 0) {
+        LOG_INFO_T("EnvBootstrap", "Python", "InPlace", "/LINGOS/bin/ai_server.py 已存在，跳过拷贝");
+        return;
+    }
     {
         char exe[512];
         ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
@@ -101,33 +114,34 @@ static void copy_python_scripts(void) {
             char *slash = strrchr(exe, '/');
             if (slash) {
                 *slash = '\0';
-                char vp[512];
-                safe_snprintf(vp, sizeof(vp), "%s/../python/bin/python3", exe);
-                if (access(vp, X_OK) == 0) {
-                    LOG_INFO_T("EnvBootstrap", "Python", "Bundled", "bundled venv detected, skipping copy");
-                    return;
+                /* 候选 python 源目录：exe 旁 bin/ 已拷版本？ 包内 python/server 或 ../python/server */
+                char cand[4][512]; int nc = 0;
+                /* exe 目录可能是 /LINGOS/bin（install 后）或包内 bin/ */
+                safe_snprintf(cand[nc++], sizeof(cand[0]), "%s/../python/server", exe);
+                const char *venv = getenv("LINGOS_VENV");
+                if (venv && venv[0])
+                    safe_snprintf(cand[nc++], sizeof(cand[0]), "%s/server", venv);
+                for (int i = 0; i < nc; i++) {
+                    char src_ai[512];
+                    safe_snprintf(src_ai, sizeof(src_ai), "%s/ai_server.py", cand[i]);
+                    if (access(src_ai, F_OK) == 0) {
+                        char cmd[1024];
+                        safe_snprintf(cmd, sizeof(cmd), "cp %s/*.py %s/bin/ 2>/dev/null", cand[i], root);
+                        int ret = system(cmd);
+                        LOG_INFO_T("EnvBootstrap", "Python", "Copy", "copy %s → %s/bin (ret=%d)", cand[i], root, ret);
+                        return;
+                    }
+                }
+                /* 源码树（开发态） */
+                char dev_src[512];
+                safe_snprintf(dev_src, sizeof(dev_src), "%s/../src/python", root);
+                if (access(dev_src, F_OK) == 0) {
+                    char cmd[1024];
+                    safe_snprintf(cmd, sizeof(cmd), "cp %s/*.py %s/bin/ 2>/dev/null", dev_src, root);
+                    system(cmd);
+                    LOG_INFO_T("EnvBootstrap", "Python", "CopySrc", "copied from src/python");
                 }
             }
-        }
-    }
-    /* 在 Linux 环境中，脚本由 make install_python_script 复制 */
-    /* 此处仅确保 bin 目录存在 */
-    const char *root = lingos_data_root();
-    char bin_path[512];
-    safe_snprintf(bin_path, sizeof(bin_path), "%s/bin", root);
-    mkdir(bin_path, 0755);
-
-    /* 如果 /LINGOS/bin 为空，尝试从源码目录复制 */
-    char src_path[512];
-    safe_snprintf(src_path, sizeof(src_path), "%s/../src/python", root);
-    if (access(src_path, F_OK) == 0) {
-        char cmd[512];
-        safe_snprintf(cmd, sizeof(cmd), "cp %s/*.py %s/bin/ 2>/dev/null", src_path, root);
-        int ret = system(cmd);
-        if (ret != 0) {
-            LOG_WARN_T("EnvBootstrap", "Python", "CopyFail", "failed to copy Python scripts");
-        } else {
-            LOG_INFO_T("EnvBootstrap", "Python", "OK", "Python scripts copied");
         }
     }
 }
