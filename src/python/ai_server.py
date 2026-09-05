@@ -3850,6 +3850,20 @@ def handle_client(conn, addr):
             _reply(conn, "vision_process", cmd_vision_process(str(req.get("action", "status")))); return
         if cmd == "camera_snapshot":
             _reply(conn, "camera_snapshot", cmd_camera_snapshot()); return
+        # 【0.4.3 类目归位（先生 2026-09-05 定）】监控系统 monitor.*（给人看）/ AI 识别引擎 ai_vision.*（给 AI）
+        # 旧 vision_*/camera_* 命令保留兼容（跛脚——历史 App/脚本仍可用），新命令族为现行
+        if cmd == "monitor_status":
+            _reply(conn, "monitor_status", cmd_vision_status()); return
+        if cmd == "monitor_snapshot":
+            _reply(conn, "monitor_snapshot", cmd_camera_snapshot()); return
+        if cmd == "monitor_config_get":
+            _reply(conn, "monitor_config_get", cmd_vision_config_get()); return
+        if cmd == "monitor_config_set":
+            _reply(conn, "monitor_config_set", cmd_vision_config_set(str(req.get("key", "")), str(req.get("value", "")))); return
+        if cmd == "monitor_process":
+            _reply(conn, "monitor_process", cmd_vision_process(str(req.get("action", "status")))); return
+        if cmd == "ai_vision_status":
+            _reply(conn, "ai_vision_status", cmd_vision_status()); return
         if cmd == "ha_config_set":
             _reply(conn, "ha_config_set", ha_integration.cmd_ha_config_set(
                 str(req.get("host", "")), str(req.get("token", "")), int(req.get("port", 8123)))); return
