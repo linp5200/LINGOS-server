@@ -141,14 +141,49 @@ chmod +x "$DEST/check_env.sh"
 # ---------- 6. 启动包装（LD_LIBRARY_PATH 兜底 dlopen 场景 + 包根导出） ----------
 cat > "$DEST/start.sh" <<'EOF'
 #!/usr/bin/env bash
-# 启动包装：LD_LIBRARY_PATH 兜底（numpy 等 dlopen C 扩展不走 RPATH——DEPENDENCIES.md 全捆红利）
+# 启动包装（0.4.3：数据根统一 /LINGOS——先生架构；包内仅 lib/venv）
+# 用法：本文件应在 /LINGOS/（install.sh 已迁移）或全捆目录内执行
 DIR="$(cd "$(dirname "$0")" && pwd)"
 export LD_LIBRARY_PATH="$DIR/lib:${LD_LIBRARY_PATH:-}"
 export LINGOS_BUNDLED=1
-export LINGOS_ROOT="$DIR"          # 【2026-08-22】包根——active_repair 用它定位包内 venv
+# 【0.4.3 先生裁决】数据根 = /LINGOS（config/state/data/models 全在这——沿用老配置）
+# 不设 LINGOS_ROOT（代码默认 /LINGOS）；venv 位置显式给 active_repair 用
+export LINGOS_VENV="$DIR/python"
 exec "$DIR/lingos_linux" "$@"
 EOF
 chmod +x "$DEST/start.sh"
+
+# ---------- 6c. 安装脚本（0.4.3——先生 B 方案：解压→迁移到 /LINGOS 全家桶） ----------
+cat > "$DEST/install.sh" <<'EOF'
+#!/usr/bin/env bash
+# LING OS 0.4.3 安装脚本——将全捆包内容迁移到 /LINGOS 统一根（先生架构）
+set -e
+DIR="$(cd "$(dirname "$0")" && pwd)"
+TARGET="${1:-/LINGOS}"
+echo "==> LING OS 0.4.3 安装到 $TARGET"
+[ "$(id -u)" = 0 ] || echo "!! 建议 root 运行（proot 内一般已是）"
+# 1) 创建目录骨架
+mkdir -p "$TARGET"/{bin,lib,run,state,data,log,system/config,share/webui,registry,plugins,models,skills,Ensystem,snapshots,repairs,Dump,backups,cache,AH}
+echo "==> 目录骨架已建: $TARGET"
+# 2) 复制二进制/库/venv/webui（保留可执行位）
+cp -a "$DIR"/lingos_linux "$DIR"/lingosd "$DIR"/lingos_supervisor "$TARGET/bin/" 2>/dev/null || true
+cp -a "$DIR"/lib/* "$TARGET/lib/" 2>/dev/null || true
+[ -d "$DIR/python" ] && cp -a "$DIR/python" "$TARGET/python" 2>/dev/null || true
+[ -d "$DIR/share/webui" ] && cp -a "$DIR"/share/webui/* "$TARGET/share/webui/" 2>/dev/null || true
+# 3) 放启动脚本
+cp -a "$DIR/start.sh" "$TARGET/start.sh" 2>/dev/null || true
+chmod +x "$TARGET/bin/"* "$TARGET/start.sh" 2>/dev/null || true
+# 4) 若目标已是 /LINGOS 且存在老 config/state——保留（沿用）
+if [ -f "$TARGET/system/config/state.json" ]; then
+  echo "==> 检测到已有配置 ($TARGET/system/config)——沿用，不覆盖"
+fi
+echo "=========================================="
+echo "✅ 安装完成: $TARGET"
+echo "   启动: cd '$TARGET' && ./start.sh"
+echo "   Web UI: http://<host>:8080/ui"
+echo "=========================================="
+EOF
+chmod +x "$DEST/install.sh"
 
 # ---------- 6b. Web UI（0.4.3——网页访问 http://host:8080/ui） ----------
 if [ -d "$ROOT/webui" ]; then
