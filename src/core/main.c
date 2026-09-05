@@ -733,9 +733,14 @@ int main(int argc, char **argv) {
         wizard_engine_ctx_t wiz_ctx;
         renderer_ctx_t renderer;
 
-        if (wizard_engine_init(&wiz_ctx, RENDERER_TYPE_TUI) == 0) {
+        /* 【0.4.3 修复】先生环境向导叠加：LINGOS_WIZARD=cli 强制文本向导
+           （notcurses 全屏 TUI 在部分 proot/远程终端半失败——不重绘导致方向键叠加） */
+        const char *wiz_mode = getenv("LINGOS_WIZARD");
+        int want_cli = (wiz_mode && strcmp(wiz_mode, "cli") == 0);
+
+        if (wizard_engine_init(&wiz_ctx, want_cli ? RENDERER_TYPE_CLI : RENDERER_TYPE_TUI) == 0) {
             if (wizard_engine_load_steps(&wiz_ctx) == 0) {
-                if (renderer_tui_create(&renderer) == 0) {
+                if (!want_cli && renderer_tui_create(&renderer) == 0) {
                     wiz_ctx.renderer = &renderer;
                     if (wizard_engine_run(&wiz_ctx) == 0) {
                         wizard_engine_save_config(&wiz_ctx);
