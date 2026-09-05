@@ -141,15 +141,26 @@ chmod +x "$DEST/check_env.sh"
 # ---------- 6. 启动包装（LD_LIBRARY_PATH 兜底 dlopen 场景 + 包根导出） ----------
 cat > "$DEST/start.sh" <<'EOF'
 #!/usr/bin/env bash
-# 启动包装（0.4.3：数据根统一 /LINGOS——先生架构；包内仅 lib/venv）
+# 启动包装（0.4.3：数据根统一 /LINGOS——先生架构；包内仅 bin/lib/venv）
 # 用法：本文件应在 /LINGOS/（install.sh 已迁移）或全捆目录内执行
 DIR="$(cd "$(dirname "$0")" && pwd)"
-export LD_LIBRARY_PATH="$DIR/lib:${LD_LIBRARY_PATH:-}"
+# 【0.4.3 修复】二进制位置自适应：install.sh 迁到 /LINGOS 后放 bin/；包根直跑时在 DIR/
+if [ -x "$DIR/bin/lingos_linux" ]; then
+    BIN="$DIR/bin/lingos_linux"
+    LIB="$DIR/lib"
+elif [ -x "$DIR/lingos_linux" ]; then
+    BIN="$DIR/lingos_linux"
+    LIB="$DIR/lib"
+else
+    echo "lingos_linux not found (期望 $DIR/bin/ 或 $DIR/)" >&2
+    exit 1
+fi
+export LD_LIBRARY_PATH="$LIB:${LD_LIBRARY_PATH:-}"
 export LINGOS_BUNDLED=1
 # 【0.4.3 先生裁决】数据根 = /LINGOS（config/state/data/models 全在这——沿用老配置）
 # 不设 LINGOS_ROOT（代码默认 /LINGOS）；venv 位置显式给 active_repair 用
 export LINGOS_VENV="$DIR/python"
-exec "$DIR/lingos_linux" "$@"
+exec "$BIN" "$@"
 EOF
 chmod +x "$DEST/start.sh"
 
