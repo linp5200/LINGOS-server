@@ -56,6 +56,7 @@ int ensure_runtime_environment(void) {
 static void ensure_directories(void) {
     const char *root = lingos_data_root();
     const char *dirs[] = {
+        /* 兼容现有（先生环境已用 system/config 等——保留） */
         "/bin", "/run", "/Debug", "/system", "/system/config",
         "/state", "/data", "/Ensystem", "/apps",
         "/backups", "/cache", "/Dump", "/repairs",
@@ -66,7 +67,10 @@ static void ensure_directories(void) {
         "/registry/skills", "/registry/plugins",
         "/registry/hooks", "/registry/selfcheck",
         "/Debug/backups", "/system/backups",
-        "/share", "/share/webui"          /* 【0.4.3】只读资源——Web UI 网页访问 */
+        "/share", "/share/webui",          /* 【0.4.3】只读资源——Web UI 网页访问 */
+        /* 【0.4.3 FHS 目标布局（先生裁决——新路径集中用 lingos_path）】 */
+        "/etc", "/var", "/var/log", "/var/lib", "/var/backups", "/var/cache",
+        "/lib", "/tmp"
     };
 
     for (size_t i = 0; i < sizeof(dirs)/sizeof(dirs[0]); i++) {
