@@ -33,6 +33,10 @@
 - **p-sys 页改为真实绑定**：插件列表 ← `plugin_list`（新增热重载按钮）、
   注册表 ← `registry_list`、系统信息 ← `system_info`（版本不再写死 LN-0.4.3）；
   不可达一律显示 `--` 不模拟
+- **AI 识别引擎 AI 侧未接线**：`vision_ai.py`（双路径：文本化/多模态）从未被调用
+  - 新增 `ai_vision_ask` 命令（question + image_path）→ 走 `vision_ai.vision_ask`
+  - 说明：`ai_vision_detect` / `ai_vision_ocr` 目前仍为**空壳桩**（返回空 data，
+    真正检测需监控/YOLO 服务在线）——**未完全实现，此处如实标注**
 - **check_deps.sh**：补检 `piper`（先生裁语音含 piper）、`websocket-client`、`ssl` 可用性、本体 `ldd` 缺库清单
 
 ### 新增（Features）

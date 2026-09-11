@@ -2943,6 +2943,27 @@ def cmd_ai_vision_detect() -> dict:
         return {"status": "error", "msg": str(e)}
 
 
+def cmd_ai_vision_ask(question: str = "", image_path: str = "") -> dict:
+    """AI 识别引擎 · AI 侧（先生裁决 2026-08-14 双路径）
+
+    路径 A（模型无视觉）：YOLO 检测结果 + OCR 文字 → 转文本喂 LLM
+    路径 B（模型多模态）：帧 base64 → 直喂多模态 LLM
+    【0.4.4】此前 vision_ai.py 从未被调用（死代码）→ 本命令接线
+    """
+    try:
+        import vision_ai as VA
+        dets, ocr = [], []
+        try:
+            import yolo_service as YS  # noqa: F401
+        except Exception:
+            pass
+        res = VA.vision_ask(question or "描述画面内容", image_path=image_path,
+                            detections=dets, ocr_results=ocr)
+        return {"status": "ok", "data": res}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
 def cmd_ai_vision_ocr() -> dict:
     """AI 识别引擎：OCR 文字识别（归 AI 内容——先生裁决）"""
     try:
@@ -4104,6 +4125,9 @@ def handle_client(conn, addr):
             _reply(conn, "ai_vision_detect", cmd_ai_vision_detect()); return
         if cmd == "ai_vision_ocr":
             _reply(conn, "ai_vision_ocr", cmd_ai_vision_ocr()); return
+        if cmd == "ai_vision_ask":
+            _reply(conn, "ai_vision_ask", cmd_ai_vision_ask(
+                str(req.get("question", "")), str(req.get("image_path", "")))); return
         if cmd == "ai_vision_calibrate":
             _reply(conn, "ai_vision_calibrate", cmd_ai_vision_calibrate()); return
         if cmd == "ai_vision_overlay":
