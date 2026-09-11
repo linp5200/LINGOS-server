@@ -170,10 +170,17 @@ export LINGOS_VENV="$DIR/python"
 
 # rpath 兜底：仅当二进制自身找不到库时才临时提供（子进程不受影响——
 # C 端启动 python 前会 unsetenv，见 src/core/main.c ensure_ai_server_running）
-if [ -n "$(ls -A "$LIB" 2>/dev/null)" ] && ! ldd "$BIN" 2>/dev/null | grep -q "not found"; then
-    :   # rpath 已够用，不设 LD_LIBRARY_PATH
-else
+NEED_LDPATH=0
+if [ ! -d "$LIB" ] || [ -z "$(ls -A "$LIB" 2>/dev/null)" ]; then
+    NEED_LDPATH=0                                  # 无包内库（sysbin）→ 不必设
+elif ! command -v ldd >/dev/null 2>&1; then
+    NEED_LDPATH=1                                  # 无 ldd 可判 → 保守设置
+elif ldd "$BIN" 2>/dev/null | grep -q "not found"; then
+    NEED_LDPATH=1                                  # 包根直跑（rpath 不命中）→ 需要
+fi
+if [ "$NEED_LDPATH" = 1 ]; then
     export LD_LIBRARY_PATH="$LIB:${LD_LIBRARY_PATH:-}"
+    echo "[start.sh] 使用包内动态库: $LIB"
 fi
 
 exec "$BIN" "$@"
