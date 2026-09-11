@@ -461,7 +461,21 @@ int ensure_ai_server_running(void) {
         pid_t pid = fork();
         if (pid == 0) {
             setsid();
-            execlp("python3", "python3", "-u", script_path, (char*)NULL);
+            /*
+             * 【0.4.4 修复】LD_LIBRARY_PATH 污染 → python SSL 不可用
+             * 现象：allbin 包 start.sh 全局 export LD_LIBRARY_PATH=<pkg>/lib，
+             *      子进程继承后，python3 的 _ssl 模块优先加载包内老 libcrypto
+             *      （缺 OPENSSL_3.3.0 符号）→ import ssl 失败 →
+             *      余额查询/DeepSeek 连接全挂 → AI 回复空白。
+             * 修法：C 端自身已由 rpath($ORIGIN/../lib) 完成动态库加载，
+             *      启动 python 子进程前清掉该变量，让 python 用系统库。
+             */
+            unsetenv("LD_LIBRARY_PATH");
+            /* 优先用显式解释器（避免 PATH 解析到 venv/proot loader 的坏 python） */
+            const char *py = getenv("LINGOS_PYTHON");
+            if (!py || !*py) py = "/usr/bin/python3";
+            if (access(py, X_OK) != 0) py = "python3";
+            execlp(py, py, "-u", script_path, (char*)NULL);
             perror("execlp python3");
             _exit(1);
         } else if (pid > 0) {

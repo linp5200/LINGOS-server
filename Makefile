@@ -46,7 +46,7 @@ MINIMAL_LDFLAGS = $(BASE_LDFLAGS) -lmicrohttpd
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-VERSION = "LN-0.4.3"
+VERSION = "LN-0.4.4"
 CFLAGS += -DLINGOS_VERSION="\"$(VERSION)\""
 
 SRC_DIR = src

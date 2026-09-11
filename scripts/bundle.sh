@@ -141,7 +141,7 @@ chmod +x "$DEST/check_env.sh"
 # ---------- 6. 启动包装（LD_LIBRARY_PATH 兜底 dlopen 场景 + 包根导出） ----------
 cat > "$DEST/start.sh" <<'EOF'
 #!/usr/bin/env bash
-# 启动包装（0.4.3：数据根统一 /LINGOS——先生架构；包内仅 bin/lib/venv）
+# 启动包装（0.4.4：数据根统一 /LINGOS——先生架构；包内仅 bin/lib/venv）
 # 用法：本文件应在 /LINGOS/（install.sh 已迁移）或全捆目录内执行
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # 【0.4.3 修复】二进制位置自适应：install.sh 迁到 /LINGOS 后放 bin/；包根直跑时在 DIR/
@@ -155,11 +155,27 @@ else
     echo "lingos_linux not found (期望 $DIR/bin/ 或 $DIR/)" >&2
     exit 1
 fi
-export LD_LIBRARY_PATH="$LIB:${LD_LIBRARY_PATH:-}"
+# ============================================================
+# 【0.4.4 关键修复】不再全局 export LD_LIBRARY_PATH
+#   问题：包内 lib/ 常含旧版 libcrypto/libssl 等；一旦全局导出，
+#         子进程（python3）会优先加载旧库 → _ssl 缺 OPENSSL_3.x 符号
+#         → import ssl 失败 → DeepSeek/余额查询全挂 → AI 回复空白。
+#   方案：二进制已由 rpath($ORIGIN/../lib) 完成自身及 dlopen 的库查找，
+#         无需污染环境；仅在 rpath 缺失的兜底场景才显式给出（且不导出给子进程）。
+# ============================================================
 export LINGOS_BUNDLED=1
 # 【0.4.3 先生裁决】数据根 = /LINGOS（config/state/data/models 全在这——沿用老配置）
 # 不设 LINGOS_ROOT（代码默认 /LINGOS）；venv 位置显式给 active_repair 用
 export LINGOS_VENV="$DIR/python"
+
+# rpath 兜底：仅当二进制自身找不到库时才临时提供（子进程不受影响——
+# C 端启动 python 前会 unsetenv，见 src/core/main.c ensure_ai_server_running）
+if [ -n "$(ls -A "$LIB" 2>/dev/null)" ] && ! ldd "$BIN" 2>/dev/null | grep -q "not found"; then
+    :   # rpath 已够用，不设 LD_LIBRARY_PATH
+else
+    export LD_LIBRARY_PATH="$LIB:${LD_LIBRARY_PATH:-}"
+fi
+
 exec "$BIN" "$@"
 EOF
 chmod +x "$DEST/start.sh"
@@ -209,7 +225,7 @@ if [ -d "$ROOT/webui" ]; then
     echo "==> Web UI 已装入 share/webui/（浏览器访问 /ui）"
 fi
 
-# ---------- 7b. sysbin 包（0.4.3——仅系统二进制，依赖用户自装；先生裁决三包型） ----------
+# ---------- 7b. sysbin 包（0.4.4——仅系统二进制，依赖用户自装；先生裁决三包型） ----------
 SYS_PKG="LINGOS_server_linux_v${VER}_${ARCH}_sysbin"
 SYS_DEST="$OUT/$SYS_PKG"
 mkdir -p "$SYS_DEST" "$SYS_DEST/share/webui"
@@ -219,12 +235,24 @@ done
 cp -a "$ROOT"/src/python/*.py "$SYS_DEST/" 2>/dev/null || true
 # 【0.4.3】Web UI 随 sysbin（网页访问 http://host:8080/ui——先生重点要求）
 cp -a "$ROOT"/webui/* "$SYS_DEST/share/webui/" 2>/dev/null || true
+# 【0.4.4 修复】sysbin 补齐部署脚本（原缺失 → deploy 脚本依赖落空、无 start.sh）
+[ -f "$DEST/install.sh" ]     && cp -a "$DEST/install.sh"     "$SYS_DEST/"
+[ -f "$DEST/start.sh" ]       && cp -a "$DEST/start.sh"       "$SYS_DEST/"
+[ -f "$ROOT/scripts/check_deps.sh" ] && cp -a "$ROOT/scripts/check_deps.sh" "$SYS_DEST/"
+[ -f "$ROOT/scripts/lingos.sh" ]     && cp -a "$ROOT/scripts/lingos.sh"     "$SYS_DEST/"
+[ -f "$DEST/manifest.json" ]  && cp -a "$DEST/manifest.json"  "$SYS_DEST/"
 cat > "$SYS_DEST/README.txt" <<'EOF'
-LING OS sysbin 包（仅系统二进制 + Python 脚本 + Web UI）
-依赖（用户自行安装）：libcurl libseccomp libsqlite3 libmosquitto libmicrohttpd libnotcurses(可选)
-python3 + requests/websocket-client；glibc >= 2.35
-部署：解压到目标目录，参考 DEPENDENCIES.md 安装依赖后 ./lingos_linux
-Web UI：浏览器访问 http://<host>:8080/ui（本包已含 share/webui）
+LING OS sysbin 包（系统二进制 + Python 脚本 + Web UI + 部署脚本）
+依赖（用户自行安装）：
+  libcurl4  libseccomp2  libsqlite3-0  libmosquitto1  libmicrohttpd12  libnotcurses(可选)
+  运行期 ldd 依赖：libldap / liblber / libavcodec / libavformat / libswscale / libavutil / libunistring
+  （如本体未含，需系统另装；推荐用 allbin 包避免此问题）
+  python3 + requests + websocket-client；glibc >= 2.35
+
+一键部署：bash install.sh /LINGOS      （或 bash deploy_*.sh）
+日常启停：bash lingos.sh start|stop|restart|status|log
+依赖自检：bash check_deps.sh --install
+Web UI：  http://<host>:8080/ui
 EOF
 ( cd "$OUT" && tar czf "$SYS_PKG.tar.gz" "$SYS_PKG" && rm -rf "$SYS_PKG" )
 echo "✅ sysbin 包: $OUT/$SYS_PKG.tar.gz"

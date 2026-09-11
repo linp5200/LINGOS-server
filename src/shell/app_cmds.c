@@ -11,6 +11,7 @@
 #include "../lib/pkg_deps.h"
 #include "../core/app_runner.h"
 #include "../core/app_sandbox.h"
+#include "repo_cmds.h"
 #include "../common/lang.h"
 #include "log_extra.h"
 #include "uart.h"
@@ -233,11 +234,41 @@ void app_dispatch(const char *cmd_line) {
     } else if (strcmp(subcmd, "logs") == 0) {
         char *name = strtok_r(NULL, " ", &saveptr);
         app_logs_command(name);
+    } else if (strcmp(subcmd, "search") == 0) {
+        /* 【0.4.4 修复】repo_* 已实现但从未接入 —— help 里承诺的 app search/update/upgrade 均失效 */
+        char *kw = strtok_r(NULL, " ", &saveptr);
+        if (!kw) { uart_puts(tr("usage: app search <keyword>\n", "用法：app search <关键词>\n")); return; }
+        repo_search_command(kw);
+    } else if (strcmp(subcmd, "update") == 0) {
+        char *name = strtok_r(NULL, " ", &saveptr);
+        if (!name) { uart_puts(tr("usage: app update <name>\n", "用法：app update <名称>\n")); return; }
+        repo_update_command(name);
+    } else if (strcmp(subcmd, "upgrade") == 0) {
+        char *name = strtok_r(NULL, " ", &saveptr);   /* 可无参：升级全部 */
+        repo_upgrade_command(name);
     } else if (strcmp(subcmd, "daemon") == 0) {
-            uart_puts(tr("App daemon not available in command line version.\n",
-                         "命令行版本不支持应用守护进程。\n"));
+        /* 【0.4.4】原为「不支持」占位 —— 改为接入真实守护进程 API */
+        extern int app_daemon_start(void);
+        extern void app_daemon_stop(void);
+        extern int app_daemon_is_running(void);
+        char *act = strtok_r(NULL, " ", &saveptr);
+        if (!act || strcmp(act, "status") == 0) {
+            uart_puts(tr("app daemon: ", "应用守护进程: "));
+            uart_puts(app_daemon_is_running()
+                      ? tr("running\n", "运行中\n") : tr("stopped\n", "已停止\n"));
+        } else if (strcmp(act, "start") == 0) {
+            uart_puts(app_daemon_start() == 0
+                      ? tr("app daemon started\n", "应用守护进程已启动\n")
+                      : tr("app daemon start failed\n", "应用守护进程启动失败\n"));
+        } else if (strcmp(act, "stop") == 0) {
+            app_daemon_stop();
+            uart_puts(tr("app daemon stopped\n", "应用守护进程已停止\n"));
+        } else {
+            uart_puts(tr("usage: app daemon [start|stop|status]\n",
+                         "用法：app daemon [start|stop|status]\n"));
+        }
     } else {
-        uart_puts(tr("app: unknown subcommand. Available: install, uninstall, list, run, stop, logs, daemon\n",
-                     "app: 未知子命令。可用：install, uninstall, list, run, stop, logs, daemon\n"));
+        uart_puts(tr("app: unknown subcommand. Available: install, uninstall, list, run, stop, logs, search, update, upgrade, daemon\n",
+                     "app: 未知子命令。可用：install, uninstall, list, run, stop, logs, search, update, upgrade, daemon\n"));
     }
 }

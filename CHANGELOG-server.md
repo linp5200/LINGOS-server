@@ -5,6 +5,24 @@
 
 ---
 
+## [0.4.4] - 2026-09-12（部署链修复 + shell 指令补齐）
+
+### 修复（Bug Fixes）
+- **LD_LIBRARY_PATH 污染 → python SSL 不可用（AI 回复空白根因）**
+  - `src/core/main.c`：拉起 ai_server 前 `unsetenv("LD_LIBRARY_PATH")` + 优先 `/usr/bin/python3`（可用 `LINGOS_PYTHON` 覆盖）
+  - `scripts/bundle.sh` 的 start.sh：**不再全局 export LD_LIBRARY_PATH**（依赖 rpath=$ORIGIN/../lib），仅在缺库兜底时才设
+- **sysbin 包残缺**：补齐 `install.sh / start.sh / check_deps.sh / lingos.sh / manifest.json`（此前 deploy 脚本依赖落空）
+- **`app search / update / upgrade` 未接线**：`repo_search_command / repo_update_command / repo_upgrade_command` 早已实现却从未接入 `app_dispatch` → 已接入
+- **`app daemon` 假占位**（原提示"不支持"）→ 接入真实 `app_daemon_start/stop/is_running`
+- **`time_test` 未实现** → 补全真实时钟自检（CLOCK_MONOTONIC/REALTIME/gettimeofday + 单调性验证）
+- **check_deps.sh**：补检 `piper`（先生裁语音含 piper）、`websocket-client`、`ssl` 可用性、本体 `ldd` 缺库清单
+
+### 新增（Features）
+- **`scripts/lingos.sh`**：简便启停（`start|stop|restart|status|log|ui|doctor`）——自动挑可用 python、`doctor` 一键诊断
+
+### 变更（Changes）
+- 内部版本 `LN-0.4.3` → `LN-0.4.4`
+
 ## [0.4.3] - 2026-09-04（系统重构部署批次——先生全权授权）
 
 ### 新增（Features）
