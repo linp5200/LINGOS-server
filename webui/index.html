@@ -144,7 +144,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
   <div class="logo">LING<em>OS</em></div><div class="sep"></div>
   <div class="host">//SERVER · 完整功能控制台</div>
   <span class="lk"><span class="p"></span>LINKED · 192.168.1.20 · WS 2939</span>
-  <span class="ver">LN-0.4.3 · Qt6 UI</span>
+  <span class="ver">LN-0.4.4 · Qt6 UI</span>
   <span class="clock" id="clock">--:--:--</span>
 </div>
 <div class="layout">
@@ -382,8 +382,8 @@ LINGOS_server_linux_v0.4.3_aarch64_plugin.tar.gz</pre>三包型齐出，架构�
 
 <!-- 更新 -->
 <div class="page" id="p-update">
-  <div class="phead"><div class="l"><div class="k">▍UPDATE</div><h1>升级更新</h1></div><div class="r">当前 <b>LN-0.4.3</b> · 内部 0.4.3</div></div>
-  <div class="warnbox">● 已是最新版本 <b>LN-0.4.3</b>（检查于 14:00）<button>检查更新</button></div>
+  <div class="phead"><div class="l"><div class="k">▍UPDATE</div><h1>升级更新</h1></div><div class="r">当前 <b>LN-0.4.4</b> · 内部 0.4.3</div></div>
+  <div class="warnbox">● 已是最新版本 <b>LN-0.4.4</b>（检查于 14:00）<button>检查更新</button></div>
   <div class="grid g2">
     <div class="card"><div class="ct"><span>更新历史</span></div><div class="evlog">
       <div class="e"><span class="lv d">0.0.6</span><span class="tx">端口指令族/高级设置/venv → 0.4.3 重构</span></div>
@@ -397,20 +397,22 @@ LINGOS_server_linux_v0.4.3_aarch64_plugin.tar.gz</pre>三包型齐出，架构�
 
 <!-- 系统与插件 -->
 <div class="page" id="p-sys">
-  <div class="phead"><div class="l"><div class="k">▍SYSTEM / PLUGIN</div><h1>系统与插件</h1></div><div class="r">自检 <b style="color:var(--green)">● 通过</b><br>aarch64 · glibc · proot</div></div>
-  <div class="grid g3">
-    <div class="card"><div class="ct"><span>lingosd</span><b style="color:var(--green)">● RUNNING</b></div><div style="font-family:var(--mono);font-size:9px;color:var(--g);margin-top:5px;line-height:1.8">pid 1821 · mem 24M · up 3:12:44</div></div>
-    <div class="card"><div class="ct"><span>alertd</span><b style="color:var(--green)">● RUNNING</b></div><div style="font-family:var(--mono);font-size:9px;color:var(--g);margin-top:5px;line-height:1.8">pid 1826 · 60s 周期 · 4 源</div></div>
-    <div class="card"><div class="ct"><span>ai_server</span><b style="color:var(--green)">● RUNNING</b></div><div style="font-family:var(--mono);font-size:9px;color:var(--g);margin-top:5px;line-height:1.8">pid 1830 · venv · WS 2939</div></div>
-  </div>
+  <div class="phead"><div class="l"><div class="k">▍SYSTEM / PLUGIN</div><h1>系统与插件</h1></div><div class="r" id="sysHead">加载中…</div></div>
+  <div class="grid g3" id="sysProc"></div>
   <div class="cols" style="margin-top:10px">
-    <div class="card"><div class="ct"><span>系统插件</span><b>registry plugins</b></div><div class="evlog">
-      <div class="e"><span class="lv d">vision</span><span class="tx">v0.1 检测引擎 · <b>加载</b></span></div>
-      <div class="e"><span class="lv d">weather</span><span class="tx">v0.1 Open-Meteo · <b>加载</b></span></div>
-      <div class="e"><span class="lv d">ha</span><span class="tx">v0.1 MQTT桥 · <b>加载</b></span></div>
-      <div class="e"><span class="lv">camera</span><span class="tx">v0.2 底座 · 待启用(插件)</span></div></div></div>
-    <div class="card"><div class="ct"><span>注册表 registry</span></div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"><span class="tag g">MODULE</span><span class="tag">COMPONENT</span><span class="tag">CONFIG</span><span class="tag">FEATURE</span><span class="tag">SKILL</span><span class="tag">PLUGIN</span><span class="tag">HOOK</span><span class="tag">SELFCHECK</span></div>
-      <div style="font-family:var(--mono);font-size:8px;color:var(--d)">socket /LINGOS/run/registry.sock · 统一注册中心</div></div>
+    <div class="card">
+      <div class="ct"><span>Python 插件</span>
+        <b id="sysPlugCount">--</b>
+        <button class="btn" onclick="reloadPlugins()" style="margin-left:8px">↻ 热重载</button>
+      </div>
+      <div class="evlog" id="sysPlugList"></div>
+      <div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:6px" id="sysPlugDir">/LINGOS/plugins</div>
+    </div>
+    <div class="card">
+      <div class="ct"><span>注册表 registry</span><b id="sysRegCount">--</b></div>
+      <div id="sysRegList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+      <div style="font-family:var(--mono);font-size:8px;color:var(--d)">统一注册中心 · <span id="sysRegSock">/LINGOS/run/registry.sock</span></div>
+    </div>
   </div>
 </div>
 
@@ -596,8 +598,7 @@ async function bindLog(){
   if(!box) return;
   var txt = (lv&&lv.status==='ok')? String(lv.data||'') : '';
   if(!txt){ box.innerHTML='<div style="color:var(--d);font-family:var(--mono);padding:10px">'+(lv&&lv.status==='error'?'日志读取失败':'暂无日志')+'</div>'; return; }
-  var lines = txt.split('
-').filter(Boolean).slice(-30).reverse();
+  var lines = txt.split('\n').filter(Boolean).slice(-30).reverse();
   box.innerHTML = lines.map(function(l){
     var cls='INFO'; if(l.indexOf('[ERROR]')>=0)cls='ERROR'; else if(l.indexOf('[WARN')>=0)cls='WARN'; else if(l.indexOf('[DEBUG')>=0)cls='DEBUG';
     return '<div class="l"><span class="lvl '+cls+'">'+cls+'</span><span class="msg">'+l.replace(/</g,'&lt;')+'</span></div>';
@@ -617,12 +618,65 @@ async function bindFiles(){
       +'<div class="st2">'+(e.type==='dir'?'DIR':(e.size||''))+'</div></div>';
   }).join('');
 }
-/* ===== 系统/插件 ===== */
+/* ===== 系统/插件（【0.4.4】由假数据改为真实绑定） ===== */
+async function reloadPlugins(){
+  setTxt('#sysPlugCount','重载中…');
+  await apiCmd('plugin_reload');
+  bindSys();
+}
 async function bindSys(){
+  // 1) 系统信息（真实版本，不再写死）
   var si = await apiCmd('system_info');
+  var ver='--';
   if(si&&si.status==='ok'&&si.data){
     var d=si.data;
-    setTxt('#p-sys .phead .r', '自检 ● '+(d.status||'运行中')+'<br>LN-0.4.3');
+    ver = d.internal_version || d.version || '--';
+    setTxt('#sysHead', '状态 ● '+(d.status||'运行中')+'<br>'+ver+' · '+(d.arch||''));
+    // 进程卡（真实字段，缺失显示 --）
+    var procs=[['cpu','CPU',d.cpu_usage,d.cpu_usage!=null?'%':''],['mem','内存',d.total_ram,null],
+               ['disk','磁盘',d.disk_usage,d.disk_usage!=null?'%':''],['up','运行时长',d.uptime,null]];
+    var h='';
+    for(var i=0;i<procs.length;i++){
+      var P=procs[i], v=(P[2]==null?'--':P[2]+(P[3]||''));
+      h+='<div class="card"><div class="ct"><span>'+P[1]+'</span><b>'+(P[2]==null?'--':'● 正常')+'</b></div>'
+        +'<div style="font-family:var(--mono);font-size:9px;color:var(--g);margin-top:5px">'+v+'</div></div>';
+    }
+    document.getElementById('sysProc').innerHTML=h;
+  } else {
+    setTxt('#sysHead','系统信息不可达<br>显示 -- 不模拟');
+    document.getElementById('sysProc').innerHTML='<div class="card"><div class="ct">主机未连接</div></div>';
+  }
+  // 2) 插件层（真实 plugin_list）
+  var pl = await apiCmd('plugin_list');
+  if(pl&&pl.status==='ok'){
+    setTxt('#sysPlugCount', (pl.loaded||0)+' 个');
+    setTxt('#sysPlugDir', pl.dir||'/LINGOS/plugins');
+    var names=(pl.plugins||[]), sk=(pl.skills||[]), cm=(pl.commands||[]);
+    var out='';
+    if(names.length){ for(var i=0;i<names.length;i++) out+='<div class="e"><span class="lv d">PLUGIN</span><span class="tx"><b>'+names[i]+'</b> · 已加载</span></div>'; }
+    if(sk.length){ out+='<div class="e"><span class="lv">SKILL</span><span class="tx">'+sk.length+' 项：'+sk.slice(0,6).join(', ')+'</span></div>'; }
+    if(cm.length){ out+='<div class="e"><span class="lv">CMD</span><span class="tx">'+cm.length+' 项：'+cm.slice(0,6).join(', ')+'</span></div>'; }
+    if(!out) out='<div class="e"><span class="lv">—</span><span class="tx">暂无插件（把 .py 放入 '+ (pl.dir||'/LINGOS/plugins') +' 后点热重载）</span></div>';
+    document.getElementById('sysPlugList').innerHTML=out;
+  } else {
+    setTxt('#sysPlugCount','--');
+    document.getElementById('sysPlugList').innerHTML='<div class="e"><span class="lv">—</span><span class="tx">插件层不可达（显示 -- 不模拟）</span></div>';
+  }
+  // 3) 注册表（真实 registry_list）
+  var rg = await apiCmd('registry_list');
+  var ents=null;
+  if(rg&&rg.status==='ok'){ ents = rg.entries || rg.data || rg.items || null; }
+  if(ents&&ents.length){
+    setTxt('#sysRegCount', ents.length+' 条');
+    var tags='';
+    for(var i=0;i<Math.min(ents.length,24);i++){
+      var e=ents[i]||{};
+      tags+='<span class="tag'+(i%3===0?' g':'')+'">'+(e.name||e.id||'?')+'</span>';
+    }
+    document.getElementById('sysRegList').innerHTML=tags;
+  } else {
+    setTxt('#sysRegCount','--');
+    document.getElementById('sysRegList').innerHTML='<span style="font-family:var(--mono);font-size:9px;color:var(--d)">注册表不可达（显示 -- 不模拟）</span>';
   }
 }
 

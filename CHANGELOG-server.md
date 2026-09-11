@@ -24,6 +24,15 @@
   - 新增 `src/registry/registry_builtin.c`：按类目架构注册 16 个系统
     （core/comm/notify/voice/config/data/plugin/security/home/monitor/alert/ai/skill/ai_vision/ocr/weather）
   - `background_init` 在 `registry_init` 后调用
+- **🔴 Web UI 数据绑定层整体失效（致命）**：`webui/index.html` 中
+  `txt.split('` + **裸换行** + `')` 字符串未闭合 → **整个 `<script>` 解析失败** →
+  14 个页面的数据绑定函数**全部未定义** → 页面永远停在静态假数据。
+  这正是先生实测「控件不可点 / 数据是虚假的 / 天气是模拟的」的**真正根因**。
+  - 已修：`split('\n')`
+  - 修复后脚本可解析，`bindSys/bindLog/apiCmd` 等全部生效
+- **p-sys 页改为真实绑定**：插件列表 ← `plugin_list`（新增热重载按钮）、
+  注册表 ← `registry_list`、系统信息 ← `system_info`（版本不再写死 LN-0.4.3）；
+  不可达一律显示 `--` 不模拟
 - **check_deps.sh**：补检 `piper`（先生裁语音含 piper）、`websocket-client`、`ssl` 可用性、本体 `ldd` 缺库清单
 
 ### 新增（Features）
