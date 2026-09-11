@@ -15,6 +15,15 @@
 - **`app search / update / upgrade` 未接线**：`repo_search_command / repo_update_command / repo_upgrade_command` 早已实现却从未接入 `app_dispatch` → 已接入
 - **`app daemon` 假占位**（原提示"不支持"）→ 接入真实 `app_daemon_start/stop/is_running`
 - **`time_test` 未实现** → 补全真实时钟自检（CLOCK_MONOTONIC/REALTIME/gettimeofday + 单调性验证）
+- **插件层从未启用（深坑）**：`plugin_loader` 早已实现却**从未被调用** → 插件化实为空架子
+  - ai_server 启动时 `load_plugin_layer()`；插件技能并入 `skill_schemas`
+  - `execute_skill` 内置表未命中 → **回退插件**
+  - 新增 `plugin_list` / `plugin_reload`（App/Web 统一管理 + 热重载）
+  - 新增插件模板 `_plugin_template.py` 与 `README.md`
+- **registry 统一注册**（先生 2026-09-05 裁决）：全系统此前仅 `core/state.c` 注册 1 条
+  - 新增 `src/registry/registry_builtin.c`：按类目架构注册 16 个系统
+    （core/comm/notify/voice/config/data/plugin/security/home/monitor/alert/ai/skill/ai_vision/ocr/weather）
+  - `background_init` 在 `registry_init` 后调用
 - **check_deps.sh**：补检 `piper`（先生裁语音含 piper）、`websocket-client`、`ssl` 可用性、本体 `ldd` 缺库清单
 
 ### 新增（Features）

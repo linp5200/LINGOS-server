@@ -1306,6 +1306,68 @@ def load_knowledge_base():
         logger.error(f"Failed to load knowledge base: {e}")
         _knowledge_base = {"version": "1.0", "issues": []}
 
+def load_plugin_layer() -> dict:
+    """【0.4.4】加载 Python 插件层（此前 plugin_loader 从未被调用 = 死代码）
+
+    先生裁决（2026-08-14）：一切功能以插件形式增减 —— 长期主线。
+    插件目录：/LINGOS/plugins/（用户可增减；热重载靠 plugin_reload 命令）
+    返回：{"loaded": n, "skills": [...], "commands": [...]}
+    """
+    global skill_schemas, skill_descriptions
+    try:
+        sys.path.insert(0, "/LINGOS/bin")
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugin"))
+        from plugin_loader import get_loader
+        loader = get_loader()
+        n = loader.load_all(language=_current_language() if "_current_language" in globals() else "zh")
+        pskills = getattr(loader, "_skills", {}) or {}
+        pcmds = getattr(loader, "_commands", {}) or {}
+        logger.info("plugin layer loaded: %d plugins, %d skills, %d commands", n, len(pskills), len(pcmds))
+        return {"loaded": n, "skills": sorted(pskills.keys()), "commands": sorted(pcmds.keys())}
+    except Exception as e:
+        logger.warning("plugin layer load failed: %s", e)
+        return {"loaded": 0, "skills": [], "commands": [], "error": str(e)}
+
+
+def plugin_status() -> dict:
+    """插件层状态（供 App/Web 查询）"""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugin"))
+        from plugin_loader import get_loader
+        loader = get_loader()
+        return {
+            "status": "ok",
+            "dir": "/LINGOS/plugins",
+            "loaded": len(getattr(loader, "_plugins", {}) or {}),
+            "plugins": sorted((getattr(loader, "_plugins", {}) or {}).keys()),
+            "skills": sorted((getattr(loader, "_skills", {}) or {}).keys()),
+            "commands": sorted((getattr(loader, "_commands", {}) or {}).keys()),
+        }
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_plugin_list() -> dict:
+    """列出已加载插件（App/Web/Qt 统一发现入口）"""
+    return plugin_status()
+
+
+def cmd_plugin_reload() -> dict:
+    """热重载插件（先生裁决：最好能热重载）"""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugin"))
+        from plugin_loader import get_loader
+        loader = get_loader()
+        if hasattr(loader, "reload_all"):
+            n = loader.reload_all()
+        else:
+            loader._loaded = False          # 允许下一次 load_all 重新扫描
+            n = loader.load_all()
+        return {"status": "ok", "reloaded": n}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
 def load_skill_schemas():
     """加载技能列表（优先通过 daemon.sock 请求 registry_list）"""
     global skill_schemas, skill_descriptions
@@ -1331,6 +1393,32 @@ def load_skill_schemas():
                 merged.append(b)
         skills = merged
         logger.info(f"Merged builtin skills: total {len(skills)} schemas")
+
+    # 【0.4.4】并入插件技能（/LINGOS/plugins/ 用户可增减）
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugin"))
+        from plugin_loader import get_loader
+        _pl = get_loader()
+        if not getattr(_pl, "_loaded", False):
+            _pl.load_all()
+        _pskills = getattr(_pl, "_skills", {}) or {}
+        _names = {x.get("name") for x in skills if isinstance(x, dict)}
+        _added = 0
+        for _sn, _info in _pskills.items():
+            if _sn in _names:
+                continue
+            skills.append({
+                "name": _sn,
+                "description": _info.get("description", "plugin skill"),
+                "parameters": _info.get("parameters", {"type": "object", "properties": {}}),
+                "risk": _info.get("risk", "low"),
+                "plugin": _info.get("plugin"),
+            })
+            _added += 1
+        if _added:
+            logger.info(f"Merged plugin skills: +{_added}")
+    except Exception as _e:
+        logger.debug("plugin skills merge skipped: %s", _e)
 
     skill_schemas = []
     desc_list = []
@@ -3900,6 +3988,10 @@ def handle_client(conn, addr):
             _reply(conn, "skill_list_full", cmd_skill_list_full()); return
         if cmd == "skill_enable":
             _reply(conn, "skill_enable", cmd_skill_enable(str(req.get("name", "")), bool(req.get("enabled", True)))); return
+        if cmd == "plugin_list":
+            _reply(conn, "plugin_list", cmd_plugin_list()); return
+        if cmd == "plugin_reload":
+            _reply(conn, "plugin_reload", cmd_plugin_reload()); return
         if cmd == "skill_install":
             _reply(conn, "skill_install", cmd_skill_install(str(req.get("src", "")))); return
         if cmd == "skill_uninstall":
@@ -4705,6 +4797,13 @@ def main():
         threading.Thread(target=start_voice_http_server, daemon=True).start()
     except Exception as e:
         logger.warning("voice init failed: %s", e)
+
+    # 【0.4.4】Python 插件层加载（/LINGOS/plugins/）—— 此前从未被调用
+    try:
+        _pl_res = load_plugin_layer()
+        logger.info("plugin layer: %s", _pl_res)
+    except Exception as e:
+        logger.warning("plugin layer init failed: %s", e)
 
     # 【0.2.1】HA 事件订阅（AI-AGENT#10 C 通道——state_changed → 广播 App）
     try:

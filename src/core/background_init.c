@@ -38,6 +38,11 @@ static void* background_init_thread(void *arg) {
         LOG_WARN_T("BackgroundInit", "Step", "Registry", "registry_init failed, continuing");
     } else {
         LOG_DEBUG_T("BackgroundInit", "Step", "Registry", "registry_init completed");
+        /* 【0.4.4 先生裁决】内置系统统一注册（monitor/ai_vision/weather/voice/... ）
+         * 此前全系统仅 state.c 注册 1 条 → 统一 API 发现能力实际不可用 */
+        extern int registry_register_builtin_modules(void);
+        int n = registry_register_builtin_modules();
+        LOG_INFO_T("BackgroundInit", "Step", "RegistryBuiltin", "builtin systems registered: %d", n);
     }
 
     /* ============================================================

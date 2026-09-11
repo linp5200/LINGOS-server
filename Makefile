@@ -143,7 +143,8 @@ REGISTRY_SRCS = $(SRC_DIR)/registry/registry.c \
                 $(SRC_DIR)/registry/registry_feature.c \
                 $(SRC_DIR)/registry/registry_plugin.c \
                 $(SRC_DIR)/registry/registry_selfcheck.c \
-                $(SRC_DIR)/registry/registry_skill.c
+                $(SRC_DIR)/registry/registry_skill.c \
+                $(SRC_DIR)/registry/registry_builtin.c
 
 SECURITY_SRCS = $(SRC_DIR)/security/absolute_protect.c \
                 $(SRC_DIR)/security/audit.c \

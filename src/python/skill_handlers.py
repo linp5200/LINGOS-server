@@ -1508,6 +1508,19 @@ def skill_exists(name: str) -> bool:
 def execute_skill(name: str, args_json: str) -> Tuple[bool, str]:
     info = SKILL_REGISTRY.get(name)
     if not info:
+        # 【0.4.4】插件技能回退（/LINGOS/plugins/ 用户可增减）
+        #   此前内置注册表查无即失败 → 插件技能即使被发现也无法执行
+        try:
+            import os as _os, sys as _sys
+            _pdir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "plugin")
+            if _os.path.isdir(_pdir) and _pdir not in _sys.path:
+                _sys.path.insert(0, _pdir)
+            from plugin_loader import get_loader
+            _loader = get_loader()
+            if name in (getattr(_loader, "_skills", {}) or {}):
+                return _loader.execute_skill(name, args_json)
+        except Exception as _e:
+            logger.debug("plugin skill fallback failed: %s", _e)
         return False, t(f"Skill '{name}' not found", f"技能 '{name}' 未找到")
     try:
         return info["func"](args_json)
@@ -1515,8 +1528,36 @@ def execute_skill(name: str, args_json: str) -> Tuple[bool, str]:
         logger.error(f"Skill {name} execution error: {e}")
         return False, str(e)
 
+
+def skill_exists_anywhere(name: str) -> bool:
+    """【0.4.4】技能是否存在（内置 + 插件）"""
+    if name in SKILL_REGISTRY:
+        return True
+    try:
+        import os as _os, sys as _sys
+        _pdir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "plugin")
+        if _os.path.isdir(_pdir) and _pdir not in _sys.path:
+            _sys.path.insert(0, _pdir)
+        from plugin_loader import get_loader
+        return name in (getattr(get_loader(), "_skills", {}) or {})
+    except Exception:
+        return False
+
 def list_skills() -> List[str]:
-    return list(SKILL_REGISTRY.keys())
+    """内置技能 + 插件技能"""
+    names = list(SKILL_REGISTRY.keys())
+    try:
+        import os as _os, sys as _sys
+        _pdir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "plugin")
+        if _os.path.isdir(_pdir) and _pdir not in _sys.path:
+            _sys.path.insert(0, _pdir)
+        from plugin_loader import get_loader
+        for n in (getattr(get_loader(), "_skills", {}) or {}):
+            if n not in names:
+                names.append(n)
+    except Exception:
+        pass
+    return names
 
 def list_skills_by_risk(risk_level: str) -> List[str]:
     return [name for name, info in SKILL_REGISTRY.items() if info.get("risk") == risk_level]
