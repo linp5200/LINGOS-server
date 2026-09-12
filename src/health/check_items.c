@@ -121,9 +121,18 @@ static int check_bundled_libs(void) {
         deps_trigger_repair("bundle manifest not found");
         return CHECK_RESULT_FAIL;
     }
-    /* 解析 {"libs": [{"name": "libcurl.so.4", ...}]} */
-    char buf[8192];
-    size_t rd = fread(buf, 1, sizeof(buf) - 1, fp);
+    /* 解析 {"libs": [{"name": "libcurl.so.4", ...}]}
+     * 【0.4.4 修复】原缓冲仅 8192 字节，而实际 manifest.json 可达 18KB+
+     * → 只解析到前 8KB，后面的库**从未被检查**（漏检）。改为按需分配 + 上限保护。 */
+    fseek(fp, 0, SEEK_END);
+    long fsz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (fsz < 0) fsz = 0;
+    if (fsz > (long)(1024 * 1024)) fsz = 1024 * 1024;   /* 上限 1MB 防异常文件 */
+    size_t cap = (size_t)fsz + 1;
+    char *buf = malloc(cap);
+    if (!buf) { fclose(fp); return CHECK_RESULT_FAIL; }
+    size_t rd = fread(buf, 1, cap - 1, fp);
     fclose(fp);
     buf[rd] = '\0';
     if (strstr(buf, "\"libs\"") == NULL) {
@@ -166,6 +175,7 @@ static int check_bundled_libs(void) {
         }
         p = r + 1;
     }
+    free(buf);
     if (missing > 0) {
         check_cache_set("dependencies",
                         tr("Bundled libraries incomplete", "捆绑库缺失"),
@@ -200,6 +210,21 @@ static int check_bundled_python(void) {
     char cmd[640];
     safe_snprintf(cmd, sizeof(cmd), "%s -c 'import requests' >/dev/null 2>&1", pybin);
     if (system(cmd) != 0) {
+        /* 【0.4.4】原实现吞掉了错误输出 → 日志只说「venv 异常」无法定位。
+         * 改为：失败时复跑一次并把真实错误写进日志（便于先生直接排查）。 */
+        char diag[768];
+        safe_snprintf(diag, sizeof(diag), "%s -c 'import requests' 2>&1 | head -3", pybin);
+        FILE *dp = popen(diag, "r");
+        char err[512] = {0};
+        if (dp) {
+            size_t r = fread(err, 1, sizeof(err) - 1, dp);
+            err[r] = '\0';
+            pclose(dp);
+            for (char *c = err; *c; c++) if (*c == '\n') *c = ' ';
+        }
+        LOG_WARN_T("CheckItems", "Dependencies", "VenvBroken",
+                   "venv 检查失败: %s | 实际输出: %s | 提示: 若系统 python3 可用则不影响 AI（0.4.4 起 ai_server 用系统 python3）",
+                   pybin, err[0] ? err : "(无输出)");
         check_cache_set("dependencies",
                         tr("Bundled venv broken (requests missing)", "捆绑 venv 异常（缺 requests）"),
                         CHECK_RESULT_FAIL);

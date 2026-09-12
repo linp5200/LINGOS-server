@@ -37,6 +37,11 @@
   - 新增 `ai_vision_ask` 命令（question + image_path）→ 走 `vision_ai.vision_ask`
   - 说明：`ai_vision_detect` / `ai_vision_ocr` 目前仍为**空壳桩**（返回空 data，
     真正检测需监控/YOLO 服务在线）——**未完全实现，此处如实标注**
+- **🔴 registry 初始化未置位（既有 bug）**：`registry_init()` **成功路径**未设 `g_initialized`
+  → 先生环境已有 `registry/index.json` → load 成功 → 必中
+  → 启动时 16 个内置系统注册全部报 `registry not initialized`
+  - 已修：成功路径补 `g_initialized = 1`
+  - 说明：日志逐项输出**保持原样**（先生 2026-09-12：正常诊断输出，不降噪）
 - **check_deps.sh**：补检 `piper`（先生裁语音含 piper）、`websocket-client`、`ssl` 可用性、本体 `ldd` 缺库清单
 
 ### 新增（Features）
