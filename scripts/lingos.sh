@@ -40,6 +40,9 @@ case "$CMD" in
   start)
     echo "==> 启动 LING OS  (root=$ROOT)"
     mkdir -p "$ROOT/log" "$ROOT/run"
+    # 【0.4.4】主程序历史上用相对路径 "./lingosd" 启动守护进程 →
+    #   必须 cd 到 $ROOT 再启动（否则 cwd 不对 → lingosd 起不来 → 端口全不通）
+    cd "$ROOT" || exit 1
 
     # 1) 先起主程序（C 端会自行拉起 ai_server —— 0.4.4 已修 LD 污染）
     if [ -x "$ROOT/start.sh" ]; then
@@ -61,17 +64,37 @@ case "$CMD" in
         fi
         echo "  主程序已启动 (pid $!)"
     fi
-    sleep 4
+    # 1b) 等 lingosd 的 registry.sock 就绪（ai_server 启动时要用它加载技能表）
+    echo "  等待 lingosd/registry.sock ..."
+    for i in $(seq 1 20); do
+        [ -S "$ROOT/run/registry.sock" ] && break
+        sleep 1
+    done
+    [ -S "$ROOT/run/registry.sock" ] && echo "  ✓ registry.sock 就绪" \
+                                     || echo "  ⚠ registry.sock 未出现（AI 将退回内置技能表）"
+    sleep 2
 
     # 2) 兜底：若 C 端未能拉起 ai_server，则由本脚本以「干净环境 + 系统 python3」拉起
     if ! _pids ai_server.py >/dev/null; then
         PY="$(_pick_python)"
         echo "  ai_server 未运行 → 用 $PY 拉起"
-        env -u LD_LIBRARY_PATH nohup "$PY" -u "$ROOT/bin/ai_server.py" > "$LOG/ai_server.log" 2>&1 &
+        # 【0.4.4】LINGOS_NO_PARENT_MONITOR=1 —— 本脚本启动完就退出，
+        #   不设此变量 ai_server 会在 5 秒后误判"父进程已死"而自杀
+        #   （先生 2026-09-12 实测：Parent process terminated, exiting）
+        env -u LD_LIBRARY_PATH LINGOS_NO_PARENT_MONITOR=1 \
+            nohup "$PY" -u "$ROOT/bin/ai_server.py" > "$LOG/ai_server.log" 2>&1 &
         echo "  ai_server 已启动 (pid $!)"
     else
         echo "  ai_server 已由主程序拉起"
     fi
+    echo ""
+    echo "  等待服务就绪（最多 15s）..."
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if (echo >/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
+            echo "  ✓ HTTP 8080 已就绪"; break
+        fi
+        sleep 1
+    done
     echo ""
     bash "$0" status
     ;;

@@ -379,7 +379,37 @@ static void cleanup_stale_processes(const char *pid_file, const char *socket_pat
 
 int ensure_daemon_running(void) {
     LOG_INFO_T("Main", "EnsureDaemon", "Enter", "starting lingosd");
+    /*
+     * 【0.4.4 修复】原为相对路径 "./lingosd" —— 强依赖当前工作目录。
+     * 现象（先生 2026-09-12 实测）：从 ~ 启动时 cwd 不是 /LINGOS →
+     *   execl("./lingosd") 失败 → lingosd 起不来 → 8080/2939 端口全不通。
+     * 修法：按「同目录(相对 /proc/self/exe) → /LINGOS/bin → /LINGOS → ./」优先级探测。
+     */
+    static char daemon_buf[512];
     const char *daemon_path = "./lingosd";
+    {
+        /* 1) 二进制同目录（/LINGOS/bin → /LINGOS/bin/lingosd） */
+        char exe[512];
+        ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (n > 0) {
+            exe[n] = '\0';
+            char *slash = strrchr(exe, '/');
+            if (slash) {
+                *slash = '\0';
+                safe_snprintf(daemon_buf, sizeof(daemon_buf), "%s/lingosd", exe);
+                if (access(daemon_buf, X_OK) == 0) daemon_path = daemon_buf;
+            }
+        }
+        /* 2) /LINGOS/bin/lingosd */
+        if (daemon_path[0] == '.' && access("/LINGOS/bin/lingosd", X_OK) == 0) {
+            daemon_path = "/LINGOS/bin/lingosd";
+        }
+        /* 3) /LINGOS/lingosd（历史软链位置） */
+        else if (daemon_path[0] == '.' && access("/LINGOS/lingosd", X_OK) == 0) {
+            daemon_path = "/LINGOS/lingosd";
+        }
+        LOG_INFO_T("Main", "EnsureDaemon", "Path", "using %s", daemon_path);
+    }
     const char *pid_path = LINGOS_RUN_DIR "/lingosd.pid";
     const char *socket_path = DAEMON_SOCKET_PATH;
     int max_retries = 3;
