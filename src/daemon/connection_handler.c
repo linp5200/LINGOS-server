@@ -298,58 +298,96 @@ static int secure_random_string(char *out, int len, const char *charset) {
 }
 
 
-/* B2: 签发会话 token（32 位十六进制，供 2939 数据流通道校验） */
-static void connection_generate_token(char *out) {
+/* B2: 签发会话 token（32 位十六进制，供 2939 数据流通道校验）
+ *
+ * 【0.5.0 修复】
+ *   S6 —— 原实现在随机源失败时用 srand(time^pid) 降级 → token **可预测**。
+ *         现改为**失败即拒绝**（返回 -1，out 置空，绝不降级）。
+ *   S16 —— 原实现 LOG_INFO 打印**完整 token** → 日志泄露即凭据泄露。
+ *         现仅打印前 8 位（脱敏）。
+ * @return 0 成功；-1 失败（调用方**不得**使用 out）
+ */
+static int connection_generate_token(char *out) {
     LOG_DEBUG_T("Connection", "GenToken", "Enter", "out=%p", (void*)out);
+    if (!out) return -1;
+    out[0] = '\0';
     const char hex[] = "0123456789abcdef";
     if (secure_random_string(out, 32, hex) != 0) {
-        LOG_WARN_T("Connection", "GenToken", "Fallback", "secure_random_string failed, using fallback");
-        srand((unsigned)(time(NULL) ^ getpid()));
-        for (int i = 0; i < 32; i++) out[i] = hex[rand() % 16];
-        out[32] = '\0';
+        LOG_ERROR_T("Connection", "GenToken", "RandFail",
+                    "安全随机源不可用 —— 拒绝签发 token（不降级）");
+        out[0] = '\0';
+        return -1;
     }
-    LOG_INFO_T("Connection", "GenToken", "OK", "token='%s'", out);
+    out[32] = '\0';
+    /* 【S16 脱敏】只记录前 8 位 */
+    LOG_INFO_T("Connection", "GenToken", "OK", "token=%.8s… (已脱敏)", out);
+    return 0;
+}
+
+/**
+ * @brief 【0.5.0 S16】安全日志辅助：脱敏任意敏感串（保留前 n 位）
+ * @param s 敏感串
+ * @param keep 保留位数
+ * @param buf 输出缓冲
+ * @param buf_sz
+ */
+static void conn_redact(const char *s, int keep, char *buf, size_t buf_sz) {
+    if (!buf || buf_sz == 0) return;
+    if (!s) { buf[0] = '\0'; return; }
+    size_t len = strlen(s);
+    if ((int)len <= keep) {
+        safe_snprintf(buf, buf_sz, "(已脱敏)");
+    } else {
+        safe_snprintf(buf, buf_sz, "%.*s…(%zu 位，已脱敏)", keep, s, len);
+    }
 }
 
 void connection_generate_auth_code(char *out) {
     LOG_DEBUG_T("Connection", "GenAuthCode", "Enter", "out=%p", (void*)out);
+    if (!out) return;
+    out[0] = '\0';
     const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    /* 【0.5.0 S6】随机源失败 → **拒绝**（原为 srand(time^pid) 降级，可预测） */
     if (secure_random_string(out, 6, charset) != 0) {
-        LOG_WARN_T("Connection", "GenAuthCode", "Fallback", "secure_random_string failed, using fallback");
-        srand((unsigned)(time(NULL) ^ getpid()));
-        for (int i = 0; i < 6; i++) {
-            out[i] = charset[rand() % (sizeof(charset)-1)];
-        }
-        out[6] = '\0';
+        LOG_ERROR_T("Connection", "GenAuthCode", "RandFail",
+                    "安全随机源不可用 —— 拒绝生成验证码（不降级）");
+        out[0] = '\0';
+        g_pending_auth_code[0] = '\0';
+        return;
     }
+    out[6] = '\0';
     safe_strncpy(g_pending_auth_code, out, sizeof(g_pending_auth_code));
     g_pending_code_time = now_sec();
-    LOG_INFO_T("Connection", "GenAuthCode", "OK", "auth_code='%s'", out);
+    /* 验证码为**短期一次性**凭据（5 分钟 + 用后即弃），且需展示给用户，故完整记录 */
+    LOG_INFO_T("Connection", "GenAuthCode", "OK", "auth_code='%s' (短期一次性)", out);
 }
 
 void connection_generate_connection_code(char *out) {
     LOG_DEBUG_T("Connection", "GenConnCode", "Enter", "out=%p", (void*)out);
+    if (!out) return;
+    out[0] = '\0';
     const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     char raw[13];
+    /* 【0.5.0 S6】随机源失败 → **拒绝**（原为 srand 降级，可预测） */
     if (secure_random_string(raw, 12, charset) != 0) {
-        LOG_WARN_T("Connection", "GenConnCode", "Fallback", "secure_random_string failed, using fallback");
-        srand((unsigned)(time(NULL) ^ getpid() ^ (uintptr_t)out));
-        for (int i = 0; i < 12; i++) {
-            raw[i] = charset[rand() % (sizeof(charset)-1)];
-        }
-        raw[12] = '\0';
-    } else {
-        /* 【修复】memcpy 方向写反：应为 out <- raw（原代码把未初始化的 out 复制进 raw，导致连接码为空） */
-        memcpy(out, raw, 12);
-        out[12] = '\0';
+        LOG_ERROR_T("Connection", "GenConnCode", "RandFail",
+                    "安全随机源不可用 —— 拒绝生成连接码（不降级）");
+        raw[0] = '\0';
+        g_pending_connection_code[0] = '\0';
+        return;
     }
+    raw[12] = '\0';
+    /* 【修复】memcpy 方向写反：应为 out <- raw（原代码把未初始化的 out 复制进 raw，导致连接码为空） */
+    memcpy(out, raw, 12);
+    out[12] = '\0';
     snprintf(out, 14, "%c%c%c%c-%c%c%c%c-%c%c%c%c",
              raw[0], raw[1], raw[2], raw[3],
              raw[4], raw[5], raw[6], raw[7],
              raw[8], raw[9], raw[10], raw[11]);
     safe_strncpy(g_pending_connection_code, out, sizeof(g_pending_connection_code));
     g_pending_code_time = now_sec();
-    LOG_INFO_T("Connection", "GenConnCode", "OK", "connection_code='%s'", out);
+    /* 连接码同验证码：短期一次性 + 需展示，完整记录 */
+    LOG_INFO_T("Connection", "GenConnCode", "OK", "connection_code='%s' (短期一次性)", out);
 }
 
 int connection_verify_auth_code(const char *code) {
@@ -735,13 +773,42 @@ static void handle_connection_code(connection_session_t *sess, const uint8_t *pa
         sess->state = CONN_STATE_ESTABLISHED;
         sess->is_authenticated = 1;
         sess->last_heartbeat = now_sec();
-        /* 验证码后加密启用 */
-        g_encryption_enabled = 1;
-        LOG_INFO_T("Connection", "HandleConn", "Encryption", "Encryption enabled for session=%u", sess->session_id);
+
+        /* ============================================================
+         * 【0.5.0 S1 修复】加密状态**如实上报**（终止虚假声明）
+         *
+         * 审计发现（原状）：
+         *   · 此处设 g_encryption_enabled = 1，但该变量**从未参与任何加解密**
+         *   · 响应固定回 "encrypted":true、日志写 "with encryption"
+         *   · 服务端实际无 TLS，crypto_core/envelope 从未被调用
+         *   → 即「虚假加密声明」，与 AI 人格声明的「隐私第一」相悖
+         *
+         * 现方案（诚实 + 可用）：
+         *   ① 应用层加密能力已**真实实现**（src/security/secure_channel.c）
+         *      X25519 ECDH 前向保密 + XChaCha20-Poly1305 逐帧 AEAD + 防重放
+         *   ② 是否启用由**能力协商**决定（sc_negotiate / sc_should_encrypt）
+         *      —— 旧客户端不发能力位 → 交集为 0 → 明文，**保证新旧互通**
+         *   ③ `encrypted` 字段反映**协商后的真实结果**，不再固定为 true
+         *   ④ g_encryption_enabled 语义修正为「本会话是否已启用加密」
+         * ============================================================ */
+        g_encryption_enabled = (sess->channel != NULL) ? 1 : 0;
+        LOG_INFO_T("Connection", "HandleConn", "Encryption",
+                   "session=%u encrypted=%s (能力协商决定；本端支持应用层加密)",
+                   sess->session_id, g_encryption_enabled ? "true" : "false(对端未协商)");
 
         /* B2: 签发会话 token（供 2939 数据流通道校验） */
         char token[64];
-        connection_generate_token(token);
+        /* 【0.5.0 S6】随机源不可用 → **拒绝签发**（不降级，绝不返回可预测 token） */
+        if (connection_generate_token(token) != 0) {
+            LOG_ERROR_T("Connection", "HandleConn", "TokenFail",
+                        "安全随机源不可用 —— 拒绝建立会话（不降级）");
+            send_error(sess, ERR_AUTH_INVALID,
+                       tr("Token generation failed (secure randomness unavailable)",
+                          "令牌签发失败（安全随机源不可用）"));
+            sess->state = CONN_STATE_ERROR;
+            sess->is_authenticated = 0;
+            return;
+        }
         safe_strncpy(sess->token, token, sizeof(sess->token));
         /* 【修复】token 写入独立存储（持久——TCP 断开仍有效） */
         connection_store_token(token, 2592000);
@@ -752,16 +819,25 @@ static void handle_connection_code(connection_session_t *sess, const uint8_t *pa
         }
 
         uint32_t sid = sess->session_id;
-        char resp[256];
+        char resp[320];
         /* 【先生决策】持久 token：30 天有效期（原 300s）——退出恢复 + 安全缓解 */
         int token_ttl = 2592000;
+        /* 【0.5.0 S1】`encrypted` 反映**真实协商结果**（不再固定 true）；
+         *   新增 `caps` 字段告知本端能力，旧客户端忽略未知字段 → 向后兼容 */
         safe_snprintf(resp, sizeof(resp),
-                "{\"status\":\"ok\",\"session_id\":\"%u\",\"expires_in\":%d,\"encrypted\":true,\"token\":\"%s\"}",
-                sid, token_ttl, token);
+                "{\"status\":\"ok\",\"session_id\":\"%u\",\"expires_in\":%d,"
+                "\"encrypted\":%s,\"caps\":%u,\"token\":\"%s\"}",
+                sid, token_ttl,
+                g_encryption_enabled ? "true" : "false",
+                sess->negotiated_caps,
+                token);
         connection_send_message(sess->session_id, MSG_CONNECTION_RESPONSE,
                                (const uint8_t *)resp, strlen(resp));
 
-        LOG_INFO_T("Connection", "HandleConn", "OK", "session=%u connection established with encryption", sess->session_id);
+        LOG_INFO_T("Connection", "HandleConn", "OK",
+                   "session=%u established encrypted=%s caps=0x%x",
+                   sess->session_id, g_encryption_enabled ? "true" : "false",
+                   sess->negotiated_caps);
     } else {
         sess->error_count++;
         send_error(sess, ERR_CODE_INVALID, tr("Invalid connection code", "无效连接码"));

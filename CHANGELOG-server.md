@@ -5,6 +5,60 @@
 
 ---
 
+## [0.5.0] - 2026-09-12（安全底座 + 链接适配 22.04~25.10）
+
+### 🔗 链接适配（先生实测：22.04 编译的二进制在 25.10 无法启动）
+**根因**：11 个版本敏感 soname，来自**三条独立依赖链**
+| 问题库 | 来源 | 处理 |
+|---|---|---|
+| libldap-2.5 / liblber-2.5 | libcurl（LDAP） | 去 curl |
+| libunistring.2（链一） | libcurl→libpsl→libidn2 | 去 curl |
+| libavcodec.58 / libavformat.58 / libswscale.5 / libavutil.56 | **libnotcurses**（TUI→ffmpeg） | 关 TUI |
+| libunistring.2（链二） | **libmicrohttpd**→libgnutls30→libidn2-0 | 内置 HTTP 服务器 |
+
+**成果**：`lingos_linux` 依赖 **100+ → 6 个**
+```
+libseccomp.so.2  libsqlite3.so.0  libmosquitto.so.1
+libssl.so.3      libcrypto.so.3   libcares.so.2
+```
+（6 个库 soname 在 22.04~25.10 间完全稳定，已用 packages.ubuntu.com 逐项核对）
+
+### 新增（Features）
+- **`src/net/http_client.{h,c}`**：轻量 HTTP 客户端
+  - 纯 socket 实现（零依赖，内网上报用）
+  - libcurl 改为 **dlopen 可选**（`libcurl.so.4` / `libcurl-gnutls.so.4`）
+- **`src/net/mhd_compat.{h,c}`**：**内置 HTTP 服务器**（libmicrohttpd 兼容层）
+  - raw socket + pthread，覆盖 http_server.c 全部 116 处调用
+  - 语义对齐 MHD 三段式上传回调
+- **`src/security/safe_exec.{h,c}`**：安全命令执行（OWASP 三层）
+  - 不经 shell（fork+execvp+argv）、参数分离、命令白名单 60+、危险模式 50+
+- **`src/security/access_control.{h,c}`**：访问控制（S9/S11/S18）
+- **`src/security/secure_channel.{h,c}`**：安全通道（X25519 + XChaCha20-Poly1305 + 防重放）
+- **`src/security/sensitive_data.{h,c}`**：敏感数据分级（S14 四档）
+- **`src/config/options.{h,c}`**：可选项开关体系（7 底线 + 57 可选 + **隐私保护模式**）
+- **`src/update/update_verify.{h,c}`**：更新签名校验（Ed25519）
+- **`src/python/permission_gateway.py`**：Python 侧权限闸门（S17）
+- **`src/tui/tui_disabled_stub.c`**：TUI 关闭时的降级桩
+- Makefile 开关：`ENABLE_TUI`（默认 0）/ `ENABLE_SYSTEM_MHD`（默认 0）
+
+### 修复（Bug Fixes）
+- **S1 加密虚假声明**：`encrypted:true` 固定返回 → 改为**能力协商后的真实结果**
+- **S6 随机源降级**：3 处 `srand(time^pid)` → **失败即拒绝**（token/验证码/连接码）
+- **S16 token 入日志**：完整打印 → **仅前 8 位**
+- **crypto_core 致命缺陷**：`crypto_random_bytes` 用 **LCG + 硬编码种子**（序列可预测）→ 改为 getrandom/urandom，失败即拒绝
+- **envelope 缓冲区溢出**：KEK 派生用 64 字节哈希写入 32 字节缓冲 → 改定长 KDF + 2 万次迭代
+- **S3 文件写入**：4 条路径黑名单（可写 `~/.ssh/authorized_keys`）→ 统一交 `permission_check_file`（含 realpath 规范化）
+- **S4 SSRF 补全**：拦截 `169.254.0.0/16`（云元数据）、IPv6 映射、数字型 IP；修正 `172.16-31` 精确范围（原误伤 172.32+）
+- **S4 重定向绕过**：`requests.get` 默认跟随重定向 → 改 `allow_redirects=False` + **逐跳校验**
+- **S11 CORS**：两处 `Access-Control-Allow-Origin: *` → **校验 Origin**
+- **S9 `/api/cmd` 无认证**：新增 IP 分级（localhost/LAN/PUBLIC）+ 限流
+- **TUI 依赖**：默认关闭（代码全保留，`make ENABLE_TUI=1` 可恢复）
+- **supervisor 链接**：补 `http_client.c`（install_model 下载用）
+
+### 变更（Changes）
+- 内部版本 `LN-0.4.4` → `LN-0.5.0`
+- `alert_notify.c` / `visiond.c` / `install_model.c`：curl → 内置 HTTP
+
 ## [0.4.4] - 2026-09-12（部署链修复 + shell 指令补齐）
 
 ### 修复（Bug Fixes）

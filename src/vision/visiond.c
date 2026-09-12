@@ -190,7 +190,7 @@ static void* heartbeat_thread_func(void *arg) {
  * 检测结果上报 ai_server（0.2.2——App vision_event 广播链）
  * 用 libcurl POST /api/vision_event（Makefile 已链 libcurl）
  * ============================================================ */
-#include <curl/curl.h>
+#include "../net/http_client.h"
 #include <cJSON.h>
 
 static void vision_report_results(detection_result_t *results, int count) {
@@ -211,20 +211,13 @@ static void vision_report_results(detection_result_t *results, int count) {
     cJSON_Delete(root);
     if (!json_str) return;
 
-    CURL *curl = curl_easy_init();
-    if (curl) {
-        struct curl_slist *headers = NULL;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
-        char url[128];
-        safe_snprintf(url, sizeof(url), "http://127.0.0.1:8088/api/vision_event");
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
-        curl_easy_perform(curl);
-        curl_easy_cleanup(curl);
-        curl_slist_free_all(headers);
+    /* 【0.5.0】改用内置 socket HTTP（去掉 libcurl 硬依赖，适配 Ubuntu 22.04~25.10）
+     * 内网 POST，无需 TLS/重定向 → 纯 socket 足够 */
+    char resp[256];
+    int rc = http_post_json("http://127.0.0.1:8088/api/vision_event",
+                            json_str, resp, sizeof(resp), 2);
+    if (rc != 0) {
+        LOG_DEBUG_T("Visiond", "Report", "Fail", "vision event report rc=%d", rc);
     }
     free(json_str);
 }

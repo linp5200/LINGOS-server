@@ -94,6 +94,16 @@ startup_mode_t startup_mode_get(void) {
     }
     fclose(fp);
 
+#if !defined(LINGOS_ENABLE_TUI) || LINGOS_ENABLE_TUI == 0
+    /* 【0.5.0】TUI 关闭：即使配置文件写着 tui，也强制回退 Shell CLI
+     * （保护从旧版本升级上来的配置，避免进入不可用的界面） */
+    if (mode == STARTUP_MODE_TUI) {
+        LOG_WARN_T("StartupMode", "Get", "TuiDisabled",
+                   "配置指定 TUI，但本构建已关闭 TUI —— 使用 Shell CLI");
+        mode = DEFAULT_MODE;
+    }
+#endif
+
     LOG_DEBUG_T("StartupMode", "Get", "Result", "mode=%d (%s)", mode, startup_mode_name(mode));
     return mode;
 }
@@ -105,6 +115,16 @@ int startup_mode_set(startup_mode_t mode) {
         LOG_ERROR_T("StartupMode", "Set", "Invalid", "unknown mode: %d", mode);
         return -1;
     }
+
+#if !defined(LINGOS_ENABLE_TUI) || LINGOS_ENABLE_TUI == 0
+    /* 【0.5.0 先生裁决】TUI 入口已关闭（保留代码）—— 拒绝写入 TUI 模式，
+     * 避免重启后进入不存在的界面。需要 TUI 请以 ENABLE_TUI=1 重新编译。 */
+    if (mode == STARTUP_MODE_TUI) {
+        LOG_WARN_T("StartupMode", "Set", "TuiDisabled",
+                   "TUI 已在本构建中关闭 —— 保持 Shell CLI（可设 LINGOS_WANT_TUI=1 环境变量提示）");
+        return -1;
+    }
+#endif
 
     ensure_config_dir();
 

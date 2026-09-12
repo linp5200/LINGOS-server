@@ -4,10 +4,23 @@
  * @version 2.0.0.0
  */
 
+/* 【0.5.0 先生要求：链接适配 Ubuntu 22.04~25.10】
+ * 默认使用**内置 HTTP 服务器**（src/net/mhd_compat.h）：
+ *   Ubuntu 22.04 的 libmicrohttpd12 → libgnutls30 → libidn2-0 → libunistring.so.2
+ *   Ubuntu 25.10 的同上链条末环是 libunistring.so.5
+ *   → soname 不兼容 → 22.04 编译的二进制在 25.10 上无法启动。
+ * 内置实现仅依赖 raw socket + pthread，彻底消除该依赖链。
+ * 若确实需要系统 libmicrohttpd：make ENABLE_SYSTEM_MHD=1
+ */
+#ifdef LINGOS_USE_SYSTEM_MHD
 #include <microhttpd.h>
+#else
+#include "../net/mhd_compat.h"
+#endif
 #include "log_extra.h"
 #include "data_path.h"
 #include "safe_string.h"
+#include "access_control.h"
 #include "nook.h"
 #include "system_health.h"
 #include "connection_handler.h"
@@ -17,6 +30,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -45,6 +62,51 @@ static int handle_root(struct MHD_Connection *connection) {
     MHD_queue_response(connection, MHD_HTTP_OK, response);
     MHD_destroy_response(response);
     return MHD_YES;
+}
+
+/* ============================================================
+ * 【0.5.0 S11】CORS 头发射回调（供 access_control.c 调用）
+ * 放在此文件避免 access_control 直接依赖 microhttpd
+ * ============================================================ */
+int access_cors_emit_header(void *resp, const char *name, const char *value) {
+    if (!resp || !name || !value) return -1;
+    return MHD_add_response_header((struct MHD_Response *)resp, name, value);
+}
+
+/* ============================================================
+ * 【0.5.0 S9】取客户端 IP（用于访问控制分级）
+ * MHD_ConnectionInfo 不可用时返回 "0.0.0.0"（按公网处理——最严）
+ * ============================================================ */
+static const char *http_client_ip(struct MHD_Connection *connection) {
+    static __thread char ipbuf[64];
+    const union MHD_ConnectionInfo *ci =
+        MHD_get_connection_info(connection, MHD_CONNECTION_INFO_CLIENT_ADDRESS);
+    if (ci && ci->client_addr) {
+        const struct sockaddr *sa = ci->client_addr;
+        if (sa->sa_family == AF_INET) {
+            const struct sockaddr_in *in4 = (const struct sockaddr_in *)sa;
+            struct in_addr a = in4->sin_addr;
+            safe_snprintf(ipbuf, sizeof(ipbuf), "%s", inet_ntoa(a));
+            return ipbuf;
+        } else if (sa->sa_family == AF_INET6) {
+            const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *)sa;
+            /* IPv4 映射 → 还原为 IPv4 */
+            if (IN6_IS_ADDR_V4MAPPED(&in6->sin6_addr)) {
+                unsigned char b[4];
+                memcpy(b, in6->sin6_addr.s6_addr + 12, 4);
+                safe_snprintf(ipbuf, sizeof(ipbuf), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+                return ipbuf;
+            }
+            char tmp[64] = {0};
+            if (inet_ntop(AF_INET6, &in6->sin6_addr, tmp, sizeof(tmp)))
+                safe_snprintf(ipbuf, sizeof(ipbuf), "%s", tmp);
+            else
+                safe_snprintf(ipbuf, sizeof(ipbuf), "::1");
+            return ipbuf;
+        }
+    }
+    safe_snprintf(ipbuf, sizeof(ipbuf), "0.0.0.0");   /* 未知 → 最严 */
+    return ipbuf;
 }
 
 static void send_json_response(struct MHD_Connection *connection, int status_code, const char *json) {
@@ -220,7 +282,12 @@ static void api_cmd_forward(struct MHD_Connection *connection, const char *body)
     struct MHD_Response *resp = MHD_create_response_from_buffer(
         (size_t)r, buf, MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(resp, "Content-Type", "application/json");
-    MHD_add_response_header(resp, "Access-Control-Allow-Origin", "*");
+    /* 【0.5.0 S11】CORS 不再用 `*` —— 校验 Origin（允许同源/本机；他人站点被浏览器拦截） */
+    {
+        const char *origin = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Origin");
+        const char *hosthdr = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");
+        access_cors_add_headers(resp, origin, hosthdr);
+    }
     MHD_queue_response(connection, MHD_HTTP_OK, resp);
     MHD_destroy_response(resp);
 }
@@ -258,7 +325,12 @@ static int handle_ui_page(struct MHD_Connection *connection) {
     struct MHD_Response *resp = MHD_create_response_from_buffer(
         (size_t)sz, data, MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(resp, "Content-Type", "text/html; charset=utf-8");
-    MHD_add_response_header(resp, "Access-Control-Allow-Origin", "*");
+    /* 【0.5.0 S11】静态页同样校验 Origin（原为 `*`） */
+    {
+        const char *origin = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Origin");
+        const char *hosthdr = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");
+        access_cors_add_headers(resp, origin, hosthdr);
+    }
     MHD_queue_response(connection, MHD_HTTP_OK, resp);
     MHD_destroy_response(resp);
     free(data);
@@ -386,6 +458,44 @@ static enum MHD_Result request_handler(void *cls,
 
     /* 【0.4.3】POST /api/cmd —— 命令代理（网页 UI 数据源） */
     if (strcmp(url, "/api/cmd") == 0 && strcmp(method, "POST") == 0) {
+        /*
+         * 【0.5.0 S9/S18】访问控制（先生裁决）
+         *   · localhost          → 免 token
+         *   · 局域网 + lan_no_token(默认开) → 免 token
+         *   · 公网                → 必须 Bearer token
+         *   · 限流：默认开启；局域网可配《允许局域网内连接不限流》
+         */
+        const char *cip = http_client_ip(connection);
+
+        /* 限流（先生 S18） */
+        if (!access_rate_allow(cip)) {
+            send_json_response(connection, MHD_HTTP_TOO_MANY_REQUESTS,
+                               "{\"status\":\"error\",\"code\":\"rate_limited\","
+                               "\"msg\":\"请求过于频繁（可开启「允许局域网内连接不限流」）\"}");
+            return MHD_YES;
+        }
+
+        /* 认证（先生 S9） */
+        {
+            const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
+            int has_token = (auth && strncmp(auth, "Bearer ", 7) == 0);
+            if (access_needs_token(cip, has_token)) {
+                if (!has_token) {
+                    send_json_response(connection, MHD_HTTP_UNAUTHORIZED,
+                                       "{\"status\":\"error\",\"code\":\"unauthorized\","
+                                       "\"msg\":\"公网访问需要 Bearer token\"}");
+                    return MHD_YES;
+                }
+                /* 有 token → 必须有效 */
+                if (!connection_verify_token(auth + 7)) {
+                    send_json_response(connection, MHD_HTTP_UNAUTHORIZED,
+                                       "{\"status\":\"error\",\"code\":\"invalid_token\","
+                                       "\"msg\":\"token 无效或已过期\"}");
+                    return MHD_YES;
+                }
+            }
+        }
+
         struct upload_ctx *ctx = calloc(1, sizeof(struct upload_ctx));
         if (!ctx) return MHD_NO;
         ctx->mode = 1;

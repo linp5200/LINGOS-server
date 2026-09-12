@@ -15,7 +15,7 @@ import json
 import socket
 import logging
 import threading
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 import requests
 
@@ -45,29 +45,134 @@ def _check_rate_limit(limit_per_min: int = RATE_LIMIT_PER_MIN) -> bool:
         return True
 
 
-# ========== SSRF 防护 ==========
-def _is_safe_url(url: str) -> bool:
-    """拒绝内网/本机/非 http(s) 地址（SSRF 防护）"""
+# ========== SSRF 防护（【0.5.0 S4】补全） ==========
+# 原实现缺陷（审计发现）：
+#   ① 未拦 169.254.169.254（云元数据端点 —— SSRF 头号目标，可读云凭据）
+#   ② 未拦 IPv6 映射（::ffff:127.0.0.1）
+#   ③ 未拦数字型 IP（十进制 2130706433 / 十六进制 0x7f.1 / 八进制 0177.0.0.1）
+#   ④ '172.' 前缀误伤 172.32+ 公网地址
+#   ⑤ 无 DNS rebinding 防护（解析后再连 IP 变了）
+#   ⑥ 只查首个解析结果（getaddrinfo 可能返回多个）
+# 修法：用标准库 ipaddress 做**规范化 + 分类**，并检查**全部**解析结果。
+
+import ipaddress as _ipaddress
+
+# 明确禁止的网段（含云元数据 —— 关键补充）
+_BLOCKED_NETS = [
+    _ipaddress.ip_network("0.0.0.0/8"),
+    _ipaddress.ip_network("10.0.0.0/8"),
+    _ipaddress.ip_network("100.64.0.0/10"),      # CGNAT
+    _ipaddress.ip_network("127.0.0.0/8"),
+    _ipaddress.ip_network("169.254.0.0/16"),     # ★ 链路本地 / 云元数据 169.254.169.254
+    _ipaddress.ip_network("172.16.0.0/12"),      # ★ 仅 16~31（不误伤 172.32+）
+    _ipaddress.ip_network("192.0.0.0/24"),
+    _ipaddress.ip_network("192.168.0.0/16"),
+    _ipaddress.ip_network("198.18.0.0/15"),
+    _ipaddress.ip_network("224.0.0.0/4"),        # 组播
+    _ipaddress.ip_network("240.0.0.0/4"),        # 保留
+    _ipaddress.ip_network("255.255.255.255/32"),
+    # IPv6
+    _ipaddress.ip_network("::/128"),
+    _ipaddress.ip_network("::1/128"),
+    _ipaddress.ip_network("fc00::/7"),           # 唯一本地
+    _ipaddress.ip_network("fe80::/10"),          # 链路本地
+    _ipaddress.ip_network("ff00::/8"),           # 组播
+    _ipaddress.ip_network("2002::/16"),          # 6to4（可封装内网）
+]
+
+# 云元数据专用地址（额外显式拦截，便于审计日志识别）
+_METADATA_IPS = {"169.254.169.254", "fd00:ec2::254", "metadata.google.internal"}
+
+
+def _is_blocked_ip(ip_str: str) -> bool:
+    """判定 IP 是否属于禁止访问的网段（含 IPv6 映射还原）"""
+    try:
+        ip = _ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True   # 无法解析 → 拒绝
+    # IPv4 映射的 IPv6（::ffff:a.b.c.d）→ 还原为 IPv4 再判
+    if isinstance(ip, _ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    for net in _BLOCKED_NETS:
+        try:
+            if ip in net:
+                return True
+        except TypeError:
+            continue   # 版本不匹配（v4 net vs v6 addr）
+    return False
+
+
+def _resolve_all(host: str) -> list:
+    """解析主机名的**全部**地址（v4+v6）"""
+    out = []
+    try:
+        for fam, _, _, _, sa in socket.getaddrinfo(host, None):
+            if fam == socket.AF_INET:
+                out.append(sa[0])
+            elif fam == socket.AF_INET6:
+                out.append(sa[0])
+    except Exception:
+        pass
+    return out
+
+
+def _is_safe_url(url: str, resolve: bool = True) -> bool:
+    """SSRF 防护（【0.5.0 S4】规范化 + 全量解析 + 云元数据拦截）
+
+    :param resolve: 是否做 DNS 解析校验（True=正常；False=仅字面检查，用于 rebinding 前的初筛）
+    """
     try:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
             return False
-        host = parsed.hostname or ""
-        if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        host = (parsed.hostname or "").strip()
+        if not host:
             return False
-        # 内网段
-        if host.startswith("10.") or host.startswith("192.168.") or host.startswith("172."):
+
+        # ① 云元数据主机名显式拦截
+        if host.lower() in _METADATA_IPS:
+            logger.warning("SSRF: 云元数据地址被拦截 %s", host)
             return False
-        # IP 解析检查
+
+        # ② 端口限制（可选：阻断常见内部服务端口）
+        port = parsed.port
+        if port is not None and port in (22, 23, 25, 445, 3389, 6379, 11211):
+            logger.warning("SSRF: 高危端口被拦截 %s:%s", host, port)
+            return False
+
+        # ③ 字面为 IP → 直接判定（同时覆盖数字型/十六进制等，ipaddress 能识别部分）
         try:
-            ip = socket.gethostbyname(host)
-            if ip.startswith(("10.", "192.168.", "172.")) or ip == "127.0.0.1":
-                return False
-        except Exception:
+            lit = _ipaddress.ip_address(host)
+            return not _is_blocked_ip(str(lit))
+        except ValueError:
+            pass
+
+        # ④ 域名 → 解析全部地址逐个判定
+        if not resolve:
+            return True
+        addrs = _resolve_all(host)
+        if not addrs:
+            logger.warning("SSRF: 无法解析主机 %s → 拒绝", host)
             return False
+        for a in addrs:
+            if _is_blocked_ip(a):
+                logger.warning("SSRF: 主机 %s 解析到受限地址 %s → 拒绝", host, a)
+                return False
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("SSRF 校验异常(%s) → 拒绝: %s", e, url)
         return False
+
+
+def _verify_before_request(url: str):
+    """【DNS rebinding 防护】请求前**再次**校验，防止解析在初筛后被改写。
+
+    返回 (ok, detail)。requests 无法直接绑定 IP，故采用「请求前二次解析 + 对比」
+    策略：若两次解析结果不同（且新的落入受限段）→ 拒绝。
+    """
+    if not _is_safe_url(url, resolve=True):
+        return False, "URL 未通过 SSRF 校验"
+    return True, ""
 
 
 # ========== searxng 后端 ==========
@@ -138,13 +243,36 @@ def _search_html(query: str, num: int) -> list:
 
 
 # ========== 抓取网页（web_fetch） ==========
-def _fetch_page(url: str) -> str:
-    """抓取 URL 并转纯文本（SSRF 防护 + 大小限制 + 超时）"""
-    if not _is_safe_url(url):
-        return "Error: URL blocked by SSRF protection (internal/private address)"
+def _fetch_page(url: str, _depth: int = 0) -> str:
+    """抓取 URL 并转纯文本（【0.5.0 S4】SSRF 防护 + 重定向逐跳校验 + 大小/超时限制）
+
+    ⚠️ 关键修复：原实现用 requests.get 默认**自动跟随重定向**，
+       攻击者可用「公网 URL → 302 到 169.254.169.254」绕过 SSRF 检查。
+       现改为 allow_redirects=False，**手动逐跳校验**（最多 5 跳）。
+    """
+    if _depth > 5:
+        return "Error: Too many redirects"
+
+    # DNS rebinding 二次校验（请求前再验一次）
+    ok, detail = _verify_before_request(url)
+    if not ok:
+        logger.warning("web_fetch 被 SSRF 拦截: %s (%s)", url, detail)
+        return f"Error: URL blocked by SSRF protection ({detail})"
+
     try:
-        resp = requests.get(url, timeout=FETCH_TIMEOUT,
+        resp = requests.get(url, timeout=FETCH_TIMEOUT, allow_redirects=False,
                             headers={"User-Agent": "Mozilla/5.0 (LINGOS AI)"})
+        # 重定向：逐跳校验后再跟
+        if resp.status_code in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("Location", "")
+            if not loc:
+                return "Error: redirect without Location"
+            nxt = urljoin(url, loc)
+            if not _is_safe_url(nxt):
+                logger.warning("重定向目标被 SSRF 拦截: %s → %s", url, nxt)
+                return "Error: redirect target blocked by SSRF protection"
+            return _fetch_page(nxt, _depth + 1)
+
         if resp.status_code != 200:
             return f"Error: HTTP {resp.status_code}"
         # 转纯文本

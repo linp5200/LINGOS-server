@@ -46,6 +46,18 @@ static void* background_init_thread(void *arg) {
     }
 
     /* ============================================================
+     * 1b. 【0.5.0】可选项加载（先生定稿：安全增强默认开 / 底线不可关）
+     * ============================================================ */
+    {
+        extern int options_init(void);
+        int oret = options_init();
+        if (oret != 0)
+            LOG_WARN_T("BackgroundInit", "Step", "Options", "options_init failed");
+        else
+            LOG_DEBUG_T("BackgroundInit", "Step", "Options", "options loaded");
+    }
+
+    /* ============================================================
      * 2. security_config_load（容错）
      * ============================================================ */
     LOG_DEBUG_T("BackgroundInit", "Step", "Security", "loading security config");

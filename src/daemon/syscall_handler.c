@@ -10,6 +10,8 @@
 #include "cJSON.h"
 #include "data_path.h"
 #include "safe_string.h"
+#include "safe_exec.h"
+#include "permission_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -739,30 +741,221 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "message", "Missing 'command'");
             ret = -1;
         } else {
-            FILE *fp = popen(cmd_item->valuestring, "r");
-            if (fp) {
-                /* 【修复】动态读取全量输出（1MB 上限 + 截断标记） */
-                char *buf = popen_read_all(fp, 1024 * 1024, "\n...[output truncated at 1MB]");
-                pclose(fp);
-                if (buf) {
-                    char *escaped = escape_json_string(buf);
-                    cJSON_AddStringToObject(result, "status", "ok");
-                    cJSON_AddStringToObject(result, "data", escaped);
-                    free(escaped);
-                    free(buf);
-                } else {
+            /*
+             * 【0.5.0 安全修复·S2】OWASP OS Command Injection Defense 三层落地
+             *   ① 不经 shell   —— safe_exec 内部用 fork + execvp(argv[])
+             *      → `; | & $() `` >` 等元字符全部失效（不再是命令分隔符）
+             *   ② 参数分离     —— 命令与参数分别入 argv[]
+             *   ③ 输入验证     —— 命令白名单 + 危险模式（先生 S2=B：黑名单加强）
+             *   ④ 最小权限/超时/输出上限（OWASP LLM10）
+             *
+             * 兼容性：返回字段与旧实现**完全一致**（status/data 或 status/error/error_type/message），
+             *        旧客户端无需改动。
+             */
+            char *out = malloc(SAFE_EXEC_MAX_OUTPUT);
+            char reason[256] = {0};
+            int need_confirm = 0;
+            if (!out) {
+                cJSON_AddStringToObject(result, "status", "error");
+                cJSON_AddStringToObject(result, "error_type", "alloc_failed");
+                cJSON_AddStringToObject(result, "message", "Failed to allocate output buffer");
+                ret = -1;
+            } else {
+                int rc = safe_exec_run_cmdline(cmd_item->valuestring, out,
+                                               SAFE_EXEC_MAX_OUTPUT, 60,
+                                               &need_confirm, reason, sizeof(reason));
+                if (rc == -3) {
+                    /* 被策略拒绝（危险命令 / 白名单外） */
                     cJSON_AddStringToObject(result, "status", "error");
-                    cJSON_AddStringToObject(result, "error_type", "alloc_failed");
-                    cJSON_AddStringToObject(result, "message", "Failed to read command output");
+                    cJSON_AddStringToObject(result, "error_type", "blocked_by_policy");
+                    cJSON_AddStringToObject(result, "message",
+                                            reason[0] ? reason : "Blocked by security policy");
+                    if (need_confirm) cJSON_AddBoolToObject(result, "need_confirm", 1);
+                    LOG_WARN_T("Syscall", "Exec", "Blocked", "%s | cmd=%.100s",
+                               reason, cmd_item->valuestring);
                     ret = -1;
+                } else if (rc == -2) {
+                    cJSON_AddStringToObject(result, "status", "error");
+                    cJSON_AddStringToObject(result, "error_type", "timeout");
+                    cJSON_AddStringToObject(result, "message", "Command timed out (60s)");
+                    ret = -1;
+                } else if (rc == -1) {
+                    cJSON_AddStringToObject(result, "status", "error");
+                    cJSON_AddStringToObject(result, "error_type", "command_not_found");
+                    cJSON_AddStringToObject(result, "message",
+                                            "Command not found or failed to start");
+                    ret = -1;
+                } else {
+                    char *escaped = escape_json_string(out);
+                    cJSON_AddStringToObject(result, "status", "ok");
+                    cJSON_AddStringToObject(result, "data", escaped ? escaped : "");
+                    if (escaped) free(escaped);
+                    if (need_confirm) cJSON_AddBoolToObject(result, "need_confirm", 1);
                 }
+                free(out);
+            }
+        }
+    }
+
+    /* ====== 【0.5.0 S3】文件访问权限检查（先生裁决：文件写入交权限管理）====== 
+     * 背景（审计发现）：Python 侧 file_write 仅用 4 条路径黑名单
+     *   ["/etc/passwd","/etc/shadow","/etc/sudoers","/boot/"]
+     * 可绕过方式：
+     *   · ~/.ssh/authorized_keys（SSH 免密后门）
+     *   · /etc/crontab（定时任务提权）
+     *   · ../ 路径穿越未规范化
+     * 现统一交由权限系统 permission_check_file() 判定（OWASP LLM06 §7 Complete mediation）。
+     */
+    else if (strcmp(operation, "file_check") == 0) {
+        LOG_DEBUG_T("Syscall", "Handle", "FileCheck", "checking file permission");
+        cJSON *path_item = cJSON_GetObjectItem(args, "path");
+        cJSON *mode_item = cJSON_GetObjectItem(args, "mode");   /* 0=读 1=写 2=删 */
+        if (!cJSON_IsString(path_item) || !path_item->valuestring[0]) {
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "missing_param");
+            cJSON_AddStringToObject(result, "message", "Missing 'path'");
+            ret = -1;
+        } else {
+            int mode = cJSON_IsNumber(mode_item) ? (int)mode_item->valuedouble : 1;
+            const char *path = path_item->valuestring;
+
+            /* ① 规范化路径（防 ../ 穿越）—— realpath 不存在时退回字面 */
+            char real[1024];
+            int allowed;
+            if (realpath(path, real) != NULL) {
+                allowed = permission_check_file("ai", real, mode);
+            } else {
+                /* 文件尚不存在（写新建）：用父目录 realpath + 文件名 */
+                char tmp[1024];
+                safe_strncpy(tmp, path, sizeof(tmp));
+                char *slash = strrchr(tmp, '/');
+                if (slash && slash != tmp) {
+                    *slash = '\0';
+                    char preal[1024];
+                    if (realpath(tmp, preal) != NULL) {
+                        safe_snprintf(real, sizeof(real), "%s/%s", preal, slash + 1);
+                    } else {
+                        safe_strncpy(real, path, sizeof(real));
+                    }
+                } else {
+                    safe_strncpy(real, path, sizeof(real));
+                }
+                allowed = permission_check_file("ai", real, mode);
+            }
+
+            cJSON *chk = cJSON_CreateObject();
+            cJSON_AddBoolToObject(chk, "allowed", allowed ? 1 : 0);
+            cJSON_AddStringToObject(chk, "path", path);
+            cJSON_AddStringToObject(chk, "resolved", real);
+            cJSON_AddNumberToObject(chk, "mode", mode);
+            cJSON_AddStringToObject(result, "status", "ok");
+            cJSON_AddItemToObject(result, "data", chk);
+            if (!allowed) {
+                LOG_WARN_T("Syscall", "FileCheck", "Denied",
+                           "ai 无权%s %s (mode=%d)", mode ? "写/删" : "读", real, mode);
+            } else {
+                LOG_DEBUG_T("Syscall", "FileCheck", "Allowed", "%s (mode=%d)", real, mode);
+            }
+        }
+    }
+
+    /* ====== 【0.5.0 H】可选项开关（先生定稿：App/Web 可读写）====== */
+    else if (strcmp(operation, "options_list") == 0) {
+        extern char *options_to_json(void);
+        extern int options_in_privacy_mode(void);
+        char *js = options_to_json();
+        if (js) {
+            cJSON *parsed = cJSON_Parse(js);
+            cJSON_AddStringToObject(result, "status", "ok");
+            if (parsed) {
+                cJSON_AddItemToObject(result, "data", parsed);
+            } else {
+                cJSON_AddStringToObject(result, "data", js);
+            }
+            free(js);
+        } else {
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "internal");
+            cJSON_AddStringToObject(result, "message", "options_to_json failed");
+            ret = -1;
+        }
+        (void)options_in_privacy_mode;
+    }
+    else if (strcmp(operation, "options_get") == 0) {
+        extern int options_get(const char *key);
+        cJSON *k = cJSON_GetObjectItem(args, "key");
+        if (!cJSON_IsString(k)) {
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "missing_param");
+            cJSON_AddStringToObject(result, "message", "Missing 'key'");
+            ret = -1;
+        } else {
+            int v = options_get(k->valuestring);
+            if (v < 0) {
+                cJSON_AddStringToObject(result, "status", "error");
+                cJSON_AddStringToObject(result, "error_type", "not_found");
+                cJSON_AddStringToObject(result, "message", "Unknown option key");
+                ret = -1;
+            } else {
+                cJSON *d = cJSON_CreateObject();
+                cJSON_AddStringToObject(d, "key", k->valuestring);
+                cJSON_AddBoolToObject(d, "value", v);
+                cJSON_AddStringToObject(result, "status", "ok");
+                cJSON_AddItemToObject(result, "data", d);
+            }
+        }
+    }
+    else if (strcmp(operation, "options_set") == 0) {
+        extern int options_set(const char *key, int value, int force);
+        cJSON *k = cJSON_GetObjectItem(args, "key");
+        cJSON *v = cJSON_GetObjectItem(args, "value");
+        cJSON *f = cJSON_GetObjectItem(args, "force");
+        if (!cJSON_IsString(k) || !cJSON_IsBool(v)) {
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "missing_param");
+            cJSON_AddStringToObject(result, "message", "Missing 'key' or 'value'");
+            ret = -1;
+        } else {
+            int force = cJSON_IsTrue(f) ? 1 : 0;
+            int rc = options_set(k->valuestring, cJSON_IsTrue(v) ? 1 : 0, force);
+            if (rc == 0) {
+                cJSON_AddStringToObject(result, "status", "ok");
+                cJSON_AddStringToObject(result, "message", "option updated");
+            } else if (rc == -2) {
+                /* 危险开关需二次确认 */
+                cJSON_AddStringToObject(result, "status", "error");
+                cJSON_AddStringToObject(result, "error_type", "need_confirm");
+                cJSON_AddStringToObject(result, "message",
+                                        "危险开关：请在 UI 二次确认后带 force=true 重试");
+                ret = -1;
+            } else if (rc == -1) {
+                cJSON_AddStringToObject(result, "status", "error");
+                cJSON_AddStringToObject(result, "error_type", "not_allowed");
+                cJSON_AddStringToObject(result, "message",
+                                        "安全底线项不可修改 / 未知 key");
+                ret = -1;
             } else {
                 cJSON_AddStringToObject(result, "status", "error");
-                cJSON_AddStringToObject(result, "error_type", "popen_failed");
-                cJSON_AddStringToObject(result, "message", strerror(errno));
+                cJSON_AddStringToObject(result, "error_type", "save_failed");
+                cJSON_AddStringToObject(result, "message", "配置保存失败");
                 ret = -1;
             }
         }
+    }
+    else if (strcmp(operation, "options_privacy_mode") == 0) {
+        extern int options_apply_privacy_mode(void);
+        extern int options_clear_privacy_mode(void);
+        extern int options_in_privacy_mode(void);
+        cJSON *on = cJSON_GetObjectItem(args, "enable");
+        if (cJSON_IsBool(on) && cJSON_IsTrue(on)) {
+            options_apply_privacy_mode();
+        } else if (cJSON_IsBool(on) && !cJSON_IsTrue(on)) {
+            options_clear_privacy_mode();
+        }
+        cJSON *d = cJSON_CreateObject();
+        cJSON_AddBoolToObject(d, "privacy_mode", options_in_privacy_mode());
+        cJSON_AddStringToObject(result, "status", "ok");
+        cJSON_AddItemToObject(result, "data", d);
     }
 
     /* ====== 记忆原子操作 ====== */

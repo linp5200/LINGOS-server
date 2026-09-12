@@ -13,7 +13,7 @@
 #include "../drivers/uart.h"
 #include "../lib/log_extra.h"
 #include "../net/mqtt/mqtt_client.h"
-#include <curl/curl.h>
+#include "../net/http_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,19 +61,18 @@ static void alert_report_ws(const alert_event_t *event) {
                   "{\"type\":%d,\"level\":%d,\"title\":\"%s alert\",\"description\":\"%s\",\"source\":\"%s\",\"timestamp\":%ld}",
                   event->type, event->level, event->source, esc, event->source, (long)event->timestamp);
 
-    CURL *curl = curl_easy_init();
-    if (!curl) return;
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(curl, CURLOPT_URL, "http://127.0.0.1:8088/api/alert_event");
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 2L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
-    curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-    curl_slist_free_all(headers);
-    LOG_DEBUG_T("AlertNotify", "WSReport", "OK", "alert event reported (level=%d)", event->level);
+    /* 【0.5.0】改用内置 socket HTTP（去掉 libcurl 硬依赖 —— 先生要求适配 22.04~25.10）
+     * 原实现用 libcurl → 传递依赖 libldap-2.5、librtmp、libav 系列、libunistring 等
+     * 22.04 专属 soname，在 25.10 上不存在 → 二进制无法启动。
+     * 本上报为**内网 POST**，纯 socket 完全满足。 */
+    char resp[256];
+    int rc = http_post_json("http://127.0.0.1:8088/api/alert_event",
+                            json, resp, sizeof(resp), 2);
+    if (rc == 0) {
+        LOG_DEBUG_T("AlertNotify", "WSReport", "OK", "alert event reported (level=%d)", event->level);
+    } else {
+        LOG_DEBUG_T("AlertNotify", "WSReport", "Fail", "report failed rc=%d (level=%d)", rc, event->level);
+    }
 }
 
 /* ============================================================

@@ -22,31 +22,76 @@ CFLAGS += -Wno-format-truncation -Wno-sign-compare
 # 【0.2.1 全捆】rpath=$ORIGIN/../lib——主二进制从包内 lib/ 找动态库（便携解压即用）
 LDFLAGS += -Wl,-rpath,'$$ORIGIN/../lib'
 
-NOTCURSES_CFLAGS := $(shell pkg-config --cflags notcurses 2>/dev/null)
-NOTCURSES_LIBS   := $(shell pkg-config --libs notcurses 2>/dev/null)
-ifeq ($(NOTCURSES_CFLAGS),)
-    $(warning "notcurses not found, falling back to CLI mode")
-    NOTCURSES_CFLAGS =
-    NOTCURSES_LIBS = -lnotcurses -lnotcurses-core
+# ================================================================
+# 【0.5.0 先生裁决】TUI 入口关闭（保留全部源代码，仅不参与编译/链接）
+# ----------------------------------------------------------------
+# 原因：libnotcurses.so.3 传递依赖 ffmpeg 全家桶，soname 在发行版间差异巨大：
+#   Ubuntu 22.04: libavcodec.so.58 / libavformat.so.58 / libswscale.so.5 / libavutil.so.56
+#   Ubuntu 25.10: libavcodec.so.60+ / libavformat.so.60+ / libswscale.so.7 / libavutil.so.58
+#   → 22.04 编译的二进制在 25.10 上 **无法启动**（先生实测 libldap-2.5 同类问题）
+# 关闭 TUI 后主程序仅依赖：libc / libseccomp / libsqlite3 / libmosquitto /
+#   libmicrohttpd / libssl —— 这些在 22.04~25.10 间 soname 稳定。
+#
+# 重新启用：make ENABLE_TUI=1
+#   （注意：需确保目标发行版有匹配的 libnotcurses + ffmpeg）
+# ================================================================
+ENABLE_TUI ?= 0
+
+# ================================================================
+# 【0.5.0】HTTP 服务器实现选择
+#   ENABLE_SYSTEM_MHD=0（默认）→ 内置实现 src/net/mhd_compat.c
+#                                无 libmicrohttpd/gnutls/idn2/unistring 依赖
+#   ENABLE_SYSTEM_MHD=1        → 系统 libmicrohttpd（需确保目标发行版有）
+# ================================================================
+ENABLE_SYSTEM_MHD ?= 0
+
+ifeq ($(ENABLE_SYSTEM_MHD),1)
+  MHD_COMPAT_SRCS =
+  CFLAGS += -DLINGOS_USE_SYSTEM_MHD=1
+else
+  MHD_COMPAT_SRCS = $(SRC_DIR)/net/mhd_compat.c
 endif
 
-CFLAGS += $(NOTCURSES_CFLAGS)
+ifeq ($(ENABLE_TUI),1)
+  NOTCURSES_CFLAGS := $(shell pkg-config --cflags notcurses 2>/dev/null)
+  NOTCURSES_LIBS   := $(shell pkg-config --libs notcurses 2>/dev/null)
+  ifeq ($(NOTCURSES_CFLAGS),)
+      $(warning "notcurses not found, falling back to CLI mode")
+      NOTCURSES_CFLAGS =
+      NOTCURSES_LIBS = -lnotcurses -lnotcurses-core
+  endif
+  CFLAGS += $(NOTCURSES_CFLAGS)
+  CFLAGS += -DLINGOS_ENABLE_TUI=1
+  TUI_RENDERER_SRCS = $(SRC_DIR)/config/config_renderer_tui.c
+else
+  $(info == TUI 已关闭（默认）：仅编译 Shell/CLI，避免 ffmpeg 依赖；make ENABLE_TUI=1 可启用 ==)
+  NOTCURSES_CFLAGS =
+  NOTCURSES_LIBS   =
+  TUI_RENDERER_SRCS =
+endif
 
 # ================================================================
 # 链接库
 # ================================================================
-BASE_LDFLAGS = $(LDFLAGS) -lpthread -lm -lcurl -lseccomp -lsqlite3 -lmosquitto
+# 【0.5.0 先生要求：链接适配 Ubuntu 22.04~25.10】
+# 去掉 -lcurl：Ubuntu 22.04 的 libcurl 传递依赖 7 个版本敏感 soname
+#   (libldap-2.5 / liblber-2.5 / libavcodec.58 / libavformat.58 /
+#    libswscale.5 / libavutil.56 / libunistring.2)
+# 在 25.10 上全部不存在 → 二进制无法启动。
+# 现改为：内网 HTTP 用内置 socket 实现（src/net/http_client.c），
+#         需要 https/重定向时 dlopen("libcurl.so.4") 运行时加载 → 可选依赖。
+BASE_LDFLAGS = $(LDFLAGS) -lpthread -lm -lseccomp -lsqlite3 -lmosquitto -ldl
 
-# 主程序（含 TUI）
-TUI_LDFLAGS = $(BASE_LDFLAGS) $(NOTCURSES_LIBS) -lmicrohttpd
+# 主程序（TUI 关闭时 NOTCURSES_LIBS 为空）
+TUI_LDFLAGS = $(BASE_LDFLAGS) $(NOTCURSES_LIBS) $(if $(filter 1,$(ENABLE_SYSTEM_MHD)),-lmicrohttpd,)
 
 # 守护进程/监督者（不含 TUI）
-MINIMAL_LDFLAGS = $(BASE_LDFLAGS) -lmicrohttpd
+MINIMAL_LDFLAGS = $(BASE_LDFLAGS) $(if $(filter 1,$(ENABLE_SYSTEM_MHD)),-lmicrohttpd,)
 
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-VERSION = "LN-0.4.4"
+VERSION = "LN-0.5.0"
 CFLAGS += -DLINGOS_VERSION="\"$(VERSION)\""
 
 SRC_DIR = src
@@ -81,6 +126,8 @@ PLATFORM_SRCS = $(SRC_DIR)/drivers/linux_io.c \
                 $(SRC_DIR)/drivers/linux_timer.c
 
 NET_SRCS = $(SRC_DIR)/net/tcp_client.c \
+           $(SRC_DIR)/net/http_client.c \
+           $(MHD_COMPAT_SRCS) \
            $(SRC_DIR)/net/mqtt/mqtt_client.c \
            $(SRC_DIR)/net/mqtt/mqtt_ha.c \
            $(SRC_DIR)/net/mqtt/mqtt_sync.c \
@@ -157,6 +204,10 @@ SECURITY_SRCS = $(SRC_DIR)/security/absolute_protect.c \
                 $(SRC_DIR)/security/perm_debug.c \
                 $(SRC_DIR)/security/permission.c \
                 $(SRC_DIR)/security/permission_check.c \
+                $(SRC_DIR)/security/safe_exec.c \
+                $(SRC_DIR)/security/access_control.c \
+                $(SRC_DIR)/security/secure_channel.c \
+                $(SRC_DIR)/security/sensitive_data.c \
                 $(SRC_DIR)/security/permission_whitelist.c \
                 $(SRC_DIR)/security/privilege_manager.c \
                 $(SRC_DIR)/security/secure_memory.c \
@@ -188,7 +239,8 @@ UPDATE_SRCS = $(SRC_DIR)/update/apply_changes.c \
               $(SRC_DIR)/update/update_dev_mode.c \
               $(SRC_DIR)/update/update_incremental.c \
               $(SRC_DIR)/update/update_rollback.c \
-              $(SRC_DIR)/update/web_update.c
+              $(SRC_DIR)/update/web_update.c \
+              $(SRC_DIR)/update/update_verify.c
 
 AI_SRCS = $(SRC_DIR)/ai/ai_master.c \
           $(SRC_DIR)/ai/nook.c \
@@ -304,10 +356,11 @@ CONFIG_CORE_SRCS = $(SRC_DIR)/config/config_core.c \
                    $(SRC_DIR)/config/wizard_engine.c \
                    $(SRC_DIR)/config/wizard_step_defs.c \
                    $(SRC_DIR)/config/config_validator.c \
-                   $(SRC_DIR)/config/config_saver.c
+                   $(SRC_DIR)/config/config_saver.c \
+                   $(SRC_DIR)/config/options.c
 
 CONFIG_RENDER_SRCS = $(SRC_DIR)/config/config_renderer.c \
-                     $(SRC_DIR)/config/config_renderer_tui.c \
+                     $(TUI_RENDERER_SRCS) \
                      $(SRC_DIR)/config/config_renderer_cli.c \
                      $(SRC_DIR)/config/config_renderer_raw.c \
                      $(SRC_DIR)/config/config_debug.c
@@ -327,11 +380,14 @@ INSTALL_SRCS = $(SRC_DIR)/install/install_manager.c \
 # ================================================================
 # TUI 桌面
 # ================================================================
+# 【0.5.0】TUI 源文件（ENABLE_TUI=1 时才编译）
+ifeq ($(ENABLE_TUI),1)
 TUI_SRCS = $(SRC_DIR)/tui/tui_controls.c \
            $(SRC_DIR)/tui/tui_logctl.c \
            $(SRC_DIR)/tui/tui_renderer.c \
            $(SRC_DIR)/tui/tui_resource.c \
            $(SRC_DIR)/tui/tui_signal.c \
+           $(SRC_DIR)/tui/tui_wizard.c \
            $(SRC_DIR)/tui/desktop/tui_app_launcher.c \
            $(SRC_DIR)/tui/desktop/tui_desktop.c \
            $(SRC_DIR)/tui/desktop/tui_desktop_events.c \
@@ -344,6 +400,10 @@ TUI_SRCS = $(SRC_DIR)/tui/tui_controls.c \
            $(SRC_DIR)/tui/widgets/widget_files.c \
            $(SRC_DIR)/tui/widgets/widget_monitor.c \
            $(SRC_DIR)/tui/widgets/widget_terminal.c
+else
+# 【0.5.0】TUI 关闭：仅编译「降级桩」，保证外部引用的符号可解析
+TUI_SRCS = $(SRC_DIR)/tui/tui_disabled_stub.c
+endif
 
 RULES_SRCS = $(SRC_DIR)/rules/rules_ai_guard.c \
              $(SRC_DIR)/rules/rules_engine.c \
@@ -420,7 +480,8 @@ lingosd: $(CORE_DAEMON_FULL) $(DAEMON_MAIN_SRCS) $(HTTP_SRCS)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS)
 
 # 监督者：仅基础核心
-lingos_supervisor: $(SUPERVISOR_SRCS) $(CORE_BASE)
+# 【0.5.0】supervisor 也需 http_client（install_model.c 下载用到）
+lingos_supervisor: $(SUPERVISOR_SRCS) $(CORE_BASE) $(SRC_DIR)/net/http_client.c
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread
 
 # ================================================================

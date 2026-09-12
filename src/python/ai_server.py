@@ -1306,6 +1306,69 @@ def load_knowledge_base():
         logger.error(f"Failed to load knowledge base: {e}")
         _knowledge_base = {"version": "1.0", "issues": []}
 
+def cmd_options_list() -> dict:
+    """【0.5.0 H】列出全部可选项（含分组/默认/危险标识/当前值）
+
+    供 App / Web / Qt 渲染设置页。安全底线项以 kind=0 标记（UI 应显示为不可改）。
+    """
+    try:
+        ok, res = call_syscall("options_list", {}, timeout=8)
+        if not ok:
+            return {"status": "error", "msg": res}
+        if isinstance(res, str):
+            try:
+                return json.loads(res)
+            except Exception:
+                return {"status": "error", "msg": "invalid options response"}
+        return res
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_options_set(key: str = "", value=None, force: bool = False) -> dict:
+    """【0.5.0 H】设置单个可选项
+
+    · 安全底线项（kind=FIXED）→ 拒绝
+    · 危险开关关闭 → 需 force=true（UI 应先二次确认）
+    """
+    if not key:
+        return {"status": "error", "msg": "missing 'key'"}
+    try:
+        args = {"key": key, "value": bool(value)}
+        if force:
+            args["force"] = True
+        ok, res = call_syscall("options_set", args, timeout=8)
+        if isinstance(res, str):
+            try:
+                return json.loads(res)
+            except Exception:
+                pass
+        return {"status": "ok" if ok else "error", "msg": res}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
+def cmd_privacy_mode(enable=None) -> dict:
+    """【0.5.0 H】隐私保护模式（原「一键最严」）
+
+    enable=True → 一次性开启全部安全增强 + 隐私技术；
+    enable=False → 恢复默认；未指定 → 仅查询当前状态。
+    """
+    try:
+        args = {}
+        if enable is not None:
+            args["enable"] = bool(enable)
+        ok, res = call_syscall("options_privacy_mode", args, timeout=8)
+        if isinstance(res, str):
+            try:
+                return json.loads(res)
+            except Exception:
+                pass
+        return {"status": "ok" if ok else "error", "msg": res}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+
 def load_plugin_layer() -> dict:
     """【0.4.4】加载 Python 插件层（此前 plugin_loader 从未被调用 = 死代码）
 
@@ -1842,24 +1905,42 @@ def execute_tool_calls(tool_calls: List[Dict], session_id: str = "default", conn
         elif name == "query_knowledge_base":
             success, output = query_knowledge_base(json.dumps(args))
         else:
-            # 执行技能，捕获 ImportError 提供友好提示
+            # 【0.5.0 S17 先生裁决】技能执行前统一权限闸门
+            #   审计：Python 侧此前无权限校验 → 权限系统对 AI 形同虚设
+            #   依据 OWASP LLM06 §7「Complete mediation」
+            _perm_denied = None
             try:
-                success, output = execute_skill(name, json.dumps(args))
-            except ImportError as e:
-                # 对缺失依赖给出友好提示
-                if "sentence_transformers" in str(e) or "Pillow" in str(e):
-                    output = t(
-                        f"Missing required module: {str(e)}\n"
-                        f"Please install manually: pip3 install --break-system-packages {name.split('_')[0]}",
-                        f"缺少必需模块：{str(e)}\n"
-                        f"请手动安装：pip3 install --break-system-packages {name.split('_')[0]}"
-                    )
-                else:
-                    output = t(f"Import error: {str(e)}", f"导入错误：{str(e)}")
-                success = False
-            except Exception as e:
-                output = t(f"Execution error: {str(e)}", f"执行错误：{str(e)}")
-                success = False
+                from permission_gateway import check_skill_permission, get_skill_risk
+                _allowed, _reason = check_skill_permission(name, get_skill_risk(name), args)
+                if not _allowed:
+                    logger.warning("skill '%s' blocked: %s", name, _reason)
+                    success = False
+                    output = _reason
+                    _perm_denied = _reason
+            except Exception as _ge:
+                logger.debug("permission gateway skipped: %s", _ge)
+
+            # 执行技能，捕获 ImportError 提供友好提示
+            if _perm_denied is not None:
+                pass   # 权限已拒绝，不再执行
+            else:
+                try:
+                    success, output = execute_skill(name, json.dumps(args))
+                except ImportError as e:
+                    # 对缺失依赖给出友好提示
+                    if "sentence_transformers" in str(e) or "Pillow" in str(e):
+                        output = t(
+                            f"Missing required module: {str(e)}\n"
+                            f"Please install manually: pip3 install --break-system-packages {name.split('_')[0]}",
+                            f"缺少必需模块：{str(e)}\n"
+                            f"请手动安装：pip3 install --break-system-packages {name.split('_')[0]}"
+                        )
+                    else:
+                        output = t(f"Import error: {str(e)}", f"导入错误：{str(e)}")
+                    success = False
+                except Exception as e:
+                    output = t(f"Execution error: {str(e)}", f"执行错误：{str(e)}")
+                    success = False
 
         err_type, err_msg, err_action = "", "", ""
         if not success:
@@ -4013,6 +4094,14 @@ def handle_client(conn, addr):
             _reply(conn, "plugin_list", cmd_plugin_list()); return
         if cmd == "plugin_reload":
             _reply(conn, "plugin_reload", cmd_plugin_reload()); return
+        # 【0.5.0 H】可选项开关体系（先生定稿）
+        if cmd == "options_list":
+            _reply(conn, "options_list", cmd_options_list()); return
+        if cmd == "options_set":
+            _reply(conn, "options_set", cmd_options_set(
+                str(req.get("key", "")), req.get("value"), bool(req.get("force", False)))); return
+        if cmd == "privacy_mode":
+            _reply(conn, "privacy_mode", cmd_privacy_mode(req.get("enable"))); return
         if cmd == "skill_install":
             _reply(conn, "skill_install", cmd_skill_install(str(req.get("src", "")))); return
         if cmd == "skill_uninstall":

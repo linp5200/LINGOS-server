@@ -97,6 +97,60 @@ def register_skill(name: str, func: Callable, risk: str = "low",
 # 1. 文件操作技能（完整）
 # =============================================================
 
+# =============================================================
+# 【0.5.0 S3】文件权限统一入口（先生裁决：文件写入交由权限管理）
+# =============================================================
+# 背景（审计发现）：原实现仅 4 条路径黑名单
+#   ["/etc/passwd","/etc/shadow","/etc/sudoers","/boot/"]
+# 可绕过：~/.ssh/authorized_keys（SSH 后门）、/etc/crontab（提权）、
+#         ../ 路径穿越（未规范化）。
+# 现统一交 daemon 的 permission_check_file()（内含 realpath 规范化），
+# 符合 OWASP LLM06 §7「Complete mediation（授权在底层而非 LLM）」。
+#
+# 模式：0=读 1=写 2=删
+_FILE_MODE_READ, _FILE_MODE_WRITE, _FILE_MODE_DELETE = 0, 1, 2
+
+
+def _file_permission_check(path: str, mode: int):
+    """返回 (allowed: bool, detail: str)
+
+    权限服务不可用时**拒绝**（不因故障放行 —— 安全默认）。
+    """
+    try:
+        ok, res = call_syscall("file_check", {"path": path, "mode": mode}, timeout=5)
+        if not ok:
+            return False, t("Permission service unavailable", "权限服务不可用")
+        data = res
+        if isinstance(res, str):
+            try:
+                data = json.loads(res)
+            except Exception:
+                data = {}
+        if isinstance(data, dict) and data.get("status") == "ok":
+            inner = data.get("data")
+            if isinstance(inner, str):
+                try:
+                    inner = json.loads(inner)
+                except Exception:
+                    inner = {}
+            if isinstance(inner, dict):
+                allowed = bool(inner.get("allowed"))
+                resolved = inner.get("resolved") or path
+                return allowed, resolved
+        return False, t("Permission denied", "权限不足")
+    except Exception as e:
+        return False, t(f"Permission check error: {e}", f"权限检查异常：{e}")
+
+
+def _file_guard(path: str, mode: int, verb_en: str, verb_zh: str):
+    """权限未通过 → 返回错误消息字符串；通过 → 返回 None"""
+    allowed, detail = _file_permission_check(path, mode)
+    if allowed:
+        return None
+    return t(f"{verb_en} denied by permission system: {detail}",
+             f"{verb_zh}被权限系统拒绝：{detail}")
+
+
 def file_write(args_json: str) -> Tuple[bool, str]:
     """创建或覆盖写入文件"""
     try:
@@ -105,11 +159,9 @@ def file_write(args_json: str) -> Tuple[bool, str]:
         content = args.get("content", "")
         if not path:
             return False, t("Missing 'path' parameter", "缺少 'path' 参数")
-        # 安全检查：禁止写入系统关键目录
-        forbidden = ["/etc/passwd", "/etc/shadow", "/etc/sudoers", "/boot/"]
-        for f in forbidden:
-            if path.startswith(f):
-                return False, t(f"Writing to {f} is not allowed", f"不允许写入 {f}")
+        guard = _file_guard(path, _FILE_MODE_WRITE, "Write", "写入")
+        if guard:
+            return False, guard
         success, result = call_syscall("file_write", {"path": path, "content": content})
         if success:
             return True, t(f"Written to {path}", f"已写入 {path}")
@@ -126,9 +178,9 @@ def file_read(args_json: str) -> Tuple[bool, str]:
         path = args.get("path")
         if not path:
             return False, t("Missing 'path' parameter", "缺少 'path' 参数")
-        # 安全检查
-        if path.startswith("/etc/shadow") or path.startswith("/etc/sudoers"):
-            return False, t("Reading this file is not allowed", "不允许读取此文件")
+        guard = _file_guard(path, _FILE_MODE_READ, "Read", "读取")
+        if guard:
+            return False, guard
         success, result = call_syscall("file_read", {"path": path})
         if success:
             return True, result
@@ -145,10 +197,9 @@ def file_delete(args_json: str) -> Tuple[bool, str]:
         path = args.get("path")
         if not path:
             return False, t("Missing 'path' parameter", "缺少 'path' 参数")
-        forbidden = ["/etc/passwd", "/etc/shadow", "/etc/sudoers", "/boot/", "/LINGOS/Ensystem/"]
-        for f in forbidden:
-            if path.startswith(f):
-                return False, t(f"Deleting {f} is not allowed", f"不允许删除 {f}")
+        guard = _file_guard(path, _FILE_MODE_DELETE, "Delete", "删除")
+        if guard:
+            return False, guard
         success, result = call_syscall("file_delete", {"path": path})
         if success:
             return True, t(f"Deleted {path}", f"已删除 {path}")

@@ -20,7 +20,7 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include <time.h>
-#include <curl/curl.h>
+#include "../net/http_client.h"
 
 static char g_last_error[256] = {0};
 static char g_model_mirror[256] = "";
@@ -58,23 +58,13 @@ typedef struct download_ctx {
     int last_progress;
 } download_ctx_t;
 
-static size_t model_curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
-    download_ctx_t *ctx = (download_ctx_t*)userdata;
-    size_t chunk = size * nmemb;
-    size_t written = fwrite(ptr, 1, chunk, ctx->fp);
-    ctx->downloaded += written;
-    return written;
-}
+/* 【0.5.0】原 curl 写回调与进度上下文已由 net/http_client 内部处理，此处不再需要 */
 
 /* ============================================================
  * 执行下载（使用 libcurl）
  * ============================================================ */
 static int curl_download(const char *url, const char *dest_path, const char *model_name) {
-    CURL *curl;
-    CURLcode res;
-    FILE *fp;
-    download_ctx_t ctx;
-    int ret = -1;
+    (void)model_name;
 
     // 确保目录存在
     char dir[512];
@@ -87,77 +77,27 @@ static int curl_download(const char *url, const char *dest_path, const char *mod
         system(cmd);
     }
 
-    // 检查是否已存在（断点续传）
-    char mode[8] = "wb";
-    size_t existing = 0;
-    fp = fopen(dest_path, "rb");
-    if (fp) {
-        fseek(fp, 0, SEEK_END);
-        existing = ftell(fp);
-        fclose(fp);
-        if (existing > 0) {
-            strcpy(mode, "ab");
-        }
-    }
+    /* 【0.5.0】改用内置 HTTP 客户端（去掉 libcurl 硬依赖，适配 Ubuntu 22.04~25.10）
+     *  - 有 libcurl → dlopen 加载，支持 https + 跟随重定向
+     *  - 无 libcurl → 纯 socket 回退（仅 http://）
+     *  注：断点续传能力由 http_download 内部决定（当前实现为整文件下载；
+     *      失败会删半成品，避免脏文件）。 */
 
-    fp = fopen(dest_path, mode);
-    if (!fp) {
-        safe_snprintf(g_last_error, sizeof(g_last_error), "Cannot open %s for writing", dest_path);
-        return -1;
-    }
+    int dl_rc = http_download(url, dest_path, 600);
 
-    curl = curl_easy_init();
-    if (!curl) {
-        fclose(fp);
-        safe_snprintf(g_last_error, sizeof(g_last_error), "curl_easy_init failed");
-        return -1;
-    }
-
-    // 初始化上下文
-    memset(&ctx, 0, sizeof(ctx));
-    ctx.fp = fp;
-    ctx.total = 0;
-    ctx.downloaded = existing;
-    speed_calc_init(&ctx.speed);
-    ctx.last_progress = -1;
-
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, model_curl_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
-
-    // 断点续传
-    if (existing > 0) {
-        curl_easy_setopt(curl, CURLOPT_RESUME_FROM, existing);
-    }
-
-    // 获取总大小
-    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-    curl_easy_perform(curl);
-    double content_length;
-    curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &content_length);
-    ctx.total = (size_t)content_length;
-
-    // 实际下载
-    curl_easy_setopt(curl, CURLOPT_NOBODY, 0L);
-    res = curl_easy_perform(curl);
-
-    fclose(fp);
-    curl_easy_cleanup(curl);
-
-    if (res == CURLE_OK) {
-        // 验证文件大小
+    if (dl_rc == 0) {
         struct stat st;
         if (stat(dest_path, &st) == 0 && st.st_size > 0) {
-            LOG_INFO_T("InstallModel", "Download", "OK", "%s downloaded (%zu bytes)", model_name, st.st_size);
+            LOG_INFO_T("InstallModel", "Download", "OK",
+                       "%s downloaded (%ld bytes)", model_name, (long)st.st_size);
             install_progress_finish_item(1);
             return 0;
         }
     }
 
-    safe_snprintf(g_last_error, sizeof(g_last_error), "Download failed: %s", curl_easy_strerror(res));
+    safe_snprintf(g_last_error, sizeof(g_last_error),
+                  "Download failed (rc=%d, %s)", dl_rc,
+                  http_curl_available() ? "curl" : "socket-only");
     install_progress_finish_item(0);
     return -1;
 }

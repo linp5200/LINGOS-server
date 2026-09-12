@@ -79,6 +79,7 @@ typedef enum {
     CONN_STATE_AUTH_VERIFIED,
     CONN_STATE_CODE_WAIT,
     CONN_STATE_ESTABLISHED,
+    CONN_STATE_ERROR,      /* 【0.5.0】加密/令牌失败等异常态 */
     CONN_STATE_CLOSED
 } connection_state_t;
 
@@ -102,6 +103,11 @@ typedef struct connection_session {
     uint8_t is_authenticated;
     uint8_t is_active;
     uint8_t first_packet;          /* 每个会话独立跟踪首包状态 */
+    /* 【0.5.0 S1】应用层加密通道（src/security/secure_channel.c）
+     *   NULL = 未协商/对端不支持 → 明文（并**如实上报** encrypted=false）
+     *   非 NULL = X25519 协商完成 → 逐帧 AEAD 加解密 */
+    void   *channel;
+    uint32_t negotiated_caps;      /* 能力协商结果位（SC_CAP_ENCRYPT / SC_CAP_TLS） */
     struct connection_session *next;
 } connection_session_t;
 
