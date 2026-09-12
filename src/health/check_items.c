@@ -64,9 +64,11 @@ static void deps_trigger_repair(const char *msg) {
     if (ret == 0 && result.success) {
         LOG_INFO_T("CheckItems", "Dependencies", "RepairOK", "repair succeeded: %s", result.action_used);
     } else {
+        /* 【0.4.4】原样输出过于笼统：补明"哪个检查项失败"与处置建议 */
+        const char *why = result.error_msg[0] ? result.error_msg : "engine unavailable";
         LOG_WARN_T("CheckItems", "Dependencies", "RepairFail",
-                   "repair failed (ret=%d): %s", ret,
-                   result.error_msg[0] ? result.error_msg : "engine unavailable");
+                   "check '%s' failed (ret=%d): %s | 无自动修复策略——可 run './check_deps.sh --install' 手动补齐",
+                   msg, ret, why);
     }
 }
 

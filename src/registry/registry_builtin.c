@@ -72,9 +72,16 @@ int registry_register_builtin_modules(void) {
         if (registry_register(&e) == 0) {
             ok++;
         } else {
-            LOG_WARN_T("Registry", "BuiltinReg", "Fail", "register %s failed", e.id);
+            /* 逐项失败降为 DEBUG —— 注册表不可用时避免刷屏（先生实测日志噪音） */
+            LOG_DEBUG_T("Registry", "BuiltinReg", "Skip", "register %s skipped", e.id);
         }
     }
-    LOG_INFO_T("Registry", "BuiltinReg", "Done", "registered %d/%d builtin systems", ok, BUILTIN_N);
+    if (ok == BUILTIN_N) {
+        LOG_INFO_T("Registry", "BuiltinReg", "Done", "registered %d/%d builtin systems", ok, BUILTIN_N);
+    } else {
+        LOG_WARN_T("Registry", "BuiltinReg", "Partial",
+                   "builtin systems registered %d/%d (registry 未就绪——不影响系统运行)",
+                   ok, BUILTIN_N);
+    }
     return ok;
 }

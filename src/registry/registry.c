@@ -118,6 +118,14 @@ int registry_init(void) {
         return 0;
     }
 
+    /* 【0.4.4 修复】成功路径此前**未置位 g_initialized** →
+     * 后续所有 registry_register 误报 "registry not initialized"
+     * （先生环境已有 registry/index.json → registry_load 成功 → 必中此 bug）
+     * 现象：启动时 registry_register_builtin_modules 16 个系统全部注册失败。 */
+    pthread_mutex_lock(&g_registry_lock);
+    g_initialized = 1;
+    pthread_mutex_unlock(&g_registry_lock);
+
     LOG_INFO_T("Registry", "Init", "OK", "registry initialized with %d entries", g_entry_count);
     return 0;
 }
