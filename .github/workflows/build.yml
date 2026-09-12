@@ -1,8 +1,11 @@
 name: build-bundle
 
 # LING OS 服务端全捆打包 CI（0.2.1 定稿——先生裁决 H4：CI 出全捆包，解压即用）
-# 矩阵：x86_64 原生 + arm64 qemu 容器（DEPENDENCIES.md 平台定位）
-# 【先生裁决 2026-08-14】发行版本号 0.0.1（独立于内部 LN-B-5.1.2.6-rc）
+# 矩阵：x86_64 原生 + arm64 原生
+#   【0.5.1+ 提速】arm64 改 GitHub 官方原生 ARM64 runner（ubuntu-22.04-arm）
+#   —— 此前用 qemu 模拟：apt/pip/编译全在模拟层 → 25-30 分钟；
+#      原生后与 x86_64 同速 → 约 5-8 分钟（公开仓库免费，保持 glibc 2.35 基线不变）
+# 【先生裁决 2026-08-14】发行版本号独立管理
 # 包名（0.4.3 规范）：LINGOS_server_linux_v<版本>_<架构>_<allbin|sysbin>.tar.gz
 
 on:
@@ -25,20 +28,14 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-22.04
-            qemu: false
+          # 【0.5.1+ 提速】原生 ARM64 runner（公开仓库免费）
           - arch: arm64
-            runner: ubuntu-22.04
-            qemu: true
+            runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 QEMU（arm64 容器模拟）
-        if: matrix.qemu
-        uses: docker/setup-qemu-action@v3
-
       - name: 编译依赖
-        if: ${{ !matrix.qemu }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -48,29 +45,10 @@ jobs:
             python3 python3-venv python3-pip
           sudo apt-get install -y espeak-ng || true
 
-      # 【0.2.1 修复】arm64 必须在 arm64 容器内真正编译（qemu 模拟）
-      # 之前 qemu 只安装未使用——make/bundle 跑在 x86_64 runner 上产出同名 x86_64 包
-      - name: 编译+打包（arm64 容器——qemu 模拟）
-        if: matrix.qemu
-        run: |
-          docker run --rm --platform linux/arm64 \
-            -v "$PWD":/work -w /work \
-            arm64v8/ubuntu:22.04 bash -c "
-              apt-get update -qq && apt-get install -y -qq \
-                gcc make pkg-config \
-                libcurl4-openssl-dev libseccomp-dev libsqlite3-dev \
-                libmosquitto-dev libmicrohttpd-dev libnotcurses-dev \
-                python3 python3-venv python3-pip espeak-ng && \
-              make 2>&1 | tail -10 && \
-              RELEASE_VER=$VERSION bash scripts/bundle.sh dist
-            "
-
       - name: 编译（rpath=$ORIGIN/../lib）
-        if: ${{ !matrix.qemu }}
         run: make 2>&1 | tail -20
 
       - name: 全捆打包（lib/ 全捆 + venv + manifest）
-        if: ${{ !matrix.qemu }}
         run: RELEASE_VER=$VERSION bash scripts/bundle.sh dist
 
       - name: 产物清单
