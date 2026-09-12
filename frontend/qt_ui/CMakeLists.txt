@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-# LING OS Qt6 桌面前端（0.4.3——先生裁决：取代 GTK3 lingos_gui；双形态之一）
+# LING OS Qt6 桌面前端（0.5.1——先生裁决：取代 GTK3 lingos_gui；双形态之一）
 # 依赖: Qt6 Widgets/Network（构建机/目标机需 qt6-base-dev）
 # 用法: mkdir build && cd build && cmake .. && make
-project(lingos_ui VERSION 0.4.3 LANGUAGES CXX)
+project(lingos_ui VERSION 0.5.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
