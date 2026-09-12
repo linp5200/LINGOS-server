@@ -166,6 +166,16 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     <div class="ni" data-p="weather"><span class="ic">☁</span>天气</div>
     <div class="ni" data-p="vision"><span class="ic">◉</span>视觉</div>
     <div class="ni" data-p="ha"><span class="ic">⬡</span>家居 HA</div>
+    <div class="ni" data-p="home"><span class="ic">⌂</span>智能家居</div>
+    <div class="ni" data-p="timeline"><span class="ic">▬</span>时间线</div>
+  </div>
+  <div class="sec">组织</div>
+  <div class="nav">
+    <div class="ni" data-p="notify"><span class="ic">◔</span>通知中心</div>
+    <div class="ni" data-p="dashboard"><span class="ic">▩</span>仪表盘</div>
+    <div class="ni" data-p="media"><span class="ic">♪</span>媒体</div>
+    <div class="ni" data-p="kb"><span class="ic">▣</span>知识库</div>
+    <div class="ni" data-p="options"><span class="ic">⚑</span>可选项</div>
   </div>
   <div class="sec">系统</div>
   <div class="nav">
@@ -177,7 +187,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
   </div>
   <div class="sec">配置</div>
   <div class="nav"><div class="ni" data-p="setting"><span class="ic">⚙</span>设置与高级</div></div>
-  <div class="foot"><div style="display:flex;gap:5px;align-items:center;color:var(--d)"><span style="width:5px;height:5px;border-radius:50%;background:var(--green)"></span>lingosd · alertd · visiond</div>LING OS 0.4.3 · 功能预览 v2</div>
+  <div class="foot"><div style="display:flex;gap:5px;align-items:center;color:var(--d)"><span style="width:5px;height:5px;border-radius:50%;background:var(--green)"></span>lingosd · alertd · visiond</div>LING OS 0.5.1 · 21 页</div>
 </div>
 <div class="main">
 
@@ -414,6 +424,107 @@ LINGOS_server_linux_v0.4.3_aarch64_plugin.tar.gz</pre>三包型齐出，架构�
       <div style="font-family:var(--mono);font-size:8px;color:var(--d)">统一注册中心 · <span id="sysRegSock">/LINGOS/run/registry.sock</span></div>
     </div>
   </div>
+</div>
+
+
+<!-- 智能家居（批次2） -->
+<div class="page" id="p-home">
+  <div class="phead"><div class="l"><div class="k">▍SMART HOME</div><h1>智能家居</h1></div><div class="r" id="homeHead">加载中…</div></div>
+  <div class="grid g4" id="homeStats"></div>
+  <div class="cols" style="margin-top:10px">
+    <div class="card"><div class="ct"><span>场景</span><b id="sceneCount">--</b>
+      <button class="btn" onclick="wfCreateScene()" style="margin-left:8px">＋ 新建</button></div>
+      <div class="evlog" id="sceneList"></div></div>
+    <div class="card"><div class="ct"><span>区域 / 标签</span><b id="areaCount">--</b>
+      <button class="btn" onclick="wfAddArea()" style="margin-left:8px">＋ 区域</button></div>
+      <div class="evlog" id="areaList"></div></div>
+  </div>
+  <div class="cols" style="margin-top:10px">
+    <div class="card"><div class="ct"><span>在家/离家</span><b id="presenceVal">--</b>
+      <button class="btn" onclick="wfPresence('home')" style="margin-left:6px">在家</button>
+      <button class="btn" onclick="wfPresence('away')" style="margin-left:4px">离家</button></div>
+      <div class="evlog" id="zoneList"></div></div>
+    <div class="card"><div class="ct"><span>能源</span><b id="energyVal">--</b></div>
+      <div class="evlog" id="energyList"></div></div>
+  </div>
+  <div class="cols" style="margin-top:10px">
+    <div class="card"><div class="ct"><span>自动化</span><b id="autoCount">--</b>
+      <button class="btn" onclick="wfScanDiscovery()" style="margin-left:8px">↻ 发现设备</button></div>
+      <div class="evlog" id="autoList"></div></div>
+    <div class="card"><div class="ct"><span>发现的设备</span><b id="discCount">--</b></div>
+      <div class="evlog" id="discList"></div></div>
+  </div>
+</div>
+
+<!-- 时间线（批次3） -->
+<div class="page" id="p-timeline">
+  <div class="phead"><div class="l"><div class="k">▍NVR TIMELINE</div><h1>监控时间线</h1></div><div class="r" id="tlHead">加载中…</div></div>
+  <div class="grid g4" id="nvrStats"></div>
+  <div class="card" style="margin-top:10px"><div class="ct"><span>24 小时事件密度</span><b id="tlTotal">--</b></div>
+    <div id="tlBars" style="display:flex;align-items:flex-end;gap:2px;height:64px;margin-top:6px"></div>
+    <div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:4px">每柱 = 1 小时 · 绿=移动 · 蓝=对象</div>
+  </div>
+  <div class="cols" style="margin-top:10px">
+    <div class="card"><div class="ct"><span>事件列表</span><b id="tlCount">--</b></div><div class="evlog" id="tlEvents"></div></div>
+    <div class="card"><div class="ct"><span>存储</span><b id="stPct">--</b>
+      <button class="btn" onclick="wfCleanup()" style="margin-left:8px">清理</button></div>
+      <div class="evlog" id="stInfo"></div></div>
+  </div>
+</div>
+
+<!-- 通知中心（批次5） -->
+<div class="page" id="p-notify">
+  <div class="phead"><div class="l"><div class="k">▍NOTIFICATIONS</div><h1>通知中心</h1></div>
+    <div class="r" id="ntHead">加载中…</div></div>
+  <div style="display:flex;gap:6px;margin-bottom:8px">
+    <button class="btn" onclick="wfMarkAllRead()">全部已读</button>
+    <button class="btn" onclick="wfClearNotify()">清空</button>
+    <button class="btn" onclick="wfDndToggle()">免打扰开关</button>
+  </div>
+  <div class="card"><div class="evlog" id="ntList" style="max-height:520px;overflow:auto"></div></div>
+</div>
+
+<!-- 仪表盘自定义（批次5） -->
+<div class="page" id="p-dashboard">
+  <div class="phead"><div class="l"><div class="k">▍DASHBOARD</div><h1>仪表盘</h1></div><div class="r" id="dbHead">加载中…</div></div>
+  <div class="grid g3" id="dbCards"></div>
+  <div style="margin-top:10px;display:flex;gap:6px">
+    <button class="btn" onclick="wfAddCard()">＋ 添加卡片</button>
+    <button class="btn" onclick="wfResetDash()">重置布局</button>
+  </div>
+</div>
+
+<!-- 媒体（批次5） -->
+<div class="page" id="p-media">
+  <div class="phead"><div class="l"><div class="k">▍MEDIA PLAYER</div><h1>媒体控制</h1></div><div class="r" id="mdHead">加载中…</div></div>
+  <div class="grid g2" id="mdPlayers"></div>
+</div>
+
+<!-- 知识库（批次4） -->
+<div class="page" id="p-kb">
+  <div class="phead"><div class="l"><div class="k">▍KNOWLEDGE BASE</div><h1>知识库</h1></div><div class="r" id="kbHead">加载中…</div></div>
+  <div class="card"><div class="ct"><span>文档</span><b id="kbCount">--</b>
+    <input id="kbPath" placeholder="/path/to/doc" style="margin-left:8px;width:200px;background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--w);font-size:10px;padding:3px 6px;border-radius:3px">
+    <button class="btn" onclick="wfKbUpload()" style="margin-left:4px">上传</button></div>
+    <div class="evlog" id="kbList"></div></div>
+  <div class="card" style="margin-top:10px"><div class="ct"><span>检索测试</span><b>RAG</b>
+    <input id="kbQuery" placeholder="输入问题…" style="margin-left:8px;width:220px;background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--w);font-size:10px;padding:3px 6px;border-radius:3px">
+    <button class="btn" onclick="wfKbAsk()" style="margin-left:4px">提问</button></div>
+    <div class="evlog" id="kbResult"></div></div>
+</div>
+
+<!-- 可选项（0.5.0） -->
+<div class="page" id="p-options">
+  <div class="phead"><div class="l"><div class="k">▍OPTIONS</div><h1>可选项</h1></div>
+    <div class="r" id="opHead">加载中…</div></div>
+  <div class="card" style="margin-bottom:10px">
+    <div class="ct"><span>隐私保护模式</span><b id="privacyState">--</b>
+      <button class="btn" onclick="wfPrivacyMode(true)" style="margin-left:8px">启用（最严）</button>
+      <button class="btn" onclick="wfPrivacyMode(false)" style="margin-left:4px">恢复默认</button></div>
+    <div style="font-family:var(--mono);font-size:9px;color:var(--d);margin-top:5px">
+      一次性开启全部安全增强 + 隐私技术</div>
+  </div>
+  <div class="evlog" id="opList" style="max-height:560px;overflow:auto"></div>
 </div>
 
 <!-- 设置 -->
@@ -680,6 +791,324 @@ async function bindSys(){
   }
 }
 
+
+/* ============================================================
+ * 【0.5.0 批次2~5】新功能页面绑定（先生 2026-09-12）
+ *   智能家居 / 时间线 / 通知中心 / 仪表盘 / 媒体 / 知识库 / 可选项
+ * 原则：无数据一律显示 `--`，**不模拟假数据**
+ * ============================================================ */
+
+/* ---------- 智能家居（批次2） ---------- */
+async function wfCreateScene(){
+  var n = prompt('场景名称：', '新场景'); if(!n) return;
+  await apiCmd('scene_create', {name:n});
+  bindHome();
+}
+async function wfAddArea(){
+  var n = prompt('区域名称：', '客厅'); if(!n) return;
+  await apiCmd('area_add', {name:n});
+  bindHome();
+}
+async function wfPresence(s){ await apiCmd('presence_set', {state:s}); bindHome(); }
+async function wfScanDiscovery(){
+  setTxt('#discCount','扫描中…');
+  await apiCmd('discovery_scan');
+  bindHome();
+}
+async function bindHome(){
+  var ov = await apiCmd('home_overview');
+  var d = (ov && ov.status==='ok') ? (ov.data||{}) : null;
+  if(!d){
+    setTxt('#homeHead','主机未连接<br>显示 -- 不模拟');
+    setTxt('#sceneCount','--'); setTxt('#areaCount','--');
+    setTxt('#presenceVal','--'); setTxt('#energyVal','--');
+    setTxt('#autoCount','--'); setTxt('#discCount','--');
+    document.getElementById('homeStats').innerHTML='<div class="card"><div class="ct">无数据</div></div>';
+    return;
+  }
+  setTxt('#homeHead','实体 <b>'+(d.entities||0)+'</b> · 自动化 <b>'+(d.automations||0)+'</b><br>home_ext');
+  var st=[['场景',d.scenes],['区域',d.areas],['围栏',d.zones],['自动化',d.automations]];
+  var h='';
+  for(var i=0;i<st.length;i++){
+    h+='<div class="card"><div class="ct"><span>'+st[i][0]+'</span><b>'+(st[i][1]==null?'--':st[i][1])+'</b></div></div>';
+  }
+  document.getElementById('homeStats').innerHTML=h;
+  setTxt('#sceneCount', (d.scenes==null?'--':d.scenes+' 个'));
+  setTxt('#areaCount', (d.areas==null?'--':d.areas+' 个'));
+  setTxt('#presenceVal', d.presence||'--');
+  setTxt('#autoCount', (d.automations==null?'--':d.automations+' 条'));
+  setTxt('#discCount', (d.discovered==null?'--':d.discovered+' 台'));
+
+  // 场景列表
+  var sc = await apiCmd('scene_list');
+  var sl = (sc&&sc.status==='ok') ? (sc.data||[]) : [];
+  document.getElementById('sceneList').innerHTML = sl.length
+    ? sl.map(function(x){return '<div class="e"><span class="lv d">SCENE</span><span class="tx"><b>'+x.name+'</b> · '+(x.entities||[]).length+' 实体</span></div>';}).join('')
+    : '<div class="e"><span class="lv">—</span><span class="tx">暂无场景</span></div>';
+
+  // 区域列表
+  var ar = await apiCmd('area_list');
+  var al = (ar&&ar.status==='ok') ? (ar.data||[]) : [];
+  document.getElementById('areaList').innerHTML = al.length
+    ? al.map(function(x){return '<div class="e"><span class="lv d">AREA</span><span class="tx">'+x.name+'</span></div>';}).join('')
+    : '<div class="e"><span class="lv">—</span><span class="tx">暂无区域</span></div>';
+
+  // 围栏
+  var zr = await apiCmd('zone_list');
+  var zl = (zr&&zr.status==='ok') ? (zr.data||[]) : [];
+  document.getElementById('zoneList').innerHTML = zl.length
+    ? zl.map(function(x){return '<div class="e"><span class="lv">ZONE</span><span class="tx">'+x.name+' · '+x.radius+'m · '+(x.inside?'<b>在内</b>':'在外')+'</span></div>';}).join('')
+    : '<div class="e"><span class="lv">—</span><span class="tx">暂无地理围栏</span></div>';
+
+  // 能源
+  var en = await apiCmd('energy_summary', {hours:24});
+  if(en&&en.status==='ok'&&en.data){
+    var e=en.data;
+    setTxt('#energyVal', (e.total_energy_kwh||0)+' kWh');
+    document.getElementById('energyList').innerHTML =
+      '<div class="e"><span class="lv d">24H</span><span class="tx">用电 <b>'+(e.total_energy_kwh||0)+' kWh</b> · 费用 <b>'+(e.total_cost||0)+' '+(e.currency||'')+'</b> · 电价 '+(e.tariff||0)+'</span></div>'+
+      (Object.keys(e.by_entity||{}).length?Object.keys(e.by_entity).map(function(k){return '<div class="e"><span class="lv">'+(k.split('.')[0]||'?')+'</span><span class="tx">'+k+' · '+(e.by_entity[k].energy_kwh||0)+' kWh</span></div>';}).join(''):'');
+  } else {
+    setTxt('#energyVal','--');
+    document.getElementById('energyList').innerHTML='<div class="e"><span class="lv">—</span><span class="tx">暂无能源数据（显示 -- 不模拟）</span></div>';
+  }
+
+  // 自动化
+  var au = await apiCmd('automation_list');
+  var au2 = (au&&au.status==='ok') ? (au.data||[]) : [];
+  document.getElementById('autoList').innerHTML = au2.length
+    ? au2.map(function(x){return '<div class="e"><span class="lv d">'+(x.enabled?'ON':'OFF')+'</span><span class="tx">'+x.name+' · 触发 '+(x.trigger||'-')+' · 运行 '+(x.run_count||0)+' 次</span></div>';}).join('')
+    : '<div class="e"><span class="lv">—</span><span class="tx">暂无自动化</span></div>';
+
+  // 发现
+  var di = await apiCmd('discovery_list');
+  var dl = (di&&di.status==='ok') ? ((di.data||{}).found||[]) : [];
+  document.getElementById('discList').innerHTML = dl.length
+    ? dl.slice(0,20).map(function(x){return '<div class="e"><span class="lv d">'+(x.type||'?')+'</span><span class="tx">'+(x.host||'?')+' · '+(x.service||x.st||'')+'</span></div>';}).join('')
+    : '<div class="e"><span class="lv">—</span><span class="tx">未发现设备（点「发现设备」扫描）</span></div>';
+}
+
+/* ---------- 时间线（批次3） ---------- */
+async function wfCleanup(){
+  if(!confirm('按保留策略清理过期录像？')) return;
+  var r = await apiCmd('storage_cleanup');
+  if(r&&r.status==='ok') alert('已删除 '+(r.data.removed||0)+' 项，释放 '+(r.data.freed_gb||0)+' GB');
+  bindTimeline();
+}
+async function bindTimeline(){
+  var ov = await apiCmd('nvr_overview');
+  var d = (ov&&ov.status==='ok') ? (ov.data||{}) : null;
+  if(!d){
+    setTxt('#tlHead','监控未连接<br>显示 -- 不模拟');
+    document.getElementById('nvrStats').innerHTML='<div class="card"><div class="ct">无数据</div></div>';
+    return;
+  }
+  setTxt('#tlHead','录像 <b>'+(d.recordings||0)+'</b> · 对象 <b>'+(d.object_recordings||0)+'</b><br>nvr_ext');
+  var st=[['摄像头',d.cameras],['重流',d.restreams],['ONVIF',d.onvif_devices],['合成视图',d.composite_views]];
+  document.getElementById('nvrStats').innerHTML = st.map(function(x){
+    return '<div class="card"><div class="ct"><span>'+x[0]+'</span><b>'+(x[1]==null?'--':x[1])+'</b></div></div>';
+  }).join('');
+  setTxt('#tlTotal', (d.timeline_events||0)+' 事件');
+  setTxt('#stPct', (d.storage_used_gb||0)+' / '+(d.storage_limit_gb||0)+' GB');
+  document.getElementById('stInfo').innerHTML =
+    '<div class="e"><span class="lv d">DISK</span><span class="tx">已用 <b>'+(d.storage_used_gb||0)+' GB</b> / 上限 '+(d.storage_limit_gb||0)+' GB</span></div>'+
+    '<div class="e"><span class="lv">MOTION</span><span class="tx">移动侦测 '+(d.motion?'<b>已启用</b>':'已关闭')+'</span></div>';
+
+  // 时间线柱
+  var sg = await apiCmd('timeline_segments', {hours:24});
+  var segs = (sg&&sg.status==='ok') ? ((sg.data||{}).segments||[]) : [];
+  var box = document.getElementById('tlBars');
+  if(!segs.length){
+    box.innerHTML='<div style="font-family:var(--mono);font-size:9px;color:var(--d);padding:10px">暂无事件（显示 -- 不模拟）</div>';
+    setTxt('#tlCount','--');
+    document.getElementById('tlEvents').innerHTML='<div class="e"><span class="lv">—</span><span class="tx">暂无事件</span></div>';
+    return;
+  }
+  var maxv=1; segs.forEach(function(x){maxv=Math.max(maxv,(x.motion||0)+(x.object||0)+(x.other||0));});
+  box.innerHTML = segs.map(function(x){
+    var total=(x.motion||0)+(x.object||0)+(x.other||0);
+    var h=Math.max(2, Math.round(total/maxv*60));
+    var c = (x.object>0)?'#5AB0FF':((x.motion>0)?'var(--green)':'rgba(255,255,255,.25)');
+    var hh=new Date(x.hour*1000).getHours();
+    return '<div title="'+hh+':00 · '+total+' 事件" style="flex:1;height:'+h+'px;background:'+c+';border-radius:1px;min-width:3px"></div>';
+  }).join('');
+
+  // 事件列表
+  var tq = await apiCmd('timeline_query', {hours:24, limit:100});
+  var items = (tq&&tq.status==='ok') ? ((tq.data||{}).items||[]) : [];
+  setTxt('#tlCount', items.length+' 条');
+  document.getElementById('tlEvents').innerHTML = items.length
+    ? items.slice(-40).reverse().map(function(x){
+        var t=new Date((x.ts||0)*1000);
+        var ts=('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+':'+('0'+t.getSeconds()).slice(-2);
+        return '<div class="e"><span class="lv d">'+(x.kind||'?')+'</span><span class="tx">'+ts+' · '+(x.camera||'')+'</span></div>';
+      }).join('')
+    : '<div class="e"><span class="lv">—</span><span class="tx">暂无事件</span></div>';
+}
+
+/* ---------- 通知中心（批次5） ---------- */
+async function wfMarkAllRead(){ await apiCmd('notify_mark_read', {all_items:true}); bindNotify(); }
+async function wfClearNotify(){ if(!confirm('清空全部通知？'))return; await apiCmd('notify_clear'); bindNotify(); }
+async function wfDndToggle(){
+  var r = await apiCmd('notify_list');
+  var cur = (r&&r.status==='ok') ? ((r.data||{}).dnd||false) : false;
+  await apiCmd('notify_dnd', {enabled:!cur});
+  bindNotify();
+}
+async function bindNotify(){
+  var r = await apiCmd('notify_list', {limit:100});
+  if(!(r&&r.status==='ok')){
+    setTxt('#ntHead','通知服务不可达<br>显示 -- 不模拟');
+    document.getElementById('ntList').innerHTML='<div class="e"><span class="lv">—</span><span class="tx">无数据</span></div>';
+    return;
+  }
+  var d=r.data||{};
+  setTxt('#ntHead','共 <b>'+(d.total||0)+'</b> · 未读 <b>'+(d.unread||0)+'</b><br>免打扰 '+(d.dnd?'<b style="color:var(--amber)">开启</b>':'关'));
+  var items=d.items||[];
+  var lvColor={info:'var(--green)',warn:'var(--amber)',error:'#E5484D',critical:'#E5484D'};
+  document.getElementById('ntList').innerHTML = items.length
+    ? items.map(function(x){
+        var t=new Date((x.ts||0)*1000);
+        var ts=('0'+(t.getMonth()+1)).slice(-2)+'-'+('0'+t.getDate()).slice(-2)+' '+('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2);
+        var c=lvColor[x.level]||'var(--g)';
+        return '<div class="e" style="opacity:'+(x.read?'0.5':'1')+'"><span class="lv d" style="color:'+c+'">'+(x.level||'info').toUpperCase()+'</span>'+
+               '<span class="tx"><b>'+x.title+'</b>'+(x.silenced?' <span style="color:var(--d)">（静默）</span>':'')+'<br><span style="color:var(--d)">'+ts+' · '+(x.source||'')+'</span>'+(x.body?'<br>'+x.body:'')+'</span></div>';
+      }).join('')
+    : '<div class="e"><span class="lv">—</span><span class="tx">暂无通知</span></div>';
+}
+
+/* ---------- 仪表盘（批次5） ---------- */
+async function wfAddCard(){
+  var t = prompt('卡片类型（system/alerts/weather/home/notifications/media）：','system');
+  if(!t) return;
+  await apiCmd('dashboard_add_card', {card_type:t, title:t});
+  bindDashboard();
+}
+async function wfResetDash(){ if(!confirm('重置为默认布局？'))return; await apiCmd('dashboard_reset'); bindDashboard(); }
+async function bindDashboard(){
+  var r = await apiCmd('dashboard_get');
+  if(!(r&&r.status==='ok')){
+    setTxt('#dbHead','不可达<br>显示 -- 不模拟');
+    document.getElementById('dbCards').innerHTML='<div class="card">无数据</div>';
+    return;
+  }
+  var d=r.data||{}; var cards=d.cards||[];
+  setTxt('#dbHead','布局 <b>'+(d.profile||'default')+'</b> · '+cards.length+' 卡片<br>可拖拽布局（App 端）');
+  document.getElementById('dbCards').innerHTML = cards.map(function(c){
+    return '<div class="card" style="grid-column:span '+(c.span||1)+'"><div class="ct"><span>'+c.title+'</span><b>'+(c.type||'')+'</b></div>'+
+           '<div style="font-family:var(--mono);font-size:9px;color:var(--d);margin-top:4px">order '+(c.order||0)+' · span '+(c.span||1)+'</div></div>';
+  }).join('');
+}
+
+/* ---------- 媒体（批次5） ---------- */
+async function wfMedia(entity, cmd){
+  await apiCmd('media_command', {entity_id:entity, command:cmd});
+  bindMedia();
+}
+async function bindMedia(){
+  var r = await apiCmd('media_list');
+  var list = (r&&r.status==='ok') ? (r.data||[]) : [];
+  setTxt('#mdHead', list.length+' 个播放器');
+  document.getElementById('mdPlayers').innerHTML = list.length
+    ? list.map(function(p){
+        var e=p.entity_id;
+        return '<div class="card"><div class="ct"><span>'+e+'</span><b>'+(p.state||'idle')+'</b></div>'+
+          '<div style="font-family:var(--mono);font-size:9px;color:var(--d);margin:5px 0">'+
+          (p.media_title?('♪ '+p.media_title+(p.media_artist?' · '+p.media_artist:'')):'（无媒体）')+'</div>'+
+          '<div style="display:flex;gap:5px;margin-top:6px">'+
+          '<button class="btn" onclick="wfMedia(\''+e+'\',\'play\')">▶</button>'+
+          '<button class="btn" onclick="wfMedia(\''+e+'\',\'pause\')">⏸</button>'+
+          '<button class="btn" onclick="wfMedia(\''+e+'\',\'stop\')">⏹</button>'+
+          '<button class="btn" onclick="wfMedia(\''+e+'\',\'volume_down\')">－</button>'+
+          '<button class="btn" onclick="wfMedia(\''+e+'\',\'volume_up\')">＋</button>'+
+          '<span style="font-family:var(--mono);font-size:9px;color:var(--g);align-self:center">'+Math.round((p.volume||0)*100)+'%</span>'+
+          '</div></div>';
+      }).join('')
+    : '<div class="card"><div class="ct">无播放器</div><div style="font-family:var(--mono);font-size:9px;color:var(--d);margin-top:5px">暂无注册的媒体设备（显示 -- 不模拟）</div></div>';
+}
+
+/* ---------- 知识库（批次4） ---------- */
+async function wfKbUpload(){
+  var p = (document.getElementById('kbPath')||{}).value || '';
+  if(!p){ alert('请输入文件路径'); return; }
+  setTxt('#kbCount','上传中…');
+  var r = await apiCmd('kb_upload', {path:p});
+  if(r&&r.status!=='ok') alert('上传失败：'+((r&&r.msg)||''));
+  bindKb();
+}
+async function wfKbAsk(){
+  var q = (document.getElementById('kbQuery')||{}).value || '';
+  if(!q) return;
+  var r = await apiCmd('kb_ask', {query:q});
+  var box=document.getElementById('kbResult');
+  if(r&&r.status==='ok'&&r.data){
+    var hits=r.data.retrieved||[];
+    box.innerHTML = hits.length
+      ? hits.map(function(h,i){return '<div class="e"><span class="lv d">#'+(i+1)+'</span><span class="tx"><b>'+h.doc+'</b> (score '+h.score+')<br>'+h.text.slice(0,160)+'</span></div>';}).join('')
+      : '<div class="e"><span class="lv">—</span><span class="tx">未找到相关内容</span></div>';
+  } else {
+    box.innerHTML='<div class="e"><span class="lv">—</span><span class="tx">检索失败</span></div>';
+  }
+}
+async function bindKb(){
+  var r = await apiCmd('kb_list');
+  if(!(r&&r.status==='ok')){
+    setTxt('#kbHead','不可达<br>显示 -- 不模拟');
+    document.getElementById('kbList').innerHTML='<div class="e"><span class="lv">—</span><span class="tx">无数据</span></div>';
+    return;
+  }
+  var d=r.data||{}; var docs=d.docs||[];
+  setTxt('#kbHead','文档 <b>'+docs.length+'</b> · 分块 <b>'+(d.total_chunks||0)+'</b><br>ai_ext');
+  setTxt('#kbCount', docs.length+' 篇');
+  document.getElementById('kbList').innerHTML = docs.length
+    ? docs.map(function(x){return '<div class="e"><span class="lv d">'+(x.has_vectors?'VEC':'KW')+'</span><span class="tx"><b>'+x.name+'</b> · '+(x.chunks||0)+' 块 · '+(x.chars||0)+' 字符</span></div>';}).join('')
+    : '<div class="e"><span class="lv">—</span><span class="tx">知识库为空（输入路径后点「上传」）</span></div>';
+}
+
+/* ---------- 可选项（0.5.0） ---------- */
+async function wfPrivacyMode(on){
+  if(on && !confirm('启用隐私保护模式将开启全部安全增强项，确定？')) return;
+  var r = await apiCmd('privacy_mode', {enable:!!on});
+  if(r&&r.status==='ok') bindOptions();
+}
+async function wfToggleOption(key, cur, dangerous){
+  if(dangerous && cur && !confirm('这是危险开关，关闭会降低安全性。确定？')) return;
+  var r = await apiCmd('options_set', {key:key, value:!cur, force:true});
+  if(r&&r.status!=='ok') alert('设置失败：'+((r&&r.msg)||''));
+  bindOptions();
+}
+async function bindOptions(){
+  var r = await apiCmd('options_list');
+  if(!(r&&r.status==='ok')){
+    setTxt('#opHead','不可达<br>显示 -- 不模拟');
+    document.getElementById('opList').innerHTML='<div class="e"><span class="lv">—</span><span class="tx">无数据</span></div>';
+    return;
+  }
+  var d = r.data||{};
+  var opts = d.options || (Array.isArray(d)?d:[]);
+  setTxt('#opHead', opts.length+' 项 · 底线不可关<br>options.json');
+  setTxt('#privacyState', d.privacy_mode ? '<b style="color:var(--green)">已启用</b>' : '未启用');
+
+  var GROUP=['安全','隐私','功能','界面','语音','AI','数据','连接'];
+  var KIND=['🔒','🟢','🔵'];
+  var cur=-1, html='';
+  opts.forEach(function(o){
+    if(o.group!==cur){
+      html+='<div class="e" style="background:rgba(255,255,255,.03);margin-top:6px"><span class="lv d">'+(GROUP[o.group]||'?')+'</span><span class="tx"></span></div>';
+      cur=o.group;
+    }
+    var kind=KIND[o.kind]||'';
+    var valTxt = o.value ? '<b style="color:var(--green)">开</b>' : '<span style="color:var(--d)">关</span>';
+    var warn = o.dangerous ? ' <span style="color:#E5484D">⚠危险</span>' : '';
+    var cond = o.needs_condition ? ' <span style="color:var(--amber)">需条件</span>' : '';
+    var click = (o.kind===0) ? '' : ' onclick="wfToggleOption(\''+o.key+'\','+(o.value?1:0)+','+(o.dangerous?1:0)+')" style="cursor:pointer"';
+    html+='<div class="e"'+click+'><span class="lv d">'+kind+'</span><span class="tx">'+o.name_zh+warn+cond+'<br>'+
+          '<span style="color:var(--d);font-size:9px">'+o.key+'</span></span>'+
+          '<span style="margin-left:auto;font-family:var(--mono);font-size:10px">'+valTxt+'</span></div>';
+  });
+  document.getElementById('opList').innerHTML = html || '<div class="e"><span class="lv">—</span><span class="tx">无可选项</span></div>';
+}
+
 /* ===== 总绑定 ===== */
 async function bindData(){
   setTxt('.topbar .lk','<span class="p"></span>连接中…');
@@ -688,6 +1117,8 @@ async function bindData(){
     else setTxt('.topbar .lk','<span class="p" style="background:var(--amber)"></span>OFFLINE');
   }catch(e){ setTxt('.topbar .lk','<span class="p" style="background:var(--amber)"></span>OFFLINE'); }
   bindConsole(); bindSessions(); bindAlert(); bindProviders(); bindSkills(); bindMemory(); bindWeather(); bindVision(); bindLog(); bindFiles(); bindSys();
+  /* 【0.5.0】新功能页 */
+  bindHome(); bindTimeline(); bindNotify(); bindDashboard(); bindMedia(); bindKb(); bindOptions();
 }
 bindData();
 setInterval(bindData, 20000);
