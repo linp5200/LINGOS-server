@@ -4007,6 +4007,20 @@ def handle_client(conn, addr):
         cmd = req.get("cmd")
         logger.info(f"Received cmd: {cmd}")
 
+        # ============================================================
+        # 【0.5.0 先生裁决 · 批次2~5】扩展命令统一分发
+        #   智能家居(8项) / 监控NVR(7项) / AI(4项) / 组织体验(3项) = 22 项缺失功能
+        #   映射表见 ext_dispatch.EXT_MAP（可维护 + 可插件化）
+        # ============================================================
+        try:
+            from ext_dispatch import dispatch_ext
+            if dispatch_ext(cmd, req, _reply, conn):
+                return
+        except ImportError as _ie:
+            logger.debug("ext_dispatch unavailable: %s", _ie)
+        except Exception as _ee:
+            logger.warning("ext dispatch error: %s", _ee)
+
         # ---- 新增：set_log_level 命令 ----
         # 【先生决策】App 命令（WS command → Python 直通）
         if cmd == "system_info":
