@@ -194,7 +194,7 @@ cat > "$DEST/install.sh" <<'EOF'
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET="${1:-/LINGOS}"
-echo "==> LING OS 0.4.3 安装到 $TARGET"
+echo "==> LING OS 安装到 $TARGET"
 [ "$(id -u)" = 0 ] || echo "!! 建议 root 运行（proot 内一般已是）"
 # 1) 创建目录骨架
 mkdir -p "$TARGET"/{bin,lib,run,state,data,log,system/config,share/webui,registry,plugins,models,skills,Ensystem,snapshots,repairs,Dump,backups,cache,AH}
@@ -206,7 +206,10 @@ cp -a "$DIR"/lib/* "$TARGET/lib/" 2>/dev/null || true
 [ -d "$DIR/share/webui" ] && cp -a "$DIR"/share/webui/* "$TARGET/share/webui/" 2>/dev/null || true
 # 3) 放启动脚本
 cp -a "$DIR/start.sh" "$TARGET/start.sh" 2>/dev/null || true
-chmod +x "$TARGET/bin/"* "$TARGET/start.sh" 2>/dev/null || true
+# 【0.4.4】伴随部署脚本（简便启停 + 依赖自检）
+[ -f "$DIR/check_deps.sh" ] && cp -a "$DIR/check_deps.sh" "$TARGET/" 2>/dev/null || true
+[ -f "$DIR/lingos.sh" ]     && cp -a "$DIR/lingos.sh"     "$TARGET/" 2>/dev/null || true
+chmod +x "$TARGET/bin/"* "$TARGET/start.sh" "$TARGET/check_deps.sh" "$TARGET/lingos.sh" 2>/dev/null || true
 # 4) 若目标已是 /LINGOS 且存在老 config/state——保留（沿用）
 if [ -f "$TARGET/system/config/state.json" ]; then
   echo "==> 检测到已有配置 ($TARGET/system/config)——沿用，不覆盖"
@@ -224,6 +227,12 @@ echo "   依赖自检: ./check_deps.sh --install"
 echo "=========================================="
 EOF
 chmod +x "$DEST/install.sh"
+
+# ---------- 6d. 部署脚本（0.4.4——简便启停 + 依赖自检，随全捆包分发） ----------
+[ -f "$ROOT/scripts/check_deps.sh" ] && cp -a "$ROOT/scripts/check_deps.sh" "$DEST/" 2>/dev/null || true
+[ -f "$ROOT/scripts/lingos.sh" ]     && cp -a "$ROOT/scripts/lingos.sh"     "$DEST/" 2>/dev/null || true
+chmod +x "$DEST/check_deps.sh" "$DEST/lingos.sh" 2>/dev/null || true
+echo "==> 部署脚本已装入 (check_deps.sh / lingos.sh)"
 
 # ---------- 6b. Web UI（0.4.3——网页访问 http://host:8080/ui） ----------
 if [ -d "$ROOT/webui" ]; then
