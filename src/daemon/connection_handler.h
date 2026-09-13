@@ -49,7 +49,12 @@ typedef enum {
     MSG_STATUS = 0x0007,
     MSG_HEARTBEAT = 0x0008,
     MSG_HEARTBEAT_ACK = 0x0009,
-    MSG_ERROR = 0x000A
+    MSG_ERROR = 0x000A,
+    /* 【0.6.0 S1】应用层加密密钥交换
+     *   payload = caps(4B BE) + X25519 公钥(32B) + salt(16B)
+     *   双方都用 salt = client_salt || server_salt 派生一致会话密钥；
+     *   本消息自身永远明文（协商完成后所有帧才加密）。 */
+    MSG_KEY_EXCHANGE = 0x000B
 } connection_msg_type_t;
 
 /* ============================================================
@@ -108,6 +113,10 @@ typedef struct connection_session {
      *   非 NULL = X25519 协商完成 → 逐帧 AEAD 加解密 */
     void   *channel;
     uint32_t negotiated_caps;      /* 能力协商结果位（SC_CAP_ENCRYPT / SC_CAP_TLS） */
+    /* 【0.6.0 S1】加密激活标志：协商完成后置 1——此后进出帧全部 AEAD。
+     *   必须与「channel 就绪」分开：密钥交换响应帧本身仍为明文
+     *   （客户端尚未收到服务端公钥，无法解密） */
+    uint8_t enc_active;
     struct connection_session *next;
 } connection_session_t;
 

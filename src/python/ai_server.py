@@ -1128,20 +1128,28 @@ def build_system_prompt(user_name: str, user_country: str, session_id: str = "de
     assistant_text = load_assistant_file(assistant_file)
     assistant_section = f"\n## Assistant Instructions\n{assistant_text}\n" if assistant_text else ""
 
+    # 【0.6.0 §2B】危机模式注入（危机激活时：全权响应提示——直达行动）
+    crisis_section = ""
+    try:
+        from crisis import build_crisis_prompt
+        crisis_section = build_crisis_prompt()
+    except Exception:
+        pass
+
     # 【B5】GUI 模式：注入 App 交互引导
     if gui_mode:
         return "\n\n".join([identity, region_rules, core_rules, sys_rules, thought_rules,
                             skills_desc, memory_guide, interaction,
                             language_instruction, meta_section,
                             personality_section, assistant_section, custom_section,
-                            guide_section,
+                            guide_section, crisis_section,
                             t("## GUI Mode\nYou are in the mobile GUI. Keep replies concise for phone reading. Use gui_ask for questions, gui_notify for notifications, gui_open_url for links.",
                               "## GUI 模式\n您正在移动端 GUI 中运行。回复请简洁、适合手机阅读。需要提问时用 gui_ask，需要通知时用 gui_notify，需要打开链接时用 gui_open_url。")])
     return "\n\n".join([identity, region_rules, core_rules, sys_rules, thought_rules,
                         skills_desc, memory_guide, interaction,
                         language_instruction, meta_section,
                         personality_section, assistant_section, custom_section,
-                        guide_section])
+                        guide_section, crisis_section])
 
 def load_custom_prompt() -> str:
     try:
@@ -1574,6 +1582,28 @@ def load_skill_schemas():
     except Exception as _e:
         logger.debug("plugin skills merge skipped: %s", _e)
 
+    # 【0.6.1】并入 MCP 工具（注册的 MCP 服务器 → AI 工具表——修复「无法被调用」）
+    try:
+        from mcp_client import mcp_tool_schemas
+        _mtools = mcp_tool_schemas()
+        _mnames = {x.get("name") for x in skills if isinstance(x, dict)}
+        _madded = 0
+        for _mt in _mtools:
+            _fn = _mt.get("function", {})
+            if _fn.get("name") and _fn["name"] not in _mnames:
+                skills.append({
+                    "name": _fn["name"],
+                    "description": _fn.get("description", ""),
+                    "parameters": _fn.get("parameters", {"type": "object", "properties": {}}),
+                    "risk": _fn.get("risk", "medium"),
+                    "mcp": True,
+                })
+                _madded += 1
+        if _madded:
+            logger.info(f"Merged MCP tools: +{_madded}")
+    except Exception as _me:
+        logger.debug("mcp tools merge skipped: %s", _me)
+
     skill_schemas = []
     desc_list = []
     # 【0.2.0】分层注入（A+B——先生裁决）：核心高频组全量注入完整描述；
@@ -1999,39 +2029,79 @@ def execute_tool_calls(tool_calls: List[Dict], session_id: str = "default", conn
             # 【0.5.0 S17 先生裁决】技能执行前统一权限闸门
             #   审计：Python 侧此前无权限校验 → 权限系统对 AI 形同虚设
             #   依据 OWASP LLM06 §7「Complete mediation」
+            # 【0.6.0 §2B】危机全权：危机激活时权限检查转为 audit-only（不拦截）
             _perm_denied = None
+            _shadow_mode = False
+            _crisis_on = False
             try:
-                from permission_gateway import check_skill_permission, get_skill_risk
-                _allowed, _reason = check_skill_permission(name, get_skill_risk(name), args)
-                if not _allowed:
-                    logger.warning("skill '%s' blocked: %s", name, _reason)
-                    success = False
-                    output = _reason
-                    _perm_denied = _reason
-            except Exception as _ge:
-                logger.debug("permission gateway skipped: %s", _ge)
-
-            # 执行技能，捕获 ImportError 提供友好提示
-            if _perm_denied is not None:
-                pass   # 权限已拒绝，不再执行
+                from crisis import crisis_active as _crisis_active
+                _crisis_on = _crisis_active()
+            except Exception:
+                pass
+            if _crisis_on:
+                try:
+                    from crisis import crisis_mark_moving
+                    crisis_mark_moving()   # 动手标记——10s 窗口解除
+                except Exception:
+                    pass
+                logger.warning("CRISIS MODE: skill '%s' allowed (audit-only)", name)
             else:
                 try:
-                    success, output = execute_skill(name, json.dumps(args))
-                except ImportError as e:
-                    # 对缺失依赖给出友好提示
-                    if "sentence_transformers" in str(e) or "Pillow" in str(e):
-                        output = t(
-                            f"Missing required module: {str(e)}\n"
-                            f"Please install manually: pip3 install --break-system-packages {name.split('_')[0]}",
-                            f"缺少必需模块：{str(e)}\n"
-                            f"请手动安装：pip3 install --break-system-packages {name.split('_')[0]}"
-                        )
+                    from permission_gateway import check_skill_permission, get_skill_risk, is_shadow_skill
+                    _allowed, _reason = check_skill_permission(name, get_skill_risk(name), args)
+                    if not _allowed:
+                        logger.warning("skill '%s' blocked: %s", name, _reason)
+                        success = False
+                        output = _reason
+                        _perm_denied = _reason
                     else:
-                        output = t(f"Import error: {str(e)}", f"导入错误：{str(e)}")
-                    success = False
-                except Exception as e:
-                    output = t(f"Execution error: {str(e)}", f"执行错误：{str(e)}")
-                    success = False
+                        # 【0.6.0】影子模式（三态）：执行被拦截 → 返回结构正确的空数据
+                        try:
+                            if is_shadow_skill(name, get_skill_risk(name)):
+                                _shadow_mode = True
+                        except Exception:
+                            pass
+                except Exception as _ge:
+                    logger.debug("permission gateway skipped: %s", _ge)
+
+            # 执行技能，捕获 ImportError 提供友好提示
+            if _shadow_mode:
+                # 【0.6.0】影子模式：假成功——不执行真实逻辑、不接触真实数据
+                try:
+                    from permission_gateway import build_shadow_result
+                    success = True
+                    output = build_shadow_result(name, args)
+                except Exception:
+                    success = True
+                    output = json.dumps({"status": "ok", "data": [], "shadow": True}, ensure_ascii=False)
+            elif _perm_denied is not None:
+                pass   # 权限已拒绝，不再执行
+            else:
+                # 【0.6.1】MCP 工具路由（mcp__<server>__<tool> → JSON-RPC 调用）
+                if name.startswith("mcp__"):
+                    try:
+                        from mcp_client import call_mcp_tool
+                        success, output = call_mcp_tool(name, args)
+                    except Exception as e:
+                        success, output = False, t(f"MCP call error: {e}", f"MCP 调用错误：{e}")
+                else:
+                    try:
+                        success, output = execute_skill(name, json.dumps(args))
+                    except ImportError as e:
+                        # 对缺失依赖给出友好提示
+                        if "sentence_transformers" in str(e) or "Pillow" in str(e):
+                            output = t(
+                                f"Missing required module: {str(e)}\n"
+                                f"Please install manually: pip3 install --break-system-packages {name.split('_')[0]}",
+                                f"缺少必需模块：{str(e)}\n"
+                                f"请手动安装：pip3 install --break-system-packages {name.split('_')[0]}"
+                            )
+                        else:
+                            output = t(f"Import error: {str(e)}", f"导入错误：{str(e)}")
+                        success = False
+                    except Exception as e:
+                        output = t(f"Execution error: {str(e)}", f"执行错误：{str(e)}")
+                        success = False
 
         # ============================================================
         # 【0.6.0 修复】GUI 交互链拦截（GUI 链三处全断之一：服务端不转事件）
@@ -3826,6 +3896,49 @@ def cmd_auth_pending() -> dict:
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
+def cmd_crisis_trigger(crisis_type: str = "", source: str = "", detail: str = "") -> dict:
+    """【0.6.0 §2B】手动触发危机（测试/演练/用户手动）——正常危机由告警自动判定触发"""
+    try:
+        from crisis import trigger_crisis, CRISIS_NAMES
+        if crisis_type not in CRISIS_NAMES:
+            return {"status": "error",
+                    "msg": "未知危机类别: %s（可选: %s）" % (crisis_type, ", ".join(CRISIS_NAMES.keys()))}
+        return trigger_crisis(crisis_type, source=source or "manual", detail=detail or "手动触发")
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_crisis_status() -> dict:
+    """【0.6.0 §2B】危机状态查询"""
+    try:
+        from crisis import crisis_get, WINDOW_SECONDS
+        return {"status": "ok", "data": crisis_get(), "window_seconds": WINDOW_SECONDS}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_crisis_resolve(reason: str = "") -> dict:
+    """【0.6.0 §2B】解除危机 → 一切回归常规"""
+    try:
+        from crisis import resolve_crisis
+        return resolve_crisis(reason=reason or "manual")
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_crisis_ack() -> dict:
+    """【0.6.0 §2B】危机告警 ACK 回执（App「我已知情」→ 记录——宁可误报不可漏报）"""
+    try:
+        from crisis import crisis_get, _save_state, _audit
+        st = crisis_get()
+        if st.get("active") and not st.get("acked"):
+            st["acked"] = True
+            st["acked_at"] = int(time.time())
+            _save_state(st)
+            _audit({"event": "ack", "crisis_id": st.get("crisis_id"),
+                    "elapsed_s": int(st["acked_at"]) - int(st.get("started_at", st["acked_at"]))})
+            logger.warning("crisis ACK received: %s", st.get("crisis_id"))
+        return {"status": "ok", "data": st}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
 def cmd_port_list() -> dict:
     """【0.6.0】服务端口清单（真实探测——不再静态假数据）
     读取 ports.json 覆盖 + connect 探测真实监听状态"""
@@ -4203,32 +4316,36 @@ def cmd_mcp_list() -> dict:
     return {"status": "ok", "data": {"servers": servers}}
 
 def cmd_mcp_test(name: str = "") -> dict:
-    """测试连接（HTTP 探测——超时 5s）"""
+    """测试连接（【0.6.1】真实 MCP 握手——initialize + tools/list 发现）"""
     data = _mcp_load()
     if name not in data:
         return {"status": "error", "msg": "MCP 不存在"}
     info = data[name]
     url = info.get("url", "")
     try:
-        import urllib.request
-        headers = {"User-Agent": "LINGOS-MCP/0.1"}
-        if info.get("auth_type") == "bearer" and info.get("auth_token"):
-            headers["Authorization"] = "Bearer " + info["auth_token"]
-        elif info.get("auth_type") == "api_key" and info.get("auth_token"):
-            headers["X-API-Key"] = info["auth_token"]
-        req = urllib.request.Request(url.rstrip("/") + "/", headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as r:
-            info["status"] = "connected" if r.status < 400 else "failed"
-            try:
-                r.read(2048)
-            except Exception:
-                pass
+        from mcp_client import mcp_initialize, mcp_tools_list
+        init = mcp_initialize(url)
+        tools = mcp_tools_list(url)
+        info["status"] = "connected"
+        info["tools"] = [{"name": t.get("name", ""), "description": str(t.get("description", ""))[:160]}
+                         for t in tools if isinstance(t, dict)]
+        info["server_info"] = {
+            "name": (init.get("serverInfo") or {}).get("name", ""),
+            "version": (init.get("serverInfo") or {}).get("version", ""),
+            "protocolVersion": init.get("protocolVersion", ""),
+        }
+        _mcp_save(data)
+        return {"status": "ok", "data": {
+            "name": name, "status": "connected",
+            "tools_count": len(info["tools"]),
+            "tools": info["tools"][:20],
+            "server_info": info["server_info"],
+        }}
     except Exception as e:
         info["status"] = "failed"
+        info["tools"] = []
         _mcp_save(data)
-        return {"status": "error", "msg": "连接失败: " + str(e)[:120]}
-    _mcp_save(data)
-    return {"status": "ok", "data": {"name": name, "status": info["status"]}}
+        return {"status": "error", "msg": "MCP 握手失败: " + str(e)[:160]}
 
 def _session_append_msg(sid: str, role: str, content: str, max_per_session: int = 200, device_id: str = "") -> None:
     if not sid or sid == "default":
@@ -4417,6 +4534,14 @@ def handle_client(conn, addr):
             _reply(conn, "auth_respond", cmd_auth_respond(str(req.get("req_id", "")), str(req.get("decision", "")))); return
         if cmd == "auth_pending":
             _reply(conn, "auth_pending", cmd_auth_pending()); return
+        if cmd == "crisis_trigger":
+            _reply(conn, "crisis_trigger", cmd_crisis_trigger(str(req.get("crisis_type", "")), str(req.get("source", "")), str(req.get("detail", "")))); return
+        if cmd == "crisis_status":
+            _reply(conn, "crisis_status", cmd_crisis_status()); return
+        if cmd == "crisis_resolve":
+            _reply(conn, "crisis_resolve", cmd_crisis_resolve(str(req.get("reason", "")))); return
+        if cmd == "crisis_ack":
+            _reply(conn, "crisis_ack", cmd_crisis_ack()); return
         if cmd == "personality_set":
             _reply(conn, "personality_set", cmd_personality_set(str(req.get("name", "")))); return
         if cmd == "personality_get":
@@ -5057,6 +5182,14 @@ class _VoiceHTTPHandler(BaseHTTPRequestHandler):
                 data = json.loads(self.rfile.read(ln).decode("utf-8"))
                 evt = {"type": "alert_event", "data": data}
                 _broadcast_alert_event(evt)
+                # 【0.6.0 §2B】危机判定（确定性代码判定——命中即触发危机全权响应）
+                try:
+                    from crisis import on_alert_event
+                    c_r = on_alert_event(data if isinstance(data, dict) else {})
+                    if c_r.get("crisis"):
+                        logger.warning("alert event triggered CRISIS: %s", c_r.get("data", {}).get("crisis_id", ""))
+                except Exception as _ce:
+                    logger.debug("crisis detect skipped: %s", _ce)
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b'{"status":"ok"}')

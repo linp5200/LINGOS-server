@@ -169,10 +169,13 @@ int crypto_x25519_shared(uint8_t *shared, const uint8_t *my_secret,
                          const uint8_t *their_public) {
     if (!shared || !my_secret || !their_public) return -1;
     crypto_x25519(shared, my_secret, their_public);
-    /* 弱公钥检查：全零共享密钥 = 攻击者发送低阶点 → 拒绝 */
+    /* 弱公钥检查：全零共享密钥 = 攻击者发送低阶点 → 拒绝
+     * 【0.6.0 关键修复】原判断逻辑颠倒（crypto_verify32 相等返回 0）：
+     *   原 `!= 0 → 拒绝` 实际拒绝**所有正常握手**、放行**全零弱密钥**——
+     *   该代码路径从未被调用过（审计：零调用），测试时才暴露。 */
     uint8_t zero[32];
     memset(zero, 0, sizeof(zero));
-    if (crypto_verify32(shared, zero) != 0) {
+    if (crypto_verify32(shared, zero) == 0) {
         crypto_wipe(shared, 32);
         return -1;
     }

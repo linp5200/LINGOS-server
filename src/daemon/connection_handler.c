@@ -14,6 +14,8 @@
 #include "../lib/cJSON/cJSON.h"
 #include "../drivers/linux_io.h"
 #include "../ai/ai_server_protocol.h"
+#include "../security/secure_channel.h"
+#include "../security/crypto/crypto_core.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -570,6 +572,13 @@ static void destroy_session(connection_session_t *sess) {
     }
     pthread_mutex_unlock(&g_session_lock);
 
+    /* 【0.6.0 S1】销毁加密通道（擦除会话密钥——前向保密收尾） */
+    if (sess->channel) {
+        sc_destroy((secure_channel_t *)sess->channel);
+        sess->channel = NULL;
+        LOG_DEBUG_T("Connection", "DestroySession", "Channel", "secure channel destroyed");
+    }
+
     LOG_INFO_T("Connection", "DestroySession", "OK", "session=%u destroyed", sess->session_id);
     free(sess);
 }
@@ -634,9 +643,30 @@ int connection_send_message(uint32_t session_id, connection_msg_type_t type,
         return -1;
     }
 
+    /* 【0.6.0 S1】加密会话：载荷先 AEAD 加密（密钥交换响应帧除外——它本身是
+     *   协商消息，且 enc_active 在响应之后才置位；防御性双保险） */
+    uint8_t enc_buf[CONNECTION_SEND_BUF_SIZE];
+    const uint8_t *send_payload = payload;
+    uint32_t send_len = payload_len;
+    if (sess->enc_active && sess->channel && type != MSG_KEY_EXCHANGE && payload_len > 0) {
+        if (!payload || payload_len > SC_MAX_PAYLOAD) {
+            LOG_ERROR_T("Connection", "SendMsg", "EncTooLarge", "session=%u len=%u (max %u)",
+                        session_id, payload_len, SC_MAX_PAYLOAD);
+            return -1;
+        }
+        size_t elen = 0;
+        if (sc_encrypt((secure_channel_t *)sess->channel, payload, payload_len,
+                       enc_buf, &elen, sizeof(enc_buf)) != 0) {
+            LOG_ERROR_T("Connection", "SendMsg", "EncryptFail", "session=%u", session_id);
+            return -1;
+        }
+        send_payload = enc_buf;
+        send_len = (uint32_t)elen;
+    }
+
     uint8_t buffer[CONNECTION_SEND_BUF_SIZE];
     uint32_t out_len;
-    if (encode_tlv(type, payload, payload_len, buffer, &out_len) != 0) {
+    if (encode_tlv(type, send_payload, send_len, buffer, &out_len) != 0) {
         LOG_ERROR_T("Connection", "SendMsg", "EncodeFail", "encode_tlv failed");
         return -1;
     }
@@ -686,6 +716,93 @@ static void send_error(connection_session_t *sess, connection_error_t err,
 /* ============================================================
  * 消息处理
  * ============================================================ */
+
+/* 【0.6.0 S1】加密密钥交换（客户端发起）——能力协商 + X25519 握手
+ *   payload 格式（52 字节）：caps(4B BE) + 对端 X25519 公钥(32B) + salt(16B)
+ *   salt 约定：双方均用 salt = client_salt(16) || server_salt(16) → 派生一致密钥
+ *   响应帧明文（客户端此时尚无服务端公钥）；响应发出后才置 enc_active=1 →
+ *   此后所有帧 AEAD 加密。 */
+static void handle_key_exchange(connection_session_t *sess, const uint8_t *payload,
+                                uint32_t payload_len) {
+    LOG_INFO_T("Connection", "KeyExchange", "Enter", "session=%u len=%u", sess->session_id, payload_len);
+
+    if (sess->state != CONN_STATE_ESTABLISHED) {
+        LOG_WARN_T("Connection", "KeyExchange", "NotEstablished", "session=%u in state %d (encryption opt-in: connect first)",
+                   sess->session_id, sess->state);
+        send_error(sess, ERR_AUTH_INVALID, tr("Connect before key exchange", "请先完成连接再交换密钥"));
+        return;
+    }
+    if (payload_len < 52) {
+        LOG_WARN_T("Connection", "KeyExchange", "BadLen", "session=%u len=%u (want 52)", sess->session_id, payload_len);
+        send_error(sess, ERR_AUTH_INVALID, tr("Bad key exchange payload", "密钥交换载荷格式错误"));
+        return;
+    }
+
+    uint32_t peer_caps = ((uint32_t)payload[0] << 24) | ((uint32_t)payload[1] << 16) |
+                         ((uint32_t)payload[2] << 8) | (uint32_t)payload[3];
+    const uint8_t *peer_pub = payload + 4;
+    const uint8_t *client_salt = payload + 36;
+
+    /* 创建通道（首次）——随机源不可用 → 拒绝（S6 不降级） */
+    secure_channel_t *ch = (secure_channel_t *)sess->channel;
+    if (!ch) {
+        ch = sc_create();
+        if (!ch) {
+            LOG_ERROR_T("Connection", "KeyExchange", "NoRandom", "session=%u: secure_channel create failed (random source)",
+                        sess->session_id);
+            send_error(sess, ERR_AUTH_INVALID, tr("Encryption unavailable", "加密不可用（随机源异常）"));
+            return;
+        }
+        sess->channel = ch;
+    }
+
+    /* 服务端 salt（真随机） */
+    uint8_t server_salt[16];
+    if (crypto_random_bytes(server_salt, sizeof(server_salt)) != 0) {
+        LOG_ERROR_T("Connection", "KeyExchange", "SaltFail", "session=%u: random failed", sess->session_id);
+        send_error(sess, ERR_AUTH_INVALID, tr("Encryption unavailable", "加密不可用（随机源异常）"));
+        return;
+    }
+
+    /* 组合 salt（顺序双方一致：client || server） */
+    uint8_t salt[32];
+    memcpy(salt, client_salt, 16);
+    memcpy(salt + 16, server_salt, 16);
+
+    if (sc_handshake(ch, peer_pub, salt, sizeof(salt)) != 0) {
+        LOG_WARN_T("Connection", "KeyExchange", "HandshakeFail", "session=%u: weak pubkey or random failure", sess->session_id);
+        send_error(sess, ERR_AUTH_INVALID, tr("Key exchange failed", "密钥协商失败"));
+        return;
+    }
+
+    /* 【0.6.0】方向字节：服务端发送=2、接收对端（客户端）=1（防 nonce 撞车） */
+    sc_set_direction(ch, 2, 1);
+
+    uint32_t negotiated = sc_negotiate(SC_CAP_ENCRYPT, peer_caps);
+    sess->negotiated_caps = negotiated;
+
+    /* 响应：caps + 服务端公钥 + 服务端 salt（明文帧） */
+    uint8_t resp[52];
+    resp[0] = (uint8_t)(SC_CAP_ENCRYPT >> 24);
+    resp[1] = (uint8_t)(SC_CAP_ENCRYPT >> 16);
+    resp[2] = (uint8_t)(SC_CAP_ENCRYPT >> 8);
+    resp[3] = (uint8_t)(SC_CAP_ENCRYPT);
+    memcpy(resp + 4, sc_local_public(ch), 32);
+    memcpy(resp + 36, server_salt, 16);
+    connection_send_message(sess->session_id, MSG_KEY_EXCHANGE, resp, sizeof(resp));
+
+    /* 协商结果：交集含加密位且通道就绪 → 启用（响应帧之后） */
+    if (sc_should_encrypt(negotiated) && sc_is_ready(ch)) {
+        sess->enc_active = 1;
+        LOG_INFO_T("Connection", "KeyExchange", "OK",
+                   "session=%u: application-layer encryption ACTIVE (X25519+XChaCha20, caps=0x%x)",
+                   sess->session_id, negotiated);
+    } else {
+        LOG_INFO_T("Connection", "KeyExchange", "Plain",
+                   "session=%u: peer caps=0x%x, no common encryption — staying plaintext (honest)",
+                   sess->session_id, peer_caps);
+    }
+}
 
 static void handle_auth_code(connection_session_t *sess, const uint8_t *payload,
                              uint32_t payload_len) {
@@ -1026,6 +1143,28 @@ static void process_message(connection_session_t *sess, const uint8_t *data,
         sess->first_packet = 0;
     }
 
+    /* 【0.6.0 S1】加密会话：除密钥交换外的所有帧先解密（AEAD 认证失败即拒绝）
+     *   空载荷帧（如心跳）直通——无数据可保护 */
+    if (sess->enc_active && sess->channel && type != MSG_KEY_EXCHANGE && payload_len > 0) {
+        uint8_t *plain = malloc((size_t)payload_len + 1);
+        size_t plen = 0;
+        if (!plain ||
+            sc_decrypt((secure_channel_t *)sess->channel, payload, payload_len,
+                       plain, &plen, (size_t)payload_len + 1) != 0) {
+            free(plain);
+            LOG_WARN_T("Connection", "ProcessMsg", "DecryptFail",
+                       "session=%u: AEAD auth failed (tamper/replay?) — frame rejected", sess->session_id);
+            sess->error_count++;
+            if (payload) free(payload);
+            send_error(sess, ERR_AUTH_INVALID, tr("Message authentication failed", "消息认证失败"));
+            return;
+        }
+        if (payload) free(payload);
+        payload = plain;
+        payload_len = (uint32_t)plen;
+        LOG_DEBUG_T("Connection", "ProcessMsg", "Decrypted", "session=%u plain_len=%u", sess->session_id, payload_len);
+    }
+
     switch (type) {
         case MSG_AUTH_CODE:
             handle_auth_code(sess, payload, payload_len);
@@ -1038,6 +1177,9 @@ static void process_message(connection_session_t *sess, const uint8_t *data,
             break;
         case MSG_HEARTBEAT:
             handle_heartbeat(sess);
+            break;
+        case MSG_KEY_EXCHANGE:
+            handle_key_exchange(sess, payload, payload_len);
             break;
         default:
             LOG_WARN_T("Connection", "ProcessMsg", "UnknownType", "type=0x%04X", type);

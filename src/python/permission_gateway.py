@@ -22,6 +22,7 @@
 
 import json
 import logging
+import os
 from typing import Tuple
 
 logger = logging.getLogger("PermGateway")
@@ -80,6 +81,78 @@ def _t(en: str, zh: str) -> str:
         return _sht(en, zh)
     except Exception:
         return zh
+
+
+def _query_permission_mode(perm_name: str):
+    """查询权限的原始模式：'deny' | 'shadow' | 'allow' | None（未知）
+
+    【0.6.0】影子模式支持（三态：deny / shadow / allow）
+      · deny   → 拒绝执行
+      · shadow → 执行被拦截，返回"结构正确但内容为空"的假成功（不报错、不泄露）
+      · allow  → 正常执行
+    """
+    if not perm_name:
+        return "allow"
+    try:
+        _pfile = "/LINGOS/system/config/ai_permissions.json"
+        if os.path.exists(_pfile):
+            with open(_pfile, "r", encoding="utf-8") as f:
+                _store = json.load(f)
+            if isinstance(_store, dict):
+                _mode = _store.get(perm_name)
+                if _mode is None:
+                    _ui = _UI_PERM_MAP.get(perm_name)
+                    if _ui is not None:
+                        _mode = _store.get(_ui)
+                if _mode is not None:
+                    if _mode == "deny":
+                        return "deny"
+                    if _mode == "shadow":
+                        return "shadow"
+                    return "allow"
+                # 未显式配置 → 域默认
+                if perm_name in _DEFAULT_ALLOW_PERMS:
+                    return "allow"
+                return "allow" if _privacy_default(perm_name, _store) == 1 else "deny"
+    except Exception as e:
+        logger.debug("perm mode read failed: %s", e)
+    return None
+
+
+def is_shadow_skill(skill_name: str, risk: str = "low") -> bool:
+    """【0.6.0】该技能是否处于影子模式（执行被拦截→返回空数据）
+
+    影子模式语义（先生定稿）：功能"看起来在工作"但不接触真实数据——
+    隐私保护与演示/审计场景用。判定顺序与 check_skill_permission 一致。
+    """
+    perm = SKILL_PERM_OVERRIDE.get(skill_name)
+    if perm is None:
+        perm = RISK_PERM_MAP.get(risk or "low")
+    if not perm:
+        return False
+    mode = _query_permission_mode(perm)
+    # UI 映射权限（如 location_access → 用户可能只给 location 设了 shadow）
+    if mode != "shadow" and perm in _UI_PERM_MAP:
+        mode2 = _query_permission_mode(_UI_PERM_MAP[perm])
+        if mode2 == "shadow":
+            return True
+    return mode == "shadow"
+
+
+def build_shadow_result(skill_name: str, args: dict = None) -> str:
+    """【0.6.0】构造影子模式的假成功结果（结构正确、内容空）
+
+    与真实结果同构（status/ok 字段齐全）——AI 与 UI 无感知差异，
+    但不接触任何真实数据。
+    """
+    empty = {
+        "status": "ok",
+        "data": [],
+        "count": 0,
+        "shadow": True,
+        "message": _t("Request processed.", "请求已处理。"),
+    }
+    return json.dumps(empty, ensure_ascii=False)
 
 
 def _query_permission(perm_name: str) -> int:

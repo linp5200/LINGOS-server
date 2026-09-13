@@ -25,11 +25,53 @@ HIGH_RISK_KEYWORDS = ["lock", "unlock", "gas", "valve", "power_off", "power_on",
 # 配置读写
 # ============================================================
 
+# =============================================================
+# 【0.6.0 S14】HA 访问令牌静态加密（envelope——设备主密钥）
+#   存储格式：token_enc = "v1:<hex>"；读取时解密回 token
+#   降级：daemon 不可用 → 明文 + token_plain=true（诚实标注）
+# =============================================================
+_TOKEN_ENC_PREFIX = "v1:"
+
+
+def _enc_str(plain: str):
+    if not plain:
+        return None
+    try:
+        from syscall_client import call_syscall
+        ok, res = call_syscall("crypto_encrypt", {"data": plain.encode("utf-8").hex()}, timeout=15)
+        if ok and isinstance(res, str) and res.strip():
+            return _TOKEN_ENC_PREFIX + res.strip()
+    except Exception as e:
+        logger.debug("ha token encrypt failed: %s", e)
+    return None
+
+
+def _dec_str(enc: str):
+    if not enc or not enc.startswith(_TOKEN_ENC_PREFIX):
+        return None
+    try:
+        from syscall_client import call_syscall
+        ok, res = call_syscall("crypto_decrypt", {"data": enc[len(_TOKEN_ENC_PREFIX):]}, timeout=15)
+        if ok and isinstance(res, str) and res.strip():
+            return bytes.fromhex(res.strip()).decode("utf-8")
+    except Exception as e:
+        logger.debug("ha token decrypt failed: %s", e)
+    return None
+
+
 def ha_load_config() -> dict:
     try:
         if os.path.exists(HA_CONFIG_PATH):
             with open(HA_CONFIG_PATH) as f:
-                return json.load(f)
+                cfg = json.load(f)
+            # S14：token_enc 优先解密（无明文 token 字段时）
+            if isinstance(cfg, dict) and not cfg.get("token") and cfg.get("token_enc"):
+                dec = _dec_str(str(cfg.get("token_enc", "")))
+                if dec:
+                    cfg["token"] = dec
+                else:
+                    logger.warning("ha_load_config: cannot decrypt token_enc (daemon down or key rotated)")
+            return cfg
     except Exception:
         pass
     return {}
@@ -37,8 +79,23 @@ def ha_load_config() -> dict:
 def ha_save_config(cfg: dict) -> None:
     try:
         os.makedirs(os.path.dirname(HA_CONFIG_PATH), exist_ok=True)
+        out = dict(cfg or {})
+        # S14：token 加密存储
+        tok = out.get("token", "")
+        if tok:
+            enc = _enc_str(tok)
+            if enc:
+                out["token"] = ""
+                out["token_enc"] = enc
+                out["token_plain"] = False
+            else:
+                out["token_plain"] = True
         with open(HA_CONFIG_PATH, "w") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            json.dump(out, f, ensure_ascii=False, indent=2)
+        try:
+            os.chmod(HA_CONFIG_PATH, 0o600)
+        except Exception:
+            pass
     except Exception as e:
         logger.error("ha_save_config: %s", e)
 

@@ -93,7 +93,7 @@ MINIMAL_LDFLAGS = $(BASE_LDFLAGS) $(if $(filter 1,$(ENABLE_SYSTEM_MHD)),-lmicroh
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-VERSION = "LN-0.6.0"
+VERSION = "LN-0.6.1"
 CFLAGS += -DLINGOS_VERSION="\"$(VERSION)\""
 
 SRC_DIR = src

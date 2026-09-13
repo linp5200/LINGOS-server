@@ -78,6 +78,15 @@ int sc_handshake(secure_channel_t *ch, const uint8_t *peer_public,
 sc_state_t sc_state(const secure_channel_t *ch);
 int sc_is_ready(const secure_channel_t *ch);
 
+/**
+ * @brief 【0.6.0】设置方向字节（防双向 nonce 撞车 → 密钥流复用）
+ *   约定：客户端发送方向 = 1；服务端发送方向 = 2。
+ *   @param send_dir 本端发送帧使用的方向值
+ *   @param recv_dir 对端发送帧（本端接收）使用的方向值
+ *   未调用时默认 0/0（旧行为——保留兼容）
+ */
+void sc_set_direction(secure_channel_t *ch, uint32_t send_dir, uint32_t recv_dir);
+
 /* ============================================================
  * 加解密（逐帧，含序列号防重放）
  * ============================================================ */

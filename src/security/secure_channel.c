@@ -32,6 +32,13 @@ struct secure_channel {
 
     uint32_t negotiated;
 
+    /* 【0.6.0 修复】方向字节（防双向 nonce 撞车 → 密钥流复用）：
+     *   约定：客户端发送方向 = 1；服务端发送方向 = 2。
+     *   encrypt 使用本端 send_dir；decrypt 使用对端 send_dir（= 本端 recv_dir）。
+     *   默认值 0/0 = 旧行为（未设置方向的旧场景——保留兼容）。 */
+    uint32_t send_dir;
+    uint32_t recv_dir;
+
     sc_stats_t stats;
 };
 
@@ -63,6 +70,13 @@ void sc_destroy(secure_channel_t *ch) {
     crypto_wipe(ch->local_secret, sizeof(ch->local_secret));
     crypto_wipe(ch->session_key, sizeof(ch->session_key));
     free(ch);
+}
+
+void sc_set_direction(secure_channel_t *ch, uint32_t send_dir, uint32_t recv_dir) {
+    if (!ch) return;
+    ch->send_dir = send_dir;
+    ch->recv_dir = recv_dir;
+    LOG_INFO_T("SecureChannel", "SetDirection", "OK", "send_dir=%u recv_dir=%u", send_dir, recv_dir);
 }
 
 const uint8_t *sc_local_public(const secure_channel_t *ch) {
@@ -132,7 +146,8 @@ int sc_encrypt(secure_channel_t *ch, const uint8_t *in, size_t in_len,
     if (out_cap < in_len + SC_TAG_SIZE) return -1;
 
     uint8_t nonce[SC_NONCE_SIZE];
-    build_nonce(nonce, 0, ch->send_seq);
+    /* 【0.6.0】方向字节：加密用 send_dir；解密用 recv_dir（= 对端 send_dir） */
+    build_nonce(nonce, ch->send_dir, ch->send_seq);
 
     /* 密文 = payload || tag */
     uint8_t tag[SC_TAG_SIZE];
@@ -167,7 +182,7 @@ int sc_decrypt(secure_channel_t *ch, const uint8_t *in, size_t in_len,
     uint64_t seq = ch->recv_seq_init ? (ch->recv_seq + 1) : 0;
 
     uint8_t nonce[SC_NONCE_SIZE];
-    build_nonce(nonce, 0, seq);
+    build_nonce(nonce, ch->recv_dir, seq);
 
     if (crypto_aead_decrypt(out, in, ct_len, ch->session_key, nonce, tag) != 0) {
         ch->stats.auth_failures++;

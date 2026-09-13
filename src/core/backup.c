@@ -13,6 +13,8 @@
 #include "safe_string.h"
 #include "lang.h"
 #include "uart.h"
+#include "envelope.h"
+#include "crypto_core.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,6 +141,15 @@ int backup_system(char *backup_path, size_t path_len, int is_manual) {
     safe_cp(reg_src, backup_path);
     safe_cp(sec_src, sec_dst);
 
+    /* 【0.6.0 S15】敏感文件加密（provider.json / ha_config / passwd / device.key）
+     *   + 移除备份中的 backup.key（密钥不入备份——备份泄露时仍受保护） */
+    backup_encrypt_sensitive(backup_path);
+    {
+        char bkex[640];
+        safe_snprintf(bkex, sizeof(bkex), "%s/Ensystem/backup.key", backup_path);
+        unlink(bkex);
+    }
+
     LOG_INFO_T("Backup", "BackupSystem", "OK", "backup created at %s", backup_path);
     return 0;
 }
@@ -149,8 +160,123 @@ int restore_backup(const char *backup_path) {
     const char *root = lingos_data_root();
     safe_rm_rf((char*)root);
     safe_cp(backup_path, root);
+    /* 【0.6.0 S15】还原敏感文件（*.enc → 明文——用本机 backup.key 解密） */
+    backup_decrypt_sensitive(root);
     LOG_INFO_T("Backup", "Restore", "OK", "restored from %s", backup_path);
     return 0;
+}
+
+/* ============================================================
+ * 【0.6.0 S15】备份敏感文件加密 / 还原（envelope + backup.key）
+ *
+ * 设计：
+ *   · 密钥 = /LINGOS/Ensystem/backup.key（独立随机密钥——与 device.key 分离）
+ *   · 备份内**不含** backup.key（备份泄露时敏感文件仍受保护）
+ *   · 敏感文件清单（备份目录内相对路径）：
+ *       system/config/provider.json  （API Keys——S5 已加密，此层再加）
+ *       system/config/ha_config.json （HA 访问令牌）
+ *       Ensystem/passwd              （root 凭据）
+ *       Ensystem/device.key          （设备主密钥）
+ *   · 处理：<file> → <file>.enc（envelope XChaCha20-Poly1305），删除明文
+ *   · 还原：restore 后 <file>.enc → <file>（需本机 backup.key）
+ *   · 灾难恢复提示：整机重装场景，用户需离线保存 backup.key；
+ *     无 key 时敏感文件保留 .enc（不丢失，待提供 key 再解）
+ * ============================================================ */
+
+static const char *SENSITIVE_FILES[] = {
+    "system/config/provider.json",
+    "system/config/ha_config.json",
+    "Ensystem/passwd",
+    "Ensystem/device.key",
+    NULL
+};
+
+static int backup_get_passphrase(char *out, size_t out_len) {
+    const char *root = lingos_data_root();
+    char kpath[512];
+    safe_snprintf(kpath, sizeof(kpath), "%s/Ensystem/backup.key", root);
+
+    FILE *kf = fopen(kpath, "r");
+    if (kf) {
+        if (!fgets(out, (int)out_len, kf)) out[0] = '\0';
+        fclose(kf);
+        size_t pl = strlen(out);
+        while (pl > 0 && (out[pl-1] == '\n' || out[pl-1] == '\r')) out[--pl] = '\0';
+        if (pl >= 16) return 0;
+    }
+    /* 首次：生成 32 字节真随机（失败即拒绝——S6 不降级） */
+    uint8_t raw[32];
+    if (crypto_random_bytes(raw, sizeof(raw)) != 0) return -1;
+    char hexk[80];
+    for (int i = 0; i < 32; i++) sprintf(hexk + i*2, "%02x", raw[i]);
+    hexk[64] = '\0';
+    char edir[512];
+    safe_snprintf(edir, sizeof(edir), "%s/Ensystem", root);
+    mkdir(edir, 0700);
+    FILE *kfw = fopen(kpath, "w");
+    if (!kfw) return -1;
+    fprintf(kfw, "%s\n", hexk);
+    fclose(kfw);
+    chmod(kpath, 0600);
+    safe_strncpy(out, hexk, out_len);
+    LOG_INFO_T("Backup", "Passphrase", "Gen", "backup.key generated (%s)", kpath);
+    return 0;
+}
+
+int backup_encrypt_sensitive(const char *backup_path) {
+    LOG_INFO_T("Backup", "EncSensitive", "Enter", "backup='%s'", backup_path ? backup_path : "(null)");
+    if (!backup_path || !backup_path[0]) return -1;
+
+    char pass[80];
+    if (backup_get_passphrase(pass, sizeof(pass)) != 0) {
+        LOG_WARN_T("Backup", "EncSensitive", "NoKey", "cannot obtain backup key — sensitive files left plaintext");
+        return -1;
+    }
+
+    int done = 0;
+    for (int i = 0; SENSITIVE_FILES[i]; i++) {
+        char src[640], dst[680];
+        safe_snprintf(src, sizeof(src), "%s/%s", backup_path, SENSITIVE_FILES[i]);
+        if (access(src, F_OK) != 0) continue;
+        safe_snprintf(dst, sizeof(dst), "%s.enc", src);
+        if (envelope_encrypt_file(src, dst, pass) == 0) {
+            unlink(src);
+            chmod(dst, 0600);
+            done++;
+            LOG_DEBUG_T("Backup", "EncSensitive", "OK", "encrypted %s", SENSITIVE_FILES[i]);
+        } else {
+            LOG_WARN_T("Backup", "EncSensitive", "Fail", "cannot encrypt %s", SENSITIVE_FILES[i]);
+        }
+    }
+    LOG_INFO_T("Backup", "EncSensitive", "Done", "%d sensitive files encrypted in backup", done);
+    return done;
+}
+
+int backup_decrypt_sensitive(const char *backup_root) {
+    LOG_INFO_T("Backup", "DecSensitive", "Enter", "root='%s'", backup_root ? backup_root : "(null)");
+    if (!backup_root || !backup_root[0]) return -1;
+
+    char pass[80];
+    if (backup_get_passphrase(pass, sizeof(pass)) != 0) return -1;
+
+    int done = 0;
+    for (int i = 0; SENSITIVE_FILES[i]; i++) {
+        char enc[680], plain[640];
+        safe_snprintf(enc, sizeof(enc), "%s/%s.enc", backup_root, SENSITIVE_FILES[i]);
+        if (access(enc, F_OK) != 0) continue;
+        safe_snprintf(plain, sizeof(plain), "%s/%s", backup_root, SENSITIVE_FILES[i]);
+        if (envelope_decrypt_file(enc, plain, pass) == 0) {
+            unlink(enc);
+            chmod(plain, 0600);
+            done++;
+            LOG_DEBUG_T("Backup", "DecSensitive", "OK", "restored %s", SENSITIVE_FILES[i]);
+        } else {
+            LOG_WARN_T("Backup", "DecSensitive", "Fail",
+                       "cannot decrypt %s (backup.key mismatch? file kept as .enc)", SENSITIVE_FILES[i]);
+        }
+    }
+    LOG_INFO_T("Backup", "DecSensitive", "Done", "%d sensitive files restored", done);
+    return done;
 }
 
 int cleanup_backups(void) {

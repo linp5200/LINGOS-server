@@ -5,6 +5,49 @@
 
 ---
 
+## [0.6.1] - 2026-09-13（S1 应用层加密落地 + §2B 危机全权响应 + 影子模式）
+
+### 新增（Features）
+- **S1 应用层加密（TCP 通道真实落地）**——审计后的「零调用」代码本次真正接线：
+  - `connection_handler.c`：新增 MSG_KEY_EXCHANGE(0x0B) 密钥交换（caps + X25519 公钥 + salt）；
+    加密会话逐帧 AEAD（发送端加密/接收端解密/失败拒绝）；会话销毁挂 sc_destroy
+  - `secure_channel.c`：修复**方向字节缺失**（双向 nonce 撞车风险）——新增 `sc_set_direction`
+    （客户端发送=1/服务端发送=2）
+  - `crypto_core.c`：修复**弱公钥检查逻辑颠倒**（crypto_verify32 语义误用——原实现拒绝
+    所有正常握手、放行全零弱密钥；该路径从未被调用，测试时才暴露）
+  - **端到端实测通过**（TCP 2937 全链：认证→密钥交换→加密心跳→加密 ACK→明文拒绝）
+  - 新增测试：`tests/test_secure_channel.c`（9 项）、`tests/test_e2e_encrypt.c`（12 项）
+  - KDF 交叉验证：与 Python hashlib 标准一致（7 组）+ 与 C 实现一致（2 向量）
+- **§2B 危机全权响应（代码级落地）**：
+  - 新增 `crisis.py`：危机判定（确定性——fire/pollution/earthquake/intrusion/gas/water/sos）
+    + 类别动作表（火灾开门/污染关门/地震开门/燃气开窗…——可编辑 crisis_actions.json）
+    + 10 秒决策启动窗口（动手即解除）+ 全程审计（crisis_audit.jsonl）+ 人身安全让路铁律
+  - `ai_server.py`：告警端点自动危机判定；危机期权限检查转 audit-only（全权）；
+    工具动手标记；系统提示词注入危机段；crisis_trigger/status/resolve/ack 命令
+- **影子模式（权限三态）**：`permission_gateway.py` deny/shadow/allow 三态；
+  影子模式返回结构正确的空数据（不报错不泄露）；`ai_server` 接入拦截
+- **S5 API Key 加密**：`llm_unified.py` provider.json 的 api_key 经 envelope 加密存储
+  （api_key_enc "v1:<hex>"）；读取时解密；daemon 不可用时明文+诚实标注（key_plain）
+- **S14 HA 令牌加密**：`ha_integration.py` ha_config.json 的 token 加密存储（同 envelope）
+- **S15 备份加密**：`backup.c` 备份时敏感文件（provider/ha_config/passwd/device.key）envelope
+  加密为 .enc；还原时解密；backup.key 不入备份（泄露仍受保护）
+- **crypto_encrypt / crypto_decrypt / notify / permission_list 新 syscall**
+  （前者错误致）修复路径：缺 `os` 导入、S5/S14 往返实测通过
+- **MCP 工具接线**（修复「注册的服务器无法被 AI 调用」）：
+  - 新增 `mcp_client.py`：JSON-RPC over HTTP（initialize → tools/list → tools/call）
+  - `ai_server`：MCP 工具并入 AI 工具表（命名 `mcp__<server>__<tool>`）+
+    执行路由；`mcp_test` 升级为真实握手（工具发现）
+  - Mock 测试全链通过（initialize/发现/调用——含中文）
+- **WebUI 控制台真实化**：TOKEN 趋势接线（真实 6h 聚合折线）/ SYSTEM EVENTS
+  接线通知中心 / ALERT 卡接线预警列表（清除全部静态假数据）
+
+### 验证
+- S1 E2E：TCP 全链 12 项全过（含「明文帧被拒」AEAD 防线）
+- S5/S14 加解密往返：UTF-8（含日文/emoji）实测一致
+- 全部改动文件语法检查通过；C 端仅增量编译所需目标（lingosd 80s）
+
+---
+
 ## [0.6.0] - 2026-09-13（功能批次：技能链/GUI链/审批链/权限链全修 + 三内核守护全量打包）
 
 ### 修复（Fixes）——四座大山（深挖 P0 核心）

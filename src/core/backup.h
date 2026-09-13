@@ -13,6 +13,10 @@ int restore_backup(const char *backup_path);
 /* 清理过期备份（按策略） */
 int cleanup_backups(void);
 
+/* 【0.6.0 S15】备份敏感文件加密 / 还原（envelope + backup.key） */
+int backup_encrypt_sensitive(const char *backup_path);
+int backup_decrypt_sensitive(const char *backup_root);
+
 /* 云端同步（占位） */
 int sync_to_cloud(const char *backup_path);
 

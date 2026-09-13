@@ -78,14 +78,66 @@ _providers: List[LLMProvider] = []
 _active_provider_id: str = ""
 
 
+# =============================================================
+# 【0.6.0 S5】API Key 静态加密（envelope——设备主密钥）
+#   加解密走 daemon syscall（crypto_encrypt/crypto_decrypt，C 端 envelope.c）
+#   存储格式：api_key_enc = "v1:<hex>"；读取时解密回 api_key
+#   降级：daemon 不可用 → 保留明文（api_key）并标记 key_plain=true（诚实标注）
+# =============================================================
+_KEY_ENC_PREFIX = "v1:"
+
+
+def _encrypt_api_key(plain: str):
+    """加密 API Key → 'v1:<hex>'；失败返回 None（调用方降级明文）
+    注：call_syscall 已解包 data 字段 → res 直接为 hex 密文串"""
+    if not plain:
+        return None
+    try:
+        from syscall_client import call_syscall
+        hx = plain.encode("utf-8").hex()
+        ok, res = call_syscall("crypto_encrypt", {"data": hx}, timeout=15)
+        if not ok or not isinstance(res, str) or not res.strip():
+            return None
+        return _KEY_ENC_PREFIX + res.strip()
+    except Exception as e:
+        logger.debug("api key encrypt failed: %s", e)
+    return None
+
+
+def _decrypt_api_key(enc: str):
+    """解密 'v1:<hex>' → 明文；失败返回 None
+    注：call_syscall 已解包 data 字段 → res 直接为 hex 明文串"""
+    if not enc or not enc.startswith(_KEY_ENC_PREFIX):
+        return None
+    try:
+        from syscall_client import call_syscall
+        ok, res = call_syscall("crypto_decrypt", {"data": enc[len(_KEY_ENC_PREFIX):]}, timeout=15)
+        if not ok or not isinstance(res, str) or not res.strip():
+            return None
+        return bytes.fromhex(res.strip()).decode("utf-8")
+    except Exception as e:
+        logger.debug("api key decrypt failed: %s", e)
+    return None
+
+
 def load_providers() -> List[LLMProvider]:
-    """加载 provider.json（失败返回空列表——由 ai_server 用旧 deepseek/ollama 配置兜底）"""
+    """加载 provider.json（失败返回空列表——由 ai_server 用旧 deepseek/ollama 配置兜底）
+    【0.6.0 S5】api_key_enc 优先解密；解密失败/未加密 → 明文兼容"""
     global _providers, _active_provider_id
     try:
         if os.path.exists(PROVIDER_FILE):
             with open(PROVIDER_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             plist = data.get("providers", []) if isinstance(data, dict) else []
+            # S5：解密加密存储的 key（写回 dict 后构造 provider）
+            for p in plist:
+                if isinstance(p, dict) and not p.get("api_key") and p.get("api_key_enc"):
+                    dec = _decrypt_api_key(str(p.get("api_key_enc", "")))
+                    if dec:
+                        p["api_key"] = dec
+                    else:
+                        logger.warning("llm_unified: cannot decrypt api_key_enc for provider '%s' "
+                                       "(daemon down or key rotated)", p.get("id", "?"))
             _providers = [LLMProvider(p) for p in plist
                           if isinstance(p, dict) and p.get("model") and p.get("base_url")]
             _active_provider_id = data.get("active", "") if isinstance(data, dict) else ""
@@ -102,16 +154,38 @@ def load_providers() -> List[LLMProvider]:
 
 
 def save_providers(providers: List[LLMProvider], active_id: str = "") -> bool:
-    """持久化 provider.json（App ai_config_set / model_switch 写入）"""
+    """持久化 provider.json（App ai_config_set / model_switch 写入）
+    【0.6.0 S5】api_key 加密存储（api_key_enc）；加密不可用 → 明文+标注降级"""
     global _providers, _active_provider_id
     _providers = providers
     _active_provider_id = active_id
     try:
         os.makedirs(os.path.dirname(PROVIDER_FILE), exist_ok=True)
+        out_list = []
+        for p in providers:
+            d = p.to_dict()
+            plain = d.get("api_key", "")
+            if plain:
+                enc = _encrypt_api_key(plain)
+                if enc:
+                    d["api_key"] = ""            # 明文不落盘（S5）
+                    d["api_key_enc"] = enc
+                    d["key_plain"] = False
+                else:
+                    d["key_plain"] = True        # 诚实标注：加密不可用时明文存储
+            out_list.append(d)
         with open(PROVIDER_FILE, "w", encoding="utf-8") as f:
-            json.dump({"providers": [p.to_dict() for p in providers], "active": active_id},
+            json.dump({"providers": out_list, "active": active_id},
                       f, ensure_ascii=False, indent=2)
-        logger.info("llm_unified: saved %d providers, active=%s", len(providers), active_id or "(none)")
+        # 权限收紧（仅属主可读）
+        try:
+            os.chmod(PROVIDER_FILE, 0o600)
+        except Exception:
+            pass
+        logger.info("llm_unified: saved %d providers (keys %s), active=%s",
+                    len(providers),
+                    "encrypted" if any(d.get("api_key_enc") for d in out_list) else "plain",
+                    active_id or "(none)")
         return True
     except Exception as e:
         logger.error("save_providers failed: %s", e)

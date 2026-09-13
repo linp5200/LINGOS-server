@@ -12,6 +12,8 @@
 #include "safe_string.h"
 #include "safe_exec.h"
 #include "permission_check.h"
+#include "envelope.h"
+#include "crypto_core.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1259,6 +1261,124 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
         }
         cJSON_AddStringToObject(result, "status", "ok");
         cJSON_AddItemToObject(result, "current", pcurrent);
+    }
+
+    else if (strcmp(operation, "crypto_encrypt") == 0 || strcmp(operation, "crypto_decrypt") == 0) {
+        /* 【0.6.0 S5/S14/S15】信封加密 syscall（设备主密钥 = /LINGOS/Ensystem/device.key）
+         *   输入 data 字段 = hex 字符串；输出 data 字段 = hex 字符串。
+         *   底座：envelope.c（XChaCha20-Poly1305 + 20000 轮 KDF——先生 0.5.0 安全底座）
+         *   用途：S5 API Key 静态加密 / S14 敏感数据分级加密 / S15 备份加密 */
+        int is_enc = (strcmp(operation, "crypto_encrypt") == 0);
+        cJSON *d_item = cJSON_GetObjectItem(args, "data");
+        const char *d_hex = (d_item && cJSON_IsString(d_item)) ? d_item->valuestring : NULL;
+        if (!d_hex) {
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "missing_data");
+            cJSON_AddStringToObject(result, "message", "missing 'data' (hex string)");
+            ret = -1;
+        } else {
+            /* ---- 设备主密钥（读取或生成；唯一来源 /Ensystem/device.key） ---- */
+            const char *croot = lingos_data_root();
+            char kpath[512];
+            safe_snprintf(kpath, sizeof(kpath), "%s/Ensystem/device.key", croot);
+            char passphrase[80] = {0};
+            FILE *kf = fopen(kpath, "r");
+            if (kf) {
+                if (!fgets(passphrase, sizeof(passphrase), kf)) passphrase[0] = '\0';
+                fclose(kf);
+                size_t pl = strlen(passphrase);
+                while (pl > 0 && (passphrase[pl-1] == '\n' || passphrase[pl-1] == '\r')) passphrase[--pl] = '\0';
+            }
+            if (strlen(passphrase) < 16) {
+                /* 首次：生成 32 字节真随机 → hex 口令（失败即拒绝——S6 随机源不降级） */
+                uint8_t raw[32];
+                if (crypto_random_bytes(raw, sizeof(raw)) != 0) {
+                    cJSON_AddStringToObject(result, "status", "error");
+                    cJSON_AddStringToObject(result, "error_type", "random_failed");
+                    cJSON_AddStringToObject(result, "message", "random source failed (no fallback)");
+                    ret = -1;
+                } else {
+                    char hexk[80];
+                    for (int i = 0; i < 32; i++) sprintf(hexk + i*2, "%02x", raw[i]);
+                    hexk[64] = '\0';
+                    char kdir[512];
+                    safe_snprintf(kdir, sizeof(kdir), "%s/Ensystem", croot);
+                    mkdir(kdir, 0700);
+                    FILE *kfw = fopen(kpath, "w");
+                    if (kfw) {
+                        fprintf(kfw, "%s\n", hexk);
+                        fclose(kfw);
+                        chmod(kpath, 0600);
+                        safe_strncpy(passphrase, hexk, sizeof(passphrase));
+                        LOG_INFO_T("Syscall", "Crypto", "KeyGen", "device key generated (%s)", kpath);
+                    } else {
+                        cJSON_AddStringToObject(result, "status", "error");
+                        cJSON_AddStringToObject(result, "error_type", "key_write_failed");
+                        cJSON_AddStringToObject(result, "message", "cannot write device key");
+                        ret = -1;
+                    }
+                }
+            }
+
+            if (ret == 0) {
+                /* ---- hex 解码输入 ---- */
+                size_t hlen = strlen(d_hex);
+                if (hlen % 2 != 0 || hlen > 262144) {
+                    cJSON_AddStringToObject(result, "status", "error");
+                    cJSON_AddStringToObject(result, "error_type", "bad_hex");
+                    cJSON_AddStringToObject(result, "message", "data must be even-length hex (<=128KB)");
+                    ret = -1;
+                } else {
+                    size_t blen = hlen / 2;
+                    uint8_t *bin = malloc(blen ? blen : 1);
+                    int hex_ok = (bin != NULL);
+                    if (hex_ok) {
+                        for (size_t i = 0; i < blen; i++) {
+                            unsigned int v;
+                            if (sscanf(d_hex + i*2, "%2x", &v) != 1) { hex_ok = 0; break; }
+                            bin[i] = (uint8_t)v;
+                        }
+                    }
+                    if (!hex_ok) {
+                        free(bin);
+                        cJSON_AddStringToObject(result, "status", "error");
+                        cJSON_AddStringToObject(result, "error_type", "bad_hex");
+                        cJSON_AddStringToObject(result, "message", "invalid hex characters");
+                        ret = -1;
+                    } else {
+                        uint8_t *outbuf = NULL;
+                        size_t outlen = 0;
+                        int crc = is_enc
+                            ? envelope_encrypt_buffer(bin, blen, passphrase, &outbuf, &outlen)
+                            : envelope_decrypt_buffer(bin, blen, passphrase, &outbuf, &outlen);
+                        free(bin);
+                        if (crc != 0 || !outbuf) {
+                            free(outbuf);
+                            cJSON_AddStringToObject(result, "status", "error");
+                            cJSON_AddStringToObject(result, "error_type", is_enc ? "encrypt_failed" : "decrypt_failed");
+                            cJSON_AddStringToObject(result, "message",
+                                is_enc ? "envelope encrypt failed" : "envelope decrypt failed (wrong key or corrupt data)");
+                            ret = -1;
+                        } else {
+                            char *ohex = malloc(outlen * 2 + 1);
+                            if (!ohex) {
+                                free(outbuf);
+                                cJSON_AddStringToObject(result, "status", "error");
+                                cJSON_AddStringToObject(result, "error_type", "oom");
+                                ret = -1;
+                            } else {
+                                for (size_t i = 0; i < outlen; i++) sprintf(ohex + i*2, "%02x", outbuf[i]);
+                                ohex[outlen * 2] = '\0';
+                                free(outbuf);
+                                cJSON_AddStringToObject(result, "status", "ok");
+                                cJSON_AddStringToObject(result, "data", ohex);
+                                free(ohex);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     else if (strcmp(operation, "notify") == 0) {

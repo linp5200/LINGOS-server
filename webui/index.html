@@ -193,22 +193,17 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 
 <!-- 控制台 -->
 <div class="page on" id="p-console">
-  <div class="phead"><div class="l"><div class="k">▍CONTROL CONSOLE</div><h1>控制台</h1></div><div class="r">UPTIME <b>03:12:44</b> · MODEL <b>deepseek-chat</b><br>会话 #4 激活 · token 今日 <b>128K</b></div></div>
+  <div class="phead"><div class="l"><div class="k">▍CONTROL CONSOLE</div><h1>控制台</h1></div><div class="r" id="conHead">--</div></div>
   <div class="grid g4">
-    <div class="card metric"><div class="ct"><span>CPU</span></div><div class="row2"><span class="big">32<span class="u">%</span></span><span class="dl">▲4.2</span></div><div class="mb"><i style="width:32%"></i></div><svg class="sp" viewBox="0 0 70 20"><polyline fill="none" stroke="#6CF59A" stroke-width="1.2" points="0,16 9,12 18,14 27,8 36,11 45,5 54,9 70,4"/></svg></div>
-    <div class="card metric"><div class="ct"><span>MEM</span></div><div class="row2"><span class="big">31<span class="u">%</span></span><span class="dl">1.2/4.0G</span></div><div class="mb"><i style="width:31%"></i></div><svg class="sp" viewBox="0 0 70 20"><polyline fill="none" stroke="#6CF59A" stroke-width="1.2" points="0,5 9,8 18,6 27,12 36,9 45,14 54,12 70,15"/></svg></div>
-    <div class="card metric warn"><div class="ct"><span>DISK</span></div><div class="row2"><span class="big">64<span class="u">%</span></span><span class="dl">◆500M 余</span></div><div class="mb"><i style="width:64%"></i></div><svg class="sp" viewBox="0 0 70 20"><polyline fill="none" stroke="#FFBE4D" stroke-width="1.2" points="0,9 9,11 18,8 27,10 36,7 45,12 54,9 70,11"/></svg></div>
-    <div class="card metric"><div class="ct"><span>ALERT</span></div><div class="row2"><span class="big">3<span class="u">条</span></span><span class="dl">L2×1 L3×2</span></div><div class="mb"><i style="width:18%"></i></div></div>
+    <div class="card metric"><div class="ct"><span>CPU</span></div><div class="row2"><span class="big">--</span><span class="dl">--</span></div><div class="mb"><i style="width:0%"></i></div></div>
+    <div class="card metric"><div class="ct"><span>MEM</span></div><div class="row2"><span class="big">--</span><span class="dl">--</span></div><div class="mb"><i style="width:0%"></i></div></div>
+    <div class="card metric warn"><div class="ct"><span>DISK</span></div><div class="row2"><span class="big">--</span><span class="dl">--</span></div><div class="mb"><i style="width:0%"></i></div></div>
+    <div class="card metric"><div class="ct"><span>ALERT</span></div><div class="row2"><span class="big" id="alertCount">--</span><span class="dl" id="alertLv">--</span></div><div class="mb"><i style="width:0%"></i></div></div>
   </div>
   <div class="cols" style="margin-top:10px">
-    <div class="card"><div class="ct"><span>TOKEN 趋势 · 近 6h</span><b>↓42.1k ↑8.4k</b></div><svg viewBox="0 0 400 70" preserveAspectRatio="none" style="width:100%;height:70px"><defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6CF59A" stop-opacity=".16"/><stop offset="1" stop-color="#6CF59A" stop-opacity="0"/></linearGradient></defs><line x1="0" y1="18" x2="400" y2="18" stroke="rgba(255,255,255,.05)"/><line x1="0" y1="36" x2="400" y2="36" stroke="rgba(255,255,255,.03)"/><line x1="0" y1="54" x2="400" y2="54" stroke="rgba(255,255,255,.03)"/><path d="M0,58 C26,50 45,54 66,42 S104,46 124,32 S158,38 178,25 S210,30 232,18 S262,25 284,12 S314,19 336,8 S366,13 400,5 L400,70 L0,70 Z" fill="url(#tg)"/><polyline fill="none" stroke="#6CF59A" stroke-width="1.4" points="0,58 26,50 45,54 66,42 104,46 124,32 158,38 178,25 210,30 232,18 262,25 284,12 314,19 336,8 366,13 400,5"/></svg></div>
-    <div class="card"><div class="ct"><span>SYSTEM EVENTS</span><b>WS LIVE</b></div><div class="evlog">
-      <div class="e"><span class="tm">14:04:58</span><span class="lv">INFO</span><span class="tx">sync delta <b>3 条</b></span></div>
-      <div class="e"><span class="tm">14:04:15</span><span class="lv d">DET</span><span class="tx">cam0 · car 0.88</span></div>
-      <div class="e"><span class="tm">14:03:30</span><span class="lv a">WARN</span><span class="tx">disk 余量 <b>500M</b></span></div>
-      <div class="e"><span class="tm">14:03:02</span><span class="lv">INFO</span><span class="tx">token <b>+2.1k</b></span></div>
-      <div class="e"><span class="tm">14:02:47</span><span class="lv d">DET</span><span class="tx">cam0 · person 0.92</span></div>
-      <div class="e"><span class="tm">14:02:11</span><span class="lv">INFO</span><span class="tx">session <b>#4</b> 同步完成</span></div></div></div>
+    <div class="card"><div class="ct"><span>TOKEN 趋势 · 近 6h</span><b id="tokSum">--</b></div><svg id="tokChart" viewBox="0 0 400 70" preserveAspectRatio="none" style="width:100%;height:70px"><line x1="0" y1="18" x2="400" y2="18" stroke="rgba(255,255,255,.05)"/><line x1="0" y1="36" x2="400" y2="36" stroke="rgba(255,255,255,.03)"/><line x1="0" y1="54" x2="400" y2="54" stroke="rgba(255,255,255,.03)"/><polyline id="tokLine" fill="none" stroke="#6CF59A" stroke-width="1.4" points=""/></svg></div>
+    <div class="card"><div class="ct"><span>SYSTEM EVENTS</span><b id="evtBadge">--</b></div><div class="evlog" id="sysEvents">
+      <div class="e"><span class="tm">--:--:--</span><span class="lv">INFO</span><span class="tx">加载中…</span></div></div></div>
   </div>
 </div>
 
@@ -579,7 +574,10 @@ async function bindConsole(){
   var si = await apiCmd('system_info');
   if(!si || si.status!=='ok'){ 
     setTxt('.metric:nth-of-type(1) .big','--'); setTxt('.metric:nth-of-type(2) .big','--');
-    setTxt('.metric:nth-of-type(3) .big','--'); setTxt('.phead .r','主机未连接<br>显示 -- 不模拟');
+    setTxt('.metric:nth-of-type(3) .big','--');
+    setTxt('#conHead','主机未连接<br>显示 -- 不模拟');
+    setTxt('#tokSum','--');
+    var el=$('#sysEvents'); if(el) el.innerHTML='<div class="e"><span class="tx" style="color:var(--d)">服务端不可达——无事件</span></div>';
     return;
   }
   var d = si.data||{};
@@ -593,7 +591,79 @@ async function bindConsole(){
   setTxt('.metric:nth-of-type(3) .big', fmtNum(disk,'%'));
   barPct('.metric:nth-of-type(3) .mb i', disk);
   var upStr = (up!==undefined)? Math.floor(up/3600)+'h'+Math.floor(up%3600/60)+'m' : '--';
-  setTxt('.phead .r', 'UPTIME <b>'+upStr+'</b>');
+  var ver = d.version || '--';
+  setTxt('#conHead', 'UPTIME <b>'+upStr+'</b> · <b>'+ver+'</b>');
+  // 【0.6.1】TOKEN 趋势（真实——token_usage_query 近 6h 聚合）
+  bindTokenTrend();
+  // 【0.6.1】SYSTEM EVENTS（真实——通知中心）
+  bindSysEvents();
+  // 【0.6.1】ALERT 卡（真实——预警列表）
+  bindAlertCount();
+}
+/* 【0.6.1】TOKEN 趋势：真实 6h 聚合折线（无数据不画） */
+async function bindTokenTrend(){
+  var now = Math.floor(Date.now()/1000);
+  var r = await apiCmd('token_usage_query', {start_time: String(now-6*3600)});
+  var recs = (r && r.status==='ok' && r.data && Array.isArray(r.data.records))? r.data.records : [];
+  var sumP = 0, sumC = 0;
+  var buckets = new Array(12).fill(0);   // 12×30min
+  recs.forEach(function(x){
+    sumP += (x.prompt_tokens||0); sumC += (x.completion_tokens||0);
+    var age = now - (x.ts||0);
+    if(age >= 0 && age < 6*3600){
+      var idx = 11 - Math.floor(age/1800);
+      if(idx>=0 && idx<12) buckets[idx] += (x.prompt_tokens||0)+(x.completion_tokens||0);
+    }
+  });
+  function fmtTokens(n){ return n>=1000? (n/1000).toFixed(1)+'k' : String(n); }
+  setTxt('#tokSum', recs.length? ('↓'+fmtTokens(sumP)+' ↑'+fmtTokens(sumC)) : '--');
+  var line = document.getElementById('tokLine');
+  if(!line) return;
+  if(!recs.length){ line.setAttribute('points',''); return; }
+  var mx = Math.max.apply(null, buckets.concat([1]));
+  var pts = buckets.map(function(v,i){
+    var x = Math.round(i*(400/11));
+    var y = 68 - Math.round((v/mx)*62);
+    return x+','+y;
+  }).join(' ');
+  line.setAttribute('points', pts);
+}
+/* 【0.6.1】SYSTEM EVENTS：真实通知（notify_list） */
+async function bindSysEvents(){
+  var r = await apiCmd('notify_list', {limit: 6});
+  var list = (r && r.status==='ok' && r.data && Array.isArray(r.data.items))? r.data.items : [];
+  if(!list.length && r && r.status==='ok' && Array.isArray(r.data)) list = r.data;
+  var el = document.getElementById('sysEvents');
+  if(!el) return;
+  if(!list.length){
+    el.innerHTML = '<div class="e"><span class="tm">--:--:--</span><span class="lv">INFO</span><span class="tx" style="color:var(--d)">暂无事件</span></div>';
+    setTxt('#evtBadge','0');
+    return;
+  }
+  function hhmmss(ts){ try{ return new Date(ts*1000).toTimeString().slice(0,8); }catch(e){ return '--:--:--'; } }
+  function lvTag(l){ l = (l||'info').toLowerCase();
+    if(l==='critical'||l==='error') return '<span class="lv d">ERR</span>';
+    if(l==='warn'||l==='warning') return '<span class="lv a">WARN</span>';
+    if(l==='reminder') return '<span class="lv a">RMD</span>';
+    return '<span class="lv">INFO</span>';
+  }
+  el.innerHTML = list.slice(0,6).map(function(x){
+    var t = x.title||''; var b = x.body||'';
+    var txt = (t + (b? ' — '+b : '')).slice(0,60);
+    return '<div class="e"><span class="tm">'+hhmmss(x.ts||0)+'</span>'+lvTag(x.level)+'<span class="tx">'+txt+'</span></div>';
+  }).join('');
+  setTxt('#evtBadge', String(list.length));
+}
+/* 【0.6.1】ALERT 卡：真实预警计数 */
+async function bindAlertCount(){
+  var a = await apiCmd('alert_query');
+  var list = (a && a.status==='ok' && Array.isArray(a.data))? a.data : [];
+  var n = list.length;
+  var lv = {};
+  list.forEach(function(x){ var l = x.level||''; lv[l]=(lv[l]||0)+1; });
+  var lvStr = Object.keys(lv).slice(0,3).map(function(k){ return k+'×'+lv[k]; }).join(' ');
+  setTxt('#alertCount', n+ '<span class="u">条</span>');
+  setTxt('#alertLv', lvStr||'--');
 }
 /* ===== 会话 ===== */
 async function bindSessions(){
