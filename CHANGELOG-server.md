@@ -5,6 +5,80 @@
 
 ---
 
+## [0.6.0] - 2026-09-13（功能批次：技能链/GUI链/审批链/权限链全修 + 三内核守护全量打包）
+
+### 修复（Fixes）——四座大山（深挖 P0 核心）
+- **技能链 4 断点全修**（"无法拉取 skill"根因闭环）：
+  - `registry.c`：metadata **持久化修复**（save 写入 / load 恢复——技能描述/参数不再丢失）
+  - `registry_skill.c`：新增 `registry_skill_write_index()` 索引导出器（**index.json 此前无写入者**——现从内存+磁盘双源导出）；`load_all` 接入索引导出；**扫描器支持技能包目录**（`<name>/skill.json`——此前只认平铺文件）
+  - `background_init.c`：`registry_skill_load_all()` 接线（**此前无调用者**——技能目录从不加载）
+  - `file_integrity.c`：索引路径分歧修复（`/skills/` → `/registry/skills/`，防与读取方/写入方错位；防误擦除）
+  - `skill_store.c`：装/卸技能即时刷新索引（AI 侧即时可见）
+  - `skill_loader.py`：Python 执行器**多策略解析**（模块导入 → 5 个技能目录文件探测；入口兼容 run/handle/execute/main）
+  - `skill_install.py`：**双规范扫描**（SKILL.md / skill.json）+ `/skills/enabled` 纳入扫描
+  - `ai_server.py`：新增 `skills_reload` 命令（热重载注册表技能+自定义技能）
+- **GUI 交互链全修**（三处全断闭环）：
+  - `ai_server.py`：工具结果 **gui_interaction 拦截** → 按协议转 `gui_ask/gui_notify/gui_open_url/gui_share/gui_location/gui_clipboard` 事件推 App（此前 0 命中——用户永远看不到 AI 提问/通知）；工具结果改写防重复调用
+  - App：6 个 GUI 事件全处理 + 提问弹窗（选项/输入→回传 AI）+ 状态驱动渲染
+- **审批链全修**（60s 必超时闭环）：
+  - `ai_server.py`：新增 `auth_respond`（App 审批回执 → auth.sock 写入）/ `auth_pending`（重连恢复待审批入口）
+  - App：`auth_request` 事件处理 + **审批卡片弹窗**（批准/拒绝 → auth_respond 回执）
+- **权限链全修**（11 个高危技能永久死锁闭环）：
+  - `permission_gateway.py` 重写权限查询：**直读 `/LINGOS/system/config/ai_permissions.json`**（与 App 设置同一事实源）→ 用户设置即时生效；未配置项按域默认（操作类放行[受风险分级+审批+审计约束]，隐私类跟随 UI 权限）
+  - `syscall_handler.c`：daemon 补 `permission_list` 操作（此前缺失 → 网关查询恒失败 fail-safe 拒绝）
+- **人格切换断链修复**：`_resolve_personality_text()` 桥接（personality.json → 专用文件 → **内置 nook/noma 文本兜底**）——切换立即生效（此前两字段无桥）
+- **通知桥缺口修复**：`syscall_handler.c` 补 `notify` 操作（WS 广播达 App[弱符号] + 轨迹落盘——Python 3 处调用此前无人实现）
+- **提醒投递修复**：`ai_reminder.c` 触发时 WS 广播+落盘（此前仅终端打印——用户收不到）
+- **MHD 内置实现崩溃修复**（严重）：`mhd_compat.c` 响应**引用计数**（对齐真实 libmicrohttpd 语义）——修复「queue 后 destroy 即真释放 → 发送时 use-after-free + conn_free 二次释放 → SIGSEGV」；沙箱实测 `GET /system/health` 由崩溃(139) → **HTTP 200 稳定**
+- **状态栏格式串修复**：`log_extra.c` 格式与实参 12 槽全对齐（0.5.2 修复不完整——musl 下 `%s` 收到 int 0 段错误；glibc 下显示垃圾数字）
+- **全捆模式跳过过时依赖检查**：`main.c`（`LINGOS_BUNDLED=1` → 不再检查/尝试安装 `lib*-dev` 开发包——0.5.0 起全捆自带运行库；原每次启动慢且必失败）
+- **Python 部署清单修复**：Makefile `install_python_script` 固定清单 → **全量复制**（原缺 `paths.py`/`permission_gateway.py`/`skill_install.py` 等 → ai_server 启动即 `ModuleNotFoundError`）；**plugin 子目录补齐**（主包/sysbin——修 `plugin_loader` 找不到）
+
+### 新增（Features）
+- **三内核守护全量打包**：`lingos_alertd`（预警生命线）/ `lingos_visiond` / `lingos_voiced`
+  - Makefile TARGETS 默认全量构建；bundle.sh 四处清单（主包/库收集/install.sh/sysbin）
+  - `main.c` 新增通用守护拉起器（软启动——缺失不阻塞主程序；防旧包兼容问题）
+- **规则引擎接线**（三件套）：`rules_engine_start_watchdog()` 周期评估线程 + `lingosd` 启动接线 + shell `rule`/`rules` 命令分发（`rules_dispatch` 此前无调用者）
+- **假技能真实化**（6 个）：
+  - `typhoon_predict` → **NMC 国家气象中心实时数据**（台风列表/路径/官方预报机构段——零编造）
+  - `vision_locate` → **查询真实视觉库** `/LINGOS/data/vision/vision.db`（SQLite）
+  - `rule_query` → 读真实规则存储 `rules.json`
+  - `defense_mode` → 读真实防御配置 + 引导系统命令
+  - `perm_set` → **真实写入权限存储**（与 App/网关同一事实源）
+  - `voice_command` → 诚实状态查询（voiced 守护状态/唤醒词——不再假 executed）
+- **WebUI 真实化**：端口页（`port_list` 实测探测）/ 更新页（`update_check` 真实检查 + 重试按钮）/ **AI 对话页全重写**（清除永久假对话 → 真实 WS 流式：token 认证/流式渲染/工具行/中断，App 同款协议）
+- **`port_list` / `update_check` / `skills_reload` / `auth_respond` / `auth_pending`** 新命令（App/Web 统一命令面）
+
+### 验证
+- 沙箱全量编译：六二进制（lingos_linux/lingosd/supervisor/alertd/visiond/voiced）**0 错误**
+- 端到端冒烟（沙箱）：
+  - lingosd 直启 → HTTP 200（health 真实数据）+ WS 101 握手 + 认证帧处理 ✓
+  - alertd 真实告警输出（磁盘阈值/USGS/台风源）✓
+  - 技能链闭环实测：技能包放入 custom → registry.json 记录（含 metadata）→ **index.json 真实导出** ✓
+  - ai_server 启动成功（paths 修复后）+ plugin_loader 导入成功 ✓
+
+---
+
+## [0.5.2] - 2026-09-12（先生实测三项修复 + 版本动态化）
+
+### 修复（Fixes）
+- **TCP 通道命令被拒**（先生实测：`system_info` / `balance_query` / `sync_full` / `vision_config_get` / `weather_current` / `options_list` / `permission_list` 全部 unknown command）：
+  - `connection_handler.c`：未知命令统一转发 `ai.sock`（与 WS 通道 `ws_forward_command` 行为一致）
+  - 收发缓冲 8192 → **16384**（转发响应更从容）
+- **端口无人监听兜底**（先生实测：`127.0.0.1:8080 拒绝访问` / App WS 自动连接失败）：
+  - `api_core_init`：跳过前**实测 WS/HTTP 端口**；lingosd 在但端口未监听 → 主进程**兜底启动**（防「PID 在、服务死」窗口）
+  - `[API] Ready` 消息改用实际端口（原硬编码 2939/8080）
+- **内部版本号不迭代**（先生报告）：
+  - `ai_server.py` 启动日志（原 LN-0.4.3）→ 动态读 `/LINGOS/version`
+  - `lingosd.c` / `api_routes.c` / `registry_builtin.c` / `monitor_service.py` 硬编码 → 动态
+  - `version.c` 回退值 → LN-0.5.2；Makefile VERSION → LN-0.5.2；CI VERSION → 0.5.2
+
+### 验证
+- 沙箱全量编译：`lingosd` (3.17MB) + `lingos_linux` (3.81MB) **0 错误**
+- 冒烟实测：lingosd 直启 → **WS 2939 / HTTP 8080 均正常监听** ✓
+
+---
+
 ## [0.5.1] CI 提速（2026-09-12 · 补）
 
 ### 改进（CI）

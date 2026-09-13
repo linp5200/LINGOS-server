@@ -85,47 +85,111 @@ def _t(en: str, zh: str) -> str:
 def _query_permission(perm_name: str) -> int:
     """查询权限状态：1=允许 0=禁止 -1=未知/不可用
 
-    优先走 daemon（权限系统的权威判定）；不可用时返回 -1（交由调用方按安全默认处理）。
+    【0.6.0 重写】修复「权限服务恒不可用 → 11 高危技能永久死锁」：
+      ① 直读 AI 权限存储 /LINGOS/system/config/ai_permissions.json
+         （与 App「设置→权限」同一事实源——用户改了立即生效）
+      ② 未配置项按域默认：操作类放行（受风险分级+审批+审计约束），
+         隐私类映射到 UI 权限（未授予=拒绝）
+      ③ daemon permission_list 兜底（保留兼容）
     """
     if not perm_name:
         return 1
+
+    # ---- ① 直读权限存储（首选） ----
+    try:
+        _pfile = "/LINGOS/system/config/ai_permissions.json"
+        if os.path.exists(_pfile):
+            with open(_pfile, "r", encoding="utf-8") as f:
+                _store = json.load(f)
+            if isinstance(_store, dict):
+                _mode = _store.get(perm_name)
+                if _mode is None:
+                    # UI 可映射权限 → 跟随 UI 设置
+                    _ui = _UI_PERM_MAP.get(perm_name)
+                    if _ui is not None:
+                        _mode = _store.get(_ui)
+                if _mode is not None:
+                    if _mode == "deny":
+                        return 0
+                    # allow_once / allow_while / allow_always / shadow → 放行
+                    return 1
+                # 未显式配置 → 域默认
+                return 1 if perm_name in _DEFAULT_ALLOW_PERMS else _privacy_default(perm_name, _store)
+    except Exception as e:
+        logger.debug("perm store read failed: %s", e)
+
+    # ---- ② daemon 兜底（旧路径保留） ----
     try:
         from syscall_client import call_syscall
         ok, res = call_syscall("permission_list", {}, timeout=5)
-        if not ok:
-            return -1
-        data = res
-        if isinstance(res, str):
-            try:
-                data = json.loads(res)
-            except Exception:
-                return -1
-        perms = None
-        if isinstance(data, dict):
-            inner = data.get("data", data)
-            if isinstance(inner, str):
+        if ok:
+            data = res
+            if isinstance(res, str):
                 try:
-                    inner = json.loads(inner)
+                    data = json.loads(res)
                 except Exception:
-                    inner = {}
-            if isinstance(inner, dict):
-                perms = inner.get("permissions") or inner.get("perms") or inner.get("list")
-        if isinstance(perms, list):
-            for p in perms:
-                if isinstance(p, dict):
-                    nm = p.get("name") or p.get("id") or p.get("key")
-                    if nm == perm_name:
-                        v = p.get("allowed", p.get("enabled", p.get("value")))
-                        if isinstance(v, bool):
-                            return 1 if v else 0
-                        if isinstance(v, (int, float)):
-                            return 1 if v else 0
-                        if isinstance(v, str):
-                            return 1 if v.lower() in ("1", "true", "allow", "on", "yes") else 0
-        return -1
+                    data = None
+            if isinstance(data, dict):
+                inner = data.get("data", data)
+                if isinstance(inner, str):
+                    try:
+                        inner = json.loads(inner)
+                    except Exception:
+                        inner = {}
+                perms = inner.get("permissions") or inner.get("perms") or inner.get("current") \
+                    if isinstance(inner, dict) else None
+                if isinstance(perms, dict):
+                    v = perms.get(perm_name)
+                    if v is not None:
+                        return 0 if v == "deny" else 1
+                elif isinstance(perms, list):
+                    for p in perms:
+                        if isinstance(p, dict):
+                            nm = p.get("name") or p.get("id") or p.get("key")
+                            if nm == perm_name:
+                                v = p.get("mode", p.get("allowed", p.get("enabled")))
+                                if isinstance(v, bool):
+                                    return 1 if v else 0
+                                if isinstance(v, str):
+                                    return 0 if v == "deny" else 1
     except Exception as e:
-        logger.debug("perm query failed: %s", e)
-        return -1
+        logger.debug("perm daemon query failed: %s", e)
+
+    # ---- ③ 都不可用 → 安全默认（操作类放行[审计]，隐私类拒绝） ----
+    if perm_name in _DEFAULT_ALLOW_PERMS:
+        logger.info("perm '%s' store unavailable → allow by domain default (audited)", perm_name)
+        return 1
+    return -1
+
+# 【0.6.0】网关权限名 → App UI 权限名映射（用户设置联动）
+_UI_PERM_MAP = {
+    "location_access": "location",
+    "camera_access": "camera",
+    "audio_access": "record_audio",
+    "screen_access": "record_screen",
+    "network_access": "network_control",
+    "bluetooth_access": "bluetooth_control",
+}
+
+# 【0.6.0】操作类权限默认放行（受风险分级 + 审批链 + 审计三重约束——
+#   用户可在权限存储中显式置 deny 收紧）
+_DEFAULT_ALLOW_PERMS = {
+    "sys_command", "file_write", "file_delete", "package_manage",
+    "service_manage", "power_control", "system_update", "user_manage",
+    "security_config", "permission_admin", "voice_control",
+    "clipboard_access", "share_access", "network_access",
+    "cron_manage", "script_exec",
+}
+
+def _privacy_default(perm_name: str, store: dict) -> int:
+    """隐私类默认：映射 UI 权限时跟随（未授予=拒绝）；无映射=拒绝"""
+    _ui = _UI_PERM_MAP.get(perm_name)
+    if _ui:
+        _m = store.get(_ui)
+        if _m is None:
+            return 0  # 未授予 → 拒绝（与 App 显示一致）
+        return 0 if _m == "deny" else 1
+    return 0
 
 
 def check_skill_permission(skill_name: str, risk: str = "low",

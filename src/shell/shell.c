@@ -92,6 +92,7 @@ extern void privilege_dispatch(const char *args);
 extern void security_dispatch(const char *args);
 extern void behavior_dispatch(const char *args);
 extern void registry_dispatch(const char *args);
+extern void rules_dispatch(const char *args);   /* 【0.6.0】规则命令（此前无调用者） */
 
 /* ============================================================
  * 静态函数声明
@@ -1735,6 +1736,23 @@ static int handle_builtin_command(const char *cmd) {
         while (*args == ' ') args++;
         defense_dispatch(args);
         return 1;
+    }
+
+    /* ----- rule / rules（【0.6.0】接线：此前 rules_dispatch 从无调用者） ----- */
+    {
+        const char *rules_args = NULL;
+        if (strcmp(cmd, "rule") == 0 || strcmp(cmd, "rules") == 0) {
+            rules_args = "";
+        } else if (strncmp(cmd, "rule ", 5) == 0) {
+            rules_args = cmd + 5;
+        } else if (strncmp(cmd, "rules ", 6) == 0) {
+            rules_args = cmd + 6;
+        }
+        if (rules_args) {
+            while (*rules_args == ' ') rules_args++;
+            rules_dispatch(rules_args);
+            return 1;
+        }
     }
 
     /* ----- system privilege ----- */

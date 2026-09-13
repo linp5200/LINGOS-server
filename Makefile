@@ -7,7 +7,9 @@
 # ================================================================
 # 默认目标（三核心 + 安装 Python 脚本）
 # ================================================================
-TARGETS = lingos_linux lingosd lingos_supervisor
+# 【0.6.0】全量打包（先生：完整系统全打包，哪个好用用哪个）
+#   三内核守护随主包构建：alertd=预警生命线 / visiond=视觉内核 / voiced=语音内核
+TARGETS = lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced
 
 all: $(TARGETS) install_python_script
 
@@ -91,7 +93,7 @@ MINIMAL_LDFLAGS = $(BASE_LDFLAGS) $(if $(filter 1,$(ENABLE_SYSTEM_MHD)),-lmicroh
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-VERSION = "LN-0.5.1"
+VERSION = "LN-0.6.0"
 CFLAGS += -DLINGOS_VERSION="\"$(VERSION)\""
 
 SRC_DIR = src
@@ -520,15 +522,16 @@ test-render:
 
 install_python_script:
 	@mkdir -p /LINGOS/bin
-	@for f in ai_server.py sub_ai_scheduler.py repair_engine.py authorization_service.py skill_handlers.py syscall_client.py config_helpers.py embed_service.py registry_client.py skill_loader.py yolo_service.py diagnosis_engine.py memory_retrieval.py ha_archive.py agent_orchestrator.py web_search.py git_skills.py llm_unified.py voice_service.py ha_integration.py rtsp_streamer.py ocr_service.py calibration_service.py vision_ai.py; do \
-	    if [ -f $(SRC_DIR)/python/$$f ]; then \
-	        cp $(SRC_DIR)/python/$$f /LINGOS/bin/; \
-	        chmod +x /LINGOS/bin/$$f; \
-	        echo "Installed $$f"; \
-	    else \
-	        echo "Warning: $$f not found, skipping"; \
-	    fi; \
+	# 【0.6.0 修复】原为固定文件清单（缺 paths.py/permission_gateway/skill_install 等
+	# 后续新增模块 → ai_server 启动即 ModuleNotFoundError: paths）——改为全量复制
+	@for f in $(SRC_DIR)/python/*.py; do \
+	    cp $$f /LINGOS/bin/; \
+	    chmod +x /LINGOS/bin/$$(basename $$f); \
 	done
+	@mkdir -p /LINGOS/bin/plugin
+	@cp $(SRC_DIR)/python/plugin/*.py /LINGOS/bin/plugin/ 2>/dev/null || true
+	@rm -rf /LINGOS/bin/__pycache__ 2>/dev/null || true
+	@echo "Installed all python modules (全量 + plugin)"
 
 clean:
 	rm -f $(TARGETS) lingos_alertd lingos_visiond lingos_voiced

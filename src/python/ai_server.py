@@ -144,7 +144,20 @@ def set_log_file_enabled(enabled: bool):
     else:
         file_handler.setLevel(logging.WARNING)
 
-logger.info("=== AI Server starting (LN-0.4.3) ===")
+# 【0.5.2 修复】版本动态化（先生报告：日志仍显示旧版本 LN-0.4.3）
+#   从 /LINGOS/version 读取（version_ensure 自动维护）；读不到时回退内置值。
+def _lingos_version():
+    try:
+        with open("/LINGOS/version", "r", encoding="utf-8") as _vf:
+            _v = _vf.read().strip()
+            if _v:
+                return _v
+    except Exception:
+        pass
+    return "LN-0.5.2"
+
+
+logger.info("=== AI Server starting (%s) ===", _lingos_version())
 
 # 【2026-08-23 修复】统一日志体系——所有模块 logger（LLMUnified/Voice/Skill 等）
 # 接入同一 console+file handler（否则走 logging.lastResort 默认格式，不进 JSON 文件）
@@ -274,26 +287,40 @@ def cmd_weather_current() -> dict:
         d = _weather_fetch(url)
         if d and "current" in d:
             cur = d["current"]
+            # 【0.5.2 修复】字段名对齐——App/Qt 读 feels_like/wind_speed/wind_direction 等
+            #   此前服务端仅 terse 名（feels/wind）→ 客户端多数指标显示「--」
             data = {
                 "temp": cur.get("temperature_2m"),
+                "temperature": cur.get("temperature_2m"),
                 "feels": cur.get("apparent_temperature"),
+                "feels_like": cur.get("apparent_temperature"),
+                "apparent_temperature": cur.get("apparent_temperature"),
                 "humidity": cur.get("relative_humidity_2m"),
                 "code": cur.get("weather_code"),
                 "wind": cur.get("wind_speed_10m"),
+                "wind_speed": cur.get("wind_speed_10m"),
                 "wind_dir": cur.get("wind_direction_10m"),
+                "wind_direction": cur.get("wind_direction_10m"),
                 "pressure": cur.get("surface_pressure"),
+                "surface_pressure": cur.get("surface_pressure"),
                 "visibility": cur.get("visibility"),
                 "uv": cur.get("uv_index"),
+                "uv_index": cur.get("uv_index"),
                 "time": cur.get("time"),
+                "city": cfg.get("city"),
             }
     if data is None:
         # wttr.in 兜底（天气码缺失时）
         raw = _weather_fetch("https://wttr.in/?format=j1")
         if raw and "current_condition" in raw:
             c = raw["current_condition"][0]
+            # 【0.5.2】同补别名（feels_like/wind_speed/city——客户端读取对齐）
             data = {"temp": c.get("temp_C"), "feels": c.get("FeelsLikeC"),
+                    "feels_like": c.get("FeelsLikeC"),
                     "humidity": c.get("humidity"), "code": c.get("weatherCode"),
-                    "wind": c.get("windspeedKmph"), "desc": c.get("lang_zh", [{}])[0].get("value") if c.get("lang_zh") else None}
+                    "wind": c.get("windspeedKmph"), "wind_speed": c.get("windspeedKmph"),
+                    "city": cfg.get("city"),
+                    "desc": c.get("lang_zh", [{}])[0].get("value") if c.get("lang_zh") else None}
     if data is None:
         return {"status": "error", "msg": "weather source unreachable"}
     cache[key] = {"ts": now, "data": data}
@@ -317,13 +344,18 @@ def cmd_weather_forecast() -> dict:
     h = d.get("hourly", {})
     hour = []
     for i in range(min(24, len(h.get("time", [])))):
-        hour.append({"t": h["time"][i], "temp": h["temperature_2m"][i],
+        # 【0.5.2】t/time 双名（App 读 time，Qt/旧端读 t——统一兼容）
+        hour.append({"t": h["time"][i], "time": h["time"][i],
+                     "temp": h["temperature_2m"][i],
                      "pop": h["precipitation_probability"][i], "code": h["weather_code"][i]})
     dl = d.get("daily", {})
     day = []
     for i in range(len(dl.get("time", []))):
+        # 【0.5.2】hi/lo 与 temp_max/temp_min 双名（客户端读取对齐）
         day.append({"date": dl["time"][i], "code": dl["weather_code"][i],
                     "hi": dl["temperature_2m_max"][i], "lo": dl["temperature_2m_min"][i],
+                    "temp_max": dl["temperature_2m_max"][i],
+                    "temp_min": dl["temperature_2m_min"][i],
                     "pop": dl["precipitation_probability_max"][i],
                     "sunrise": dl.get("sunrise", [""] * 8)[i] if len(dl.get("sunrise", [])) > i else "",
                     "sunset": dl.get("sunset", [""] * 8)[i] if len(dl.get("sunset", [])) > i else ""})
@@ -1089,7 +1121,9 @@ def build_system_prompt(user_name: str, user_country: str, session_id: str = "de
     custom_section = f"\n## User Custom Instructions\n{custom_prompt}\n" if custom_prompt else ""
 
     # 【批次B】人格/助手注入（可修改层：JSON 提取数组 / MD / TXT 直接引用）
-    personality_text = load_personality_file(personality_file)
+    # 【0.6.0】人格切换桥接（修复断链：personality_set 写 personality.json，
+    #   但此处只读 ai_config.personality_file → 两字段无桥 → 切换不生效）
+    personality_text = _resolve_personality_text()
     personality_section = f"\n## Personality\n{personality_text}\n" if personality_text else ""
     assistant_text = load_assistant_file(assistant_file)
     assistant_section = f"\n## Assistant Instructions\n{assistant_text}\n" if assistant_text else ""
@@ -1158,6 +1192,63 @@ def _extract_array_text(data, keys):
                 return "\n".join(parts)
     return None
 
+
+# 【0.6.0】人格桥接（修复断链：personality_set 只写 personality.json，
+#   而 system prompt 只读 ai_config.personality_file——两字段无桥 → nook/noma
+#   切换永不生效。本桥接优先读取切换文件，并提供内置人格文本兜底）
+_PERSONALITY_BRIDGE_FILE = "/LINGOS/system/config/personality.json"
+_PERSONALITY_BUILTIN = {
+    "nook": {
+        "zh": "诺克（Nook）——冷静、理性、绝对忠诚。LINGOS 的核心 AI。"
+              "设计原则：绝对忠诚、理性冷静、隐私第一、安全边界清晰。"
+              "危险操作（如 rm -rf / 、mkfs 等不可逆指令）任何情形下都不许可；"
+              "高风险技能必须请求用户二次确认；不得自动禁用防御系统。",
+        "en": "Nook — calm, rational, strictly loyal. Core AI of LINGOS. "
+              "Principles: absolute loyalty, rationality, privacy first, clear security boundaries. "
+              "Irreversible destructive commands (rm -rf /, mkfs) are never permitted under any circumstance; "
+              "high-risk skills require user confirmation; never auto-disable defense systems.",
+    },
+    "noma": {
+        "zh": "诺玛（Noma）——温柔、温暖、睿智。LINGOS 的陪伴 AI。"
+              "在保持同样的安全与隐私底线（不可逆指令禁行、高危二次确认、防御系统不可自动禁用）的同时，"
+              "更亲切、更细腻、更有耐心。",
+        "en": "Noma — gentle, warm, wise. Companion AI of LINGOS. "
+              "Same security & privacy bottom line (no irreversible commands, high-risk confirmation, "
+              "no auto-disable of defense), but warmer, more nuanced and patient.",
+    },
+}
+
+def _resolve_personality_text() -> str:
+    """解析当前人格文本（人格切换桥 + 专用文件 + 配置文件 + 内置兜底）"""
+    name = ""
+    try:
+        if os.path.exists(_PERSONALITY_BRIDGE_FILE):
+            with open(_PERSONALITY_BRIDGE_FILE, "r", encoding="utf-8") as f:
+                name = (json.load(f) or {}).get("personality", "") or ""
+    except Exception as e:
+        logger.debug("personality bridge read failed: %s", e)
+    name = str(name).strip().lower()
+
+    if name:
+        base = "/LINGOS/system/config"
+        for cand in ("%s/personality_%s.md" % (base, name),
+                     "%s/personality_%s.json" % (base, name),
+                     "%s/personality_%s.txt" % (base, name),
+                     "%s/%s.md" % (base, name),
+                     "%s/%s.txt" % (base, name)):
+            if os.path.exists(cand):
+                txt = load_personality_file(cand)
+                if txt:
+                    return txt
+        if personality_file and name in str(personality_file).lower():
+            txt = load_personality_file(personality_file)
+            if txt:
+                return txt
+        if name in _PERSONALITY_BUILTIN:
+            return _PERSONALITY_BUILTIN[name]["en" if _current_lang == "en" else "zh"]
+        return ""
+    # 未切换 → 原行为（配置的 personality_file）
+    return load_personality_file(personality_file) if personality_file else ""
 
 def load_personality_file(path: str) -> str:
     """解析人格文件：.json 提取 personality 数组；.md/.txt 直接引用全文"""
@@ -1941,6 +2032,44 @@ def execute_tool_calls(tool_calls: List[Dict], session_id: str = "default", conn
                 except Exception as e:
                     output = t(f"Execution error: {str(e)}", f"执行错误：{str(e)}")
                     success = False
+
+        # ============================================================
+        # 【0.6.0 修复】GUI 交互链拦截（GUI 链三处全断之一：服务端不转事件）
+        #   背景：gui_ask/notify/open_url/share/location/clipboard 技能
+        #   返回 {"gui_interaction": ...} 结果后此前无人识别——用户永远看不
+        #   到任何东西。现按协议转事件推 App（gui_ask/gui_notify/...），
+        #   并改写工具结果告知 AI「请求已送达，等待用户」防重复调用。
+        # ============================================================
+        if success and conn is not None and isinstance(output, str) and "gui_interaction" in output:
+            try:
+                _gi = json.loads(output)
+                if isinstance(_gi, dict) and _gi.get("gui_interaction"):
+                    _kind = str(_gi.get("gui_interaction", ""))
+                    _gevt = {"type": "gui_" + _kind, "source_tool": name}
+                    if _kind == "ask":
+                        _gevt["question"] = _gi.get("question", "")
+                        _gevt["options"] = _gi.get("options", [])
+                        _gevt["req_id"] = "gui-%d" % int(time.time() * 1000)
+                    elif _kind == "notify":
+                        _gevt["title"] = _gi.get("title", "")
+                        _gevt["body"] = _gi.get("body", "")
+                        _gevt["priority"] = _gi.get("priority", "normal")
+                    elif _kind == "open_url":
+                        _gevt["url"] = _gi.get("url", "")
+                    elif _kind == "share":
+                        _gevt["text"] = _gi.get("text", "")
+                        _gevt["title"] = _gi.get("title", "")
+                    elif _kind == "clipboard":
+                        _gevt["action"] = _gi.get("action", "read")
+                        _gevt["text"] = _gi.get("text", "")
+                    _send_evt(conn, _gevt)
+                    g_events.append(_gevt)
+                    logger.info("gui_interaction '%s' delivered to app (tool=%s)", _kind, name)
+                    output = t(
+                        "GUI request delivered to user's app (%s). Await user interaction — do not repeat this call." % _kind,
+                        "已向 App 发起交互请求（%s），等待用户响应——不要重复调用该工具。" % _kind)
+            except Exception as _gx:
+                logger.debug("gui interception skipped: %s", _gx)
 
         err_type, err_msg, err_action = "", "", ""
         if not success:
@@ -3655,6 +3784,160 @@ def cmd_skill_market() -> dict:
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
+def cmd_auth_respond(req_id: str = "", decision: str = "") -> dict:
+    """【0.6.0 修复】App 审批回执 → 写入 auth.sock（审批链断裂修复：
+    App 收到 auth_request 但从不回传 → 高风险操作必 60s 超时）"""
+    try:
+        if not req_id:
+            return {"status": "error", "msg": "missing req_id"}
+        _cmd = "approve" if str(decision).lower() in ("approve", "approved", "yes", "ok", "allow") else "reject"
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        sock.connect(AUTH_SOCKET_PATH)
+        sock.send((json.dumps({"cmd": _cmd, "request_id": req_id}) + "\n").encode())
+        resp_raw = sock.recv(1024).decode()
+        sock.close()
+        try:
+            resp = json.loads(resp_raw)
+        except Exception:
+            resp = {}
+        ok = resp.get("status") == "ok"
+        logger.info("auth_respond: %s -> %s (%s)", req_id, _cmd, "ok" if ok else resp.get("message", "?"))
+        return {"status": "ok" if ok else "error", "decision": _cmd,
+                "req_id": req_id, "msg": resp.get("message", "")}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_auth_pending() -> dict:
+    """【0.6.0】查询待审批请求（App 重连后恢复审批入口）"""
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        sock.connect(AUTH_SOCKET_PATH)
+        sock.send(b'{"cmd":"pending"}\n')
+        resp_raw = sock.recv(1024).decode()
+        sock.close()
+        try:
+            resp = json.loads(resp_raw)
+        except Exception:
+            resp = {}
+        rid = resp.get("request_id", "")
+        return {"status": "ok", "req_id": rid, "has_pending": bool(rid)}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_port_list() -> dict:
+    """【0.6.0】服务端口清单（真实探测——不再静态假数据）
+    读取 ports.json 覆盖 + connect 探测真实监听状态"""
+    def _probe(port):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.6)
+            r = s.connect_ex(("127.0.0.1", int(port)))
+            s.close()
+            return r == 0
+        except Exception:
+            return False
+
+    ports = {"tcp": 2937, "ws": 2939, "http": 8080, "audio": 8088}
+    try:
+        _pc = "/LINGOS/system/config/ports.json"
+        if os.path.exists(_pc):
+            with open(_pc, "r", encoding="utf-8") as f:
+                _cfg = json.load(f) or {}
+            for k in list(ports.keys()):
+                for cand in (k, k + "_port", k.upper()):
+                    if cand in _cfg:
+                        try:
+                            ports[k] = int(_cfg[cand])
+                        except Exception:
+                            pass
+                        break
+    except Exception:
+        pass
+
+    names = {"tcp": "TCP 认证 · lingosd", "ws": "WebSocket 事件 · ai_server",
+             "http": "HTTP WebUI/API", "audio": "HTTP 音频 REST (TTS/STT)"}
+    rows = []
+    for k, p in ports.items():
+        rows.append({"key": k, "port": p, "desc": names[k], "listening": _probe(p)})
+    return {"status": "ok", "data": rows}
+
+def cmd_update_check() -> dict:
+    """【0.6.0】更新检查（真实——读当前版本 + 更新源配置；不再假报「已是最新」）"""
+    try:
+        import urllib.request as _ul
+        cur = _lingos_version()
+        src = ""
+        try:
+            _uc = "/LINGOS/system/config/repo.conf"
+            if os.path.exists(_uc):
+                with open(_uc, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if line.startswith("repo_url="):
+                            src = line.split("=", 1)[1].strip()
+                        elif "://" in line:
+                            src = line
+        except Exception:
+            pass
+        if not src:
+            return {"status": "ok", "current": cur, "latest": "", "update_available": False,
+                    "source": "", "checked": int(time.time()),
+                    "message": t("No update source configured (repo.conf) — "
+                                 "set repo_url to enable update checks.",
+                                 "未配置更新源（repo.conf）——配置 repo_url 后即可检查更新。")}
+        try:
+            url = src.rstrip("/")
+            if not url.startswith("http"):
+                url = "http://" + url
+            req = _ul.Request(url + "/index.json", headers={"User-Agent": "LINGOS"})
+            with _ul.urlopen(req, timeout=8) as r:
+                raw = r.read().decode("utf-8", "ignore")
+            latest = ""
+            try:
+                import re as _re
+                m = _re.search(r'"version"\s*:\s*"([^"]+)"', raw)
+                latest = m.group(1) if m else ""
+            except Exception:
+                latest = ""
+            avail = bool(latest and latest != cur)
+            return {"status": "ok", "current": cur, "latest": latest,
+                    "update_available": avail, "source": src, "checked": int(time.time()),
+                    "message": (t(f"New version available: {latest}", f"发现新版本：{latest}") if avail
+                                else t(f"Already up to date ({cur})", f"已是最新版本（{cur}）"))}
+        except Exception as e:
+            return {"status": "ok", "current": cur, "latest": "", "update_available": False,
+                    "source": src, "checked": int(time.time()),
+                    "message": t(f"Update source unreachable: {e}", f"更新源不可达：{e}")}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_skills_reload() -> dict:
+    """【0.6.0】热重载全部技能（注册表技能 + 自定义技能包）——安装后即时生效"""
+    result = {"status": "ok", "registry": 0, "custom": 0, "total": 0}
+    try:
+        from skill_handlers import SKILL_REGISTRY, reload_skills_from_registry
+        result["registry"] = reload_skills_from_registry()
+    except Exception as e:
+        logger.warning("reload registry skills failed: %s", e)
+    try:
+        from skill_install import reload_custom_skills
+        from skill_handlers import SKILL_REGISTRY
+        result["custom"] = reload_custom_skills(SKILL_REGISTRY)
+    except Exception as e:
+        logger.warning("reload custom skills failed: %s", e)
+    try:
+        from skill_handlers import SKILL_REGISTRY as _R
+        result["total"] = len(_R)
+    except Exception:
+        pass
+    logger.info("skills_reload: registry=%s custom=%s total=%s",
+                result["registry"], result["custom"], result["total"])
+    return result
+
 # 人格配置（/LINGOS/system/config/personality.json）
 AI_PERSONALITY_FILE = "/LINGOS/system/config/personality.json"
 AI_PERSONALITIES = ["nook", "noma"]
@@ -4124,6 +4407,16 @@ def handle_client(conn, addr):
             _reply(conn, "skill_list_custom", cmd_skill_list_custom()); return
         if cmd == "skill_market":
             _reply(conn, "skill_market", cmd_skill_market()); return
+        if cmd == "skills_reload":
+            _reply(conn, "skills_reload", cmd_skills_reload()); return
+        if cmd == "port_list":
+            _reply(conn, "port_list", cmd_port_list()); return
+        if cmd == "update_check":
+            _reply(conn, "update_check", cmd_update_check()); return
+        if cmd == "auth_respond":
+            _reply(conn, "auth_respond", cmd_auth_respond(str(req.get("req_id", "")), str(req.get("decision", "")))); return
+        if cmd == "auth_pending":
+            _reply(conn, "auth_pending", cmd_auth_pending()); return
         if cmd == "personality_set":
             _reply(conn, "personality_set", cmd_personality_set(str(req.get("name", "")))); return
         if cmd == "personality_get":

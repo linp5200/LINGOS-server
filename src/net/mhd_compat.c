@@ -55,6 +55,12 @@ struct MHD_Response {
     char   *body;
     size_t  body_len;
     int     must_free;          /* 1 = 销毁时 free(body) */
+    /* 【0.6.0 关键修复】引用计数（对齐真实 libmicrohttpd 语义）：
+     * 应用标准用法 = MHD_queue_response(r) 后立即 MHD_destroy_response(r)，
+     * 真正的释放发生在队列（连接）侧的 destroy 之后——
+     * 此前无引用计数 → queue 后 destroy 即真释放 → 发送时 use-after-free +
+     * conn_free 二次释放 → 崩溃（先生环境实测 SIGSEGV free("Content-Type")） */
+    int     refcount;
     mhd_kv_t *headers;
     int     header_count;
     int     header_cap;
@@ -583,6 +589,7 @@ MHD_Response *MHD_create_response_from_buffer(size_t size, void *buffer,
                                               enum MHD_ResponseMemoryMode mode) {
     MHD_Response *r = calloc(1, sizeof(*r));
     if (!r) return NULL;
+    r->refcount = 1;   /* 【0.6.0】应用侧持有的初始引用 */
     if (mode == MHD_RESPMEM_PERSISTENT) {
         r->body = (char *)buffer;
         r->must_free = 0;
@@ -632,12 +639,19 @@ MHD_Result MHD_queue_response(MHD_Connection *c, unsigned int status, MHD_Respon
     if (!q) return MHD_NO;
     q->resp = r;
     q->status = status;
+    r->refcount++;   /* 【0.6.0】队列（连接）持有一个引用 */
     c->queue[c->queue_count++] = (MHD_Response *)q;
     return MHD_YES;
 }
 
 void MHD_destroy_response(MHD_Response *r) {
     if (!r) return;
+    /* 【0.6.0 关键修复】引用计数释放（对齐真实 MHD）：
+     * 应用 queue 后 destroy → 引用-1（队列仍持有）；
+     * conn_free 中销毁 → 引用-1 → 归零才真正释放。
+     * 防 use-after-free + 双重释放崩溃。 */
+    r->refcount--;
+    if (r->refcount > 0) return;
     if (r->must_free) free(r->body);
     kv_free(r->headers, r->header_count);
     free(r);

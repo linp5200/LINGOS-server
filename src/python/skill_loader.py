@@ -12,6 +12,7 @@ import sys
 import json
 import logging
 import importlib
+import importlib.util
 from typing import Dict, Any, Optional, Callable, Tuple
 
 # ========== 导入依赖 ==========
@@ -79,28 +80,75 @@ class SkillExecutor:
 
     @staticmethod
     def _create_python_executor(handler_path: str) -> Callable:
-        """创建 Python 函数执行器"""
+        """创建 Python 函数执行器（【0.6.0】多策略解析：模块导入 → 技能目录文件加载）
+
+        背景：外置技能（skill_store / 技能包）的 handler_path 通常是技能名，
+        其实现文件位于 /LINGOS/skills/enabled/<name>/ 等目录——直接
+        import_module 必失败（不在 sys.path）。本实现按顺序尝试：
+          ① 模块导入（内置 handler：如 skill_handlers.xxx 或 module.func）
+          ② 技能目录文件加载（enabled / skills / registry/skills/* 各目录，
+             实现文件候选：<name>.py / handler.py / main.py）
+        入口函数按序探测：指定 func → run → handle → execute → main
+        """
         if not handler_path:
             return lambda args: (False, t("Missing handler_path", "缺少 handler_path"))
 
         try:
-            # 解析模块和函数名
-            module_name, func_name = handler_path.rsplit(".", 1) if "." in handler_path else (handler_path, "execute")
+            module_name, func_name = handler_path.rsplit(".", 1) if "." in handler_path else (handler_path, None)
+            wanted = ([func_name] if func_name else []) + ["run", "handle", "execute", "main"]
 
-            # 尝试导入模块
+            # 策略①：模块导入（内置 handler）
             try:
                 module = importlib.import_module(module_name)
-                func = getattr(module, func_name, None)
-                if func and callable(func):
-                    logger.debug(f"Loaded Python skill: {handler_path}")
-                    return func
-                else:
-                    logger.warning(f"Function {func_name} not found in {module_name}")
-            except ImportError as e:
-                logger.warning(f"Module import failed: {module_name}, error: {e}")
+                for fn in wanted:
+                    func = getattr(module, fn, None)
+                    if func and callable(func):
+                        logger.debug(f"Loaded Python skill (module): {handler_path} -> {fn}")
+                        return func
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.debug(f"Module load error for {module_name}: {e}")
 
-            # 降级：尝试直接执行（作为 code 字符串）
-            return lambda args: SkillExecutor._eval_python_code(handler_path, args)
+            # 策略②：技能目录文件加载
+            base_dirs = [
+                "/LINGOS/skills/enabled",           # skill_store 启用区
+                "/LINGOS/skills",                    # 技能包区
+                "/LINGOS/registry/skills/custom",    # 注册表自定义区
+                "/LINGOS/registry/skills/store",     # 注册表商店区
+                "/LINGOS/registry/skills/builtin",   # 注册表内置区
+            ]
+            file_candidates = []
+            for bd in base_dirs:
+                skill_dir = os.path.join(bd, handler_path)
+                for fname in ("%s.py" % handler_path, "handler.py", "main.py"):
+                    p = os.path.join(skill_dir, fname)
+                    if os.path.isfile(p):
+                        file_candidates.append(p)
+                p2 = os.path.join(bd, handler_path + ".py")   # 直接平铺文件
+                if os.path.isfile(p2):
+                    file_candidates.append(p2)
+
+            for fp in file_candidates:
+                try:
+                    spec = importlib.util.spec_from_file_location("_lingos_skill_%s" % module_name, fp)
+                    if not spec or not spec.loader:
+                        continue
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    for fn in wanted:
+                        func = getattr(mod, fn, None)
+                        if func and callable(func):
+                            logger.info(f"Loaded Python skill (file): {handler_path} -> {fp}")
+                            return func
+                except Exception as e:
+                    logger.debug(f"file load failed {fp}: {e}")
+                    continue
+
+            logger.warning(f"Cannot resolve python skill handler: {handler_path}")
+            return lambda args: (False, t(
+                f"Skill handler not found: {handler_path}",
+                f"技能实现未找到：{handler_path}（请检查技能包完整性）"))
 
         except Exception as e:
             logger.error(f"Failed to create Python executor: {e}")

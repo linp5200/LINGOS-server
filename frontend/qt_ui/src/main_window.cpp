@@ -358,17 +358,36 @@ void MainWindow::refreshWeather() {
         return;
     }
     const QJsonObject d = r.value("data").toObject();
-    m_weatherView->append(QStringLiteral("城市    : %1").arg(d.value("city").toString(QStringLiteral("--"))));
-    m_weatherView->append(QStringLiteral("温度    : %1 °C").arg(d.value("temp").toVariant().toString()));
-    m_weatherView->append(QStringLiteral("体感    : %1 °C").arg(d.value("feels_like").toVariant().toString()));
-    m_weatherView->append(QStringLiteral("湿度    : %1 %").arg(d.value("humidity").toVariant().toString()));
-    m_weatherView->append(QStringLiteral("风速    : %1 km/h").arg(d.value("wind_speed").toVariant().toString()));
-    m_weatherView->append(QStringLiteral("气压    : %1 hPa").arg(d.value("pressure").toVariant().toString()));
-    m_weatherView->append(QStringLiteral("UV      : %1").arg(d.value("uv").toVariant().toString()));
+    /* 【0.5.2 修复】字段回退读取（服务端别名 feels_like/wind_speed；city 在顶层） */
+    auto pick = [](const QJsonObject &o, const QStringList &keys) -> QJsonValue {
+        for (const QString &k : keys) {
+            const QJsonValue v = o.value(k);
+            if (!v.isUndefined() && !v.isNull()) return v;
+        }
+        return QJsonValue();
+    };
+    auto txt = [&pick](const QJsonObject &o, const QStringList &keys) -> QString {
+        const QJsonValue v = pick(o, keys);
+        if (v.isUndefined() || v.isNull()) return QStringLiteral("--");
+        return v.toVariant().toString();
+    };
+    QString city = txt(r, {QStringLiteral("city")});
+    if (city == QStringLiteral("--")) city = txt(d, {QStringLiteral("city")});
+    m_weatherView->append(QStringLiteral("城市    : %1").arg(city));
+    m_weatherView->append(QStringLiteral("温度    : %1 °C").arg(txt(d, {QStringLiteral("temp"), QStringLiteral("temperature")})));
+    m_weatherView->append(QStringLiteral("体感    : %1 °C").arg(txt(d, {QStringLiteral("feels_like"), QStringLiteral("feels"), QStringLiteral("apparent_temperature")})));
+    m_weatherView->append(QStringLiteral("湿度    : %1 %").arg(txt(d, {QStringLiteral("humidity")})));
+    m_weatherView->append(QStringLiteral("风速    : %1 km/h").arg(txt(d, {QStringLiteral("wind_speed"), QStringLiteral("wind"), QStringLiteral("wind_speed_10m")})));
+    m_weatherView->append(QStringLiteral("风向    : %1 °").arg(txt(d, {QStringLiteral("wind_direction"), QStringLiteral("wind_dir")})));
+    m_weatherView->append(QStringLiteral("气压    : %1 hPa").arg(txt(d, {QStringLiteral("pressure"), QStringLiteral("surface_pressure")})));
+    m_weatherView->append(QStringLiteral("UV      : %1").arg(txt(d, {QStringLiteral("uv"), QStringLiteral("uv_index")})));
     m_weatherView->append(QStringLiteral("\n—— 7 日预报 ——"));
     const QJsonObject f = callCmd(QStringLiteral("weather_forecast"));
     if (f.value("status").toString() == QStringLiteral("ok")) {
-        renderList(m_weatherView, f.value("daily").toArray(),
+        /* 【0.5.2】daily 在 data 内（原代码读顶层 —— 结构不符导致空列表） */
+        QJsonArray daily = f.value("data").toObject().value("daily").toArray();
+        if (daily.isEmpty()) daily = f.value("daily").toArray();  /* 兼容旧结构 */
+        renderList(m_weatherView, daily,
                    {QStringLiteral("date"), QStringLiteral("temp_min"), QStringLiteral("temp_max"),
                     QStringLiteral("code")});
     } else {

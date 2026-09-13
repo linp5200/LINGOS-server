@@ -32,8 +32,8 @@
 #define CONNECTION_MAX_RETRIES   3
 #define CONNECTION_BAN_TIME      600
 
-#define CONNECTION_RECV_BUF_SIZE 8192
-#define CONNECTION_SEND_BUF_SIZE 8192
+#define CONNECTION_RECV_BUF_SIZE 16384
+#define CONNECTION_SEND_BUF_SIZE 16384
 
 /* ============================================================
  * 消息类型 (TLV)

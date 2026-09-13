@@ -263,7 +263,7 @@ def main():
     load_cfg()
     if args.scan:
         print(json.dumps(scan_v4l2(), ensure_ascii=False, indent=2)); return
-    LOG.info("MonitorService started (LN-0.4.3) cameras=%d", len(_cfg["cameras"]))
+    LOG.info("MonitorService started (LN-0.5.2) cameras=%d", len(_cfg["cameras"]))
     if args.http:
         HTTPServer(("0.0.0.0", args.http), MonitorHTTP).serve_forever()
     else:

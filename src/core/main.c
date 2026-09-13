@@ -377,6 +377,93 @@ static void cleanup_stale_processes(const char *pid_file, const char *socket_pat
     if (access(socket_path, F_OK) == 0) unlink(socket_path);
 }
 
+/* ============================================================
+ * 【0.6.0】辅助守护进程拉起（alertd=生命线 / visiond / voiced）
+ *   背景：三守护此前从不被打包也不被拉起（预警系统整体停摆根因之一）。
+ *   策略：软启动——失败仅告警不阻塞主程序（兼容旧包缺二进制场景）。
+ *   健康判断：/proc 扫描进程名（三守护无 socket 协议）。
+ * ============================================================ */
+static int aux_daemon_running(const char *name) {
+    DIR *d = opendir("/proc");
+    if (!d) return 0;
+    struct dirent *e;
+    int found = 0;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char cpath[64];
+        safe_snprintf(cpath, sizeof(cpath), "/proc/%s/comm", e->d_name);
+        FILE *cf = fopen(cpath, "r");
+        if (cf) {
+            char comm[64] = {0};
+            if (fgets(comm, sizeof(comm), cf)) {
+                size_t l = strlen(comm);
+                if (l && comm[l - 1] == '\n') comm[l - 1] = '\0';
+                if (strcmp(comm, name) == 0) found = 1;
+            }
+            fclose(cf);
+        }
+        if (found) break;
+    }
+    closedir(d);
+    return found;
+}
+
+static void ensure_aux_daemon(const char *name) {
+    if (!name) return;
+    if (aux_daemon_running(name)) {
+        LOG_DEBUG_T("Main", "AuxDaemon", "AlreadyRunning", "%s is running", name);
+        return;
+    }
+    /* 路径探测：与 lingosd 同优先级（同目录 → /LINGOS/bin → /LINGOS） */
+    static char aux_path_buf[512];
+    char cand[512];
+    const char *path = NULL;
+    char exe[512];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n > 0) {
+        exe[n] = '\0';
+        char *slash = strrchr(exe, '/');
+        if (slash) {
+            *slash = '\0';
+            safe_snprintf(cand, sizeof(cand), "%s/%s", exe, name);
+            if (access(cand, X_OK) == 0) {
+                safe_snprintf(aux_path_buf, sizeof(aux_path_buf), "%s", cand);
+                path = aux_path_buf;
+            }
+        }
+    }
+    if (!path) {
+        safe_snprintf(cand, sizeof(cand), "/LINGOS/bin/%s", name);
+        if (access(cand, X_OK) == 0) { safe_snprintf(aux_path_buf, sizeof(aux_path_buf), "%s", cand); path = aux_path_buf; }
+    }
+    if (!path) {
+        safe_snprintf(cand, sizeof(cand), "/LINGOS/%s", name);
+        if (access(cand, X_OK) == 0) { safe_snprintf(aux_path_buf, sizeof(aux_path_buf), "%s", cand); path = aux_path_buf; }
+    }
+    if (!path) {
+        LOG_WARN_T("Main", "AuxDaemon", "NotFound", "%s not found (skip)", name);
+        return;
+    }
+    pid_t pid = fork();
+    if (pid == 0) {
+        setsid();
+        execl(path, path, (char*)NULL);
+        _exit(1);
+    } else if (pid > 0) {
+        char pfile[256];
+        safe_snprintf(pfile, sizeof(pfile), "%s/%s.pid", LINGOS_RUN_DIR, name);
+        FILE *fp = fopen(pfile, "w");
+        if (fp) { fprintf(fp, "%d\n", pid); fclose(fp); }
+        sleep(1);
+        if (kill(pid, 0) == 0) {
+            LOG_INFO_T("Main", "AuxDaemon", "Started", "%s PID=%d", name, pid);
+        } else {
+            LOG_WARN_T("Main", "AuxDaemon", "DiedImmediately",
+                       "%s exited right after start (missing deps?), continuing", name);
+        }
+    }
+}
+
 int ensure_daemon_running(void) {
     LOG_INFO_T("Main", "EnsureDaemon", "Enter", "starting lingosd");
     /*
@@ -830,8 +917,14 @@ after_wizard:
     /* 初始化语言（必须在 config_core_load 之后） */
     lang_init();
 
-    /* --- 依赖安装（使用新的 install_manager） --- */
-    if (!install_manager_check_all()) {
+    /* --- 依赖安装（使用新的 install_manager） ---
+     * 【0.6.0】全捆运行模式（start.sh 设 LINGOS_BUNDLED=1）：二进制与运行库
+     * 全随包分发——不再检查/尝试安装开发包依赖。原逻辑每次启动检查
+     * lib*-dev 包并尝试 apt 安装（0.5.0 起全捆已不需要——慢且必失败）。 */
+    const char *lingos_bundled = getenv("LINGOS_BUNDLED");
+    if (lingos_bundled && lingos_bundled[0] == '1') {
+        LOG_INFO_T("Main", "Startup", "Install", "bundled runtime mode — system dependency check skipped");
+    } else if (!install_manager_check_all()) {
         LOG_INFO_T("Main", "Startup", "Install", "installing dependencies");
         install_summary_t install_summary;
         int install_ret = install_manager_run_all(&install_summary);
@@ -859,6 +952,11 @@ after_wizard:
         error_shell_run();
         return 1;
     }
+
+    /* 【0.6.0】辅助守护进程（软启动——生命线 alertd + 视觉/语音内核） */
+    ensure_aux_daemon("lingos_alertd");
+    ensure_aux_daemon("lingos_visiond");
+    ensure_aux_daemon("lingos_voiced");
 
     connection_load_config(NULL);
     if (connection_server_start(NULL) != 0) {

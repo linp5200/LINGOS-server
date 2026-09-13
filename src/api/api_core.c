@@ -22,9 +22,14 @@
 #include "../config/config_core.h"
 #include "../ai/ai_config.h"
 #include "../health/system_health.h"
+#include "../lib/port_config.h"
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #define MAX_EP 32
 
@@ -51,6 +56,27 @@ static int lingosd_alive(void) {
     /* kill(pid, 0)：仅探测进程是否存在（不发送信号） */
     if (kill(pid, 0) == 0 || errno == EPERM) return 1;
     return 0;
+}
+
+/* ============================================================
+ * 【0.5.2 修复】端口存活探测（先生 2026-09-12 实测：WS 2939 / HTTP 8080 拒绝访问）
+ *   场景：lingosd 进程虽在（PID 检查通过），但其 WS/HTTP 启动失败或线程已死 →
+ *         主进程因「lingosd alive」跳过启动 → **无人监听 2939/8080**。
+ *   处置：主进程跳过前先实测两个端口；都通 → 正常跳过；
+ *         否则告警并**兜底自行启动**（若 lingosd 侧稍后重试，bind 冲突仅打日志，无害）。
+ * ============================================================ */
+static int port_listening(int port) {
+    if (port <= 0) return 0;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int ok = (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0);
+    close(fd);
+    return ok;
 }
 
 /* ============================================================
@@ -82,9 +108,21 @@ void api_core_init(int force_network) {
     LOG_INFO_T("API", "Init", "OK", "API framework initialized (7 endpoints)");
 
     /* 【修复】主程序跳过：若 lingosd 已运行（WS/HTTP 已由其独占），仅注册端点不重复启动 */
+    /* 【0.5.2】跳过前实测端口——lingosd 在但端口没起 → 兜底自起（防「无人监听」） */
     if (!force_network && lingosd_alive()) {
-        LOG_INFO_T("API", "Init", "SkipNetwork", "lingosd already running, skipping WS/HTTP (main process)");
-        return;
+        int ws_port = port_config_get(PORT_WS);
+        int http_port = port_config_get(PORT_HTTP);
+        int ws_ok = port_listening(ws_port);
+        int http_ok = port_listening(http_port);
+        if (ws_ok && http_ok) {
+            LOG_INFO_T("API", "Init", "SkipNetwork",
+                       "lingosd running & ports live (ws=%d http=%d), skipping WS/HTTP (main process)",
+                       ws_port, http_port);
+            return;
+        }
+        LOG_WARN_T("API", "Init", "FallbackStart",
+                   "lingosd alive but ports NOT live (ws=%d:%d http=%d:%d) — starting in main process",
+                   ws_port, ws_ok, http_port, http_ok);
     }
 
     /* 启动 WebSocket 服务器 */
@@ -101,7 +139,14 @@ void api_core_init(int force_network) {
         LOG_INFO_T("API", "Init", "HTTPOK", "HTTP server started on port 8080");
     }
 
-    uart_puts("[API] Ready (7 endpoints, WS on 2939, HTTP on 8080).\n");
+    /* 【0.5.2】Ready 消息用实际端口（原硬编码 2939/8080——端口可配后不准） */
+    {
+        char ready_msg[128];
+        safe_snprintf(ready_msg, sizeof(ready_msg),
+                      "[API] Ready (7 endpoints, WS on %d, HTTP on %d).\n",
+                      port_config_get(PORT_WS), port_config_get(PORT_HTTP));
+        uart_puts(ready_msg);
+    }
 }
 
 /* ============================================================

@@ -43,6 +43,12 @@ static void* background_init_thread(void *arg) {
         extern int registry_register_builtin_modules(void);
         int n = registry_register_builtin_modules();
         LOG_INFO_T("BackgroundInit", "Step", "RegistryBuiltin", "builtin systems registered: %d", n);
+        /* 【0.6.0 修复】技能目录加载 + 索引导出（技能链 4 断点之"无调用者"）
+         * 加载 /registry/skills/{builtin,custom,store} 技能 → 注册 →
+         * 并导出 index.json（供 lingosd registry_list / Python 文件回退读取） */
+        extern int registry_skill_load_all(void);
+        int nsk = registry_skill_load_all();
+        LOG_INFO_T("BackgroundInit", "Step", "RegistrySkill", "skills loaded: %d", nsk);
     }
 
     /* ============================================================

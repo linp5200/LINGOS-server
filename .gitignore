@@ -10,6 +10,9 @@ lingos_linux
 lingosd
 lingos_supervisor
 lingos_gui
+lingos_alertd
+lingos_visiond
+lingos_voiced
 
 # 构建产物
 build/

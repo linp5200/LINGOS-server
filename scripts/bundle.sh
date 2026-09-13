@@ -35,7 +35,8 @@ rm -rf "$DEST"
 mkdir -p "$DEST"/{lib,python,bin}
 
 # ---------- 1. 复制二进制 ----------
-for bin in lingos_linux lingosd lingos_supervisor; do
+# 【0.6.0】全量：主三件 + 三内核守护（alertd=生命线/visiond/voiced）
+for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced; do
     if [ -x "$ROOT/$bin" ]; then
         cp -a "$ROOT/$bin" "$DEST/"
         echo "==> 复制二进制: $bin"
@@ -72,7 +73,7 @@ collect_recursive() {
     done
 }
 
-for bin in lingos_linux lingosd lingos_supervisor; do
+for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced; do
     [ -x "$DEST/$bin" ] && collect_recursive "$DEST/$bin"
 done
 
@@ -123,6 +124,10 @@ if command -v python3 >/dev/null; then
     # 服务端脚本复制进 venv（可执行入口）
     mkdir -p "$DEST/python/server"
     cp -a "$ROOT"/src/python/*.py "$DEST/python/server/" 2>/dev/null || true
+    # 【0.6.0】plugin 子目录（ai_server 从自身目录下 plugin/ 加载——此前只在插件包内，
+    # 主包缺失 → "No module named 'plugin_loader'"）
+    mkdir -p "$DEST/python/server/plugin"
+    cp -a "$ROOT"/src/python/plugin/*.py "$DEST/python/server/plugin/" 2>/dev/null || true
     echo "==> venv 完成（含 requests/websocket-client/OCR/视觉依赖）"
 else
     echo "!! 无 python3——跳过 venv（Python 层缺失）" >&2
@@ -200,7 +205,11 @@ echo "==> LING OS 安装到 $TARGET"
 mkdir -p "$TARGET"/{bin,lib,run,state,data,log,system/config,share/webui,registry,plugins,models,skills,Ensystem,snapshots,repairs,Dump,backups,cache,AH}
 echo "==> 目录骨架已建: $TARGET"
 # 2) 复制二进制/库/venv/webui（保留可执行位）
+# 【0.6.0】全量：主三件 + 三内核守护（缺失时软跳过——兼容旧包）
 cp -a "$DIR"/lingos_linux "$DIR"/lingosd "$DIR"/lingos_supervisor "$TARGET/bin/" 2>/dev/null || true
+for _daemon in lingos_alertd lingos_visiond lingos_voiced; do
+  [ -f "$DIR/$_daemon" ] && cp -a "$DIR/$_daemon" "$TARGET/bin/" 2>/dev/null || true
+done
 cp -a "$DIR"/lib/* "$TARGET/lib/" 2>/dev/null || true
 [ -d "$DIR/python" ] && cp -a "$DIR/python" "$TARGET/python" 2>/dev/null || true
 [ -d "$DIR/share/webui" ] && cp -a "$DIR"/share/webui/* "$TARGET/share/webui/" 2>/dev/null || true
@@ -245,10 +254,13 @@ fi
 SYS_PKG="LINGOS_server_linux_v${VER}_${ARCH}_sysbin"
 SYS_DEST="$OUT/$SYS_PKG"
 mkdir -p "$SYS_DEST" "$SYS_DEST/share/webui"
-for bin in lingos_linux lingosd lingos_supervisor; do
+for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced; do
     [ -f "$DEST/$bin" ] && cp -a "$DEST/$bin" "$SYS_DEST/"
 done
 cp -a "$ROOT"/src/python/*.py "$SYS_DEST/" 2>/dev/null || true
+# 【0.6.0】plugin 子目录随 sysbin（ai_server 依赖）
+mkdir -p "$SYS_DEST/plugin"
+cp -a "$ROOT"/src/python/plugin/*.py "$SYS_DEST/plugin/" 2>/dev/null || true
 # 【0.4.3】Web UI 随 sysbin（网页访问 http://host:8080/ui——先生重点要求）
 cp -a "$ROOT"/webui/* "$SYS_DEST/share/webui/" 2>/dev/null || true
 # 【0.4.4 修复】sysbin 补齐部署脚本（原缺失 → deploy 脚本依赖落空、无 start.sh）

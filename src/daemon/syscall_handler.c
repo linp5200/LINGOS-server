@@ -1227,7 +1227,97 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
         cJSON_AddItemToObject(result, "data", result_list);
         cJSON_Delete(registry);
     }
+    else if (strcmp(operation, "permission_list") == 0) {
+        /* 【0.6.0】AI 权限清单（与 App「设置→权限」同一事实源：
+         *   /LINGOS/system/config/ai_permissions.json）
+         *   修复：此前 daemon 无此操作 → Python 权限网关查询恒失败 →
+         *   11 个高危技能被 fail-safe 永久拒绝（权限链断点根因之一） */
+        LOG_DEBUG_T("Syscall", "Handle", "PermissionList", "reading ai_permissions.json");
+        const char *proot = lingos_data_root();
+        char pfile[512];
+        safe_snprintf(pfile, sizeof(pfile), "%s/system/config/ai_permissions.json", proot);
+        cJSON *pcurrent = cJSON_CreateObject();
+        FILE *pf = fopen(pfile, "r");
+        if (pf) {
+            fseek(pf, 0, SEEK_END);
+            long plen = ftell(pf);
+            fseek(pf, 0, SEEK_SET);
+            if (plen > 0) {
+                char *pbuf = malloc((size_t)plen + 1);
+                if (pbuf) {
+                    size_t pr = fread(pbuf, 1, (size_t)plen, pf);
+                    pbuf[pr] = '\0';
+                    cJSON *pj = cJSON_Parse(pbuf);
+                    free(pbuf);
+                    if (pj) {
+                        cJSON_Delete(pcurrent);
+                        pcurrent = pj;
+                    }
+                }
+            }
+            fclose(pf);
+        }
+        cJSON_AddStringToObject(result, "status", "ok");
+        cJSON_AddItemToObject(result, "current", pcurrent);
+    }
 
+    else if (strcmp(operation, "notify") == 0) {
+        /* 【0.6.0】系统通知桥（修复桥缺口：Python 侧 3 处调用此前无人实现）
+         *   ① WS 广播（App/Web 前台实时可见；弱符号——无 WS 的二进制自动跳过）
+         *   ② 落盘通知轨迹（审计/离线查看） */
+        cJSON *title_i = cJSON_GetObjectItem(args, "title");
+        cJSON *body_i = cJSON_GetObjectItem(args, "body");
+        cJSON *level_i = cJSON_GetObjectItem(args, "level");
+        const char *ntitle = (title_i && cJSON_IsString(title_i)) ? title_i->valuestring : "LINGOS";
+        const char *nbody = (body_i && cJSON_IsString(body_i)) ? body_i->valuestring : "";
+        const char *nlevel = (level_i && cJSON_IsString(level_i)) ? level_i->valuestring : "info";
+
+        /* ① WS 广播（弱符号——仅在链接 WS 服务的二进制中生效） */
+        {
+            extern int websocket_broadcast_all(const char *message) __attribute__((weak));
+            if (websocket_broadcast_all) {
+                cJSON *evt = cJSON_CreateObject();
+                cJSON_AddStringToObject(evt, "type", "notify");
+                cJSON_AddStringToObject(evt, "title", ntitle);
+                cJSON_AddStringToObject(evt, "body", nbody);
+                cJSON_AddStringToObject(evt, "level", nlevel);
+                char *evs = cJSON_PrintUnformatted(evt);
+                cJSON_Delete(evt);
+                if (evs) {
+                    websocket_broadcast_all(evs);
+                    free(evs);
+                    LOG_INFO_T("Syscall", "Notify", "Broadcast", "title='%s'", ntitle);
+                }
+            }
+        }
+
+        /* ② 落盘（jsonl 追加） */
+        {
+            const char *nroot = lingos_data_root();
+            char ndir[512], nfile[512];
+            safe_snprintf(ndir, sizeof(ndir), "%s/data/notifications", nroot);
+            mkdir(ndir, 0755);
+            safe_snprintf(nfile, sizeof(nfile), "%s/sys_notify.jsonl", ndir);
+            FILE *nf = fopen(nfile, "a");
+            if (nf) {
+                cJSON *rec = cJSON_CreateObject();
+                cJSON_AddNumberToObject(rec, "ts", (double)time(NULL));
+                cJSON_AddStringToObject(rec, "title", ntitle);
+                cJSON_AddStringToObject(rec, "body", nbody);
+                cJSON_AddStringToObject(rec, "level", nlevel);
+                char *rs = cJSON_PrintUnformatted(rec);
+                cJSON_Delete(rec);
+                if (rs) {
+                    fprintf(nf, "%s\n", rs);
+                    free(rs);
+                }
+                fclose(nf);
+            }
+        }
+
+        cJSON_AddStringToObject(result, "status", "ok");
+        cJSON_AddStringToObject(result, "message", "notification delivered");
+    }
     /* ----- 未知操作 ----- */
     else {
         LOG_WARN_T("Syscall", "Handle", "Unknown", "unknown operation: %s", operation);

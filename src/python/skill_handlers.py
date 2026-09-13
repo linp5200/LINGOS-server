@@ -1025,23 +1025,80 @@ register_skill("sys_command", sys_command, risk="critical", need_confirm=True)
 # =============================================================
 
 def defense_mode(args_json: str) -> Tuple[bool, str]:
+    """防御模式（【0.6.0】真实状态查询——读 /LINGOS/system/config/security.json；
+    切换引导至系统命令，不假装执行）"""
     try:
-        args = json.loads(args_json)
+        args = json.loads(args_json or "{}")
         mode = args.get("mode")
         action = args.get("action")
+
+        cfg_path = "/LINGOS/system/config/security.json"
+        state = {}
+        try:
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    state = json.load(f) or {}
+        except Exception:
+            state = {}
+
         if not mode and not action:
-            # 查询当前状态
-            return True, t("Defense mode query via C side: system defense status",
-                          "防御模式查询请使用C端命令：system defense status")
-        return True, t("Defense mode switching is controlled by C side",
-                      "防御模式切换由C端控制")
+            return True, json.dumps({
+                "status": "ok",
+                "shadow_enabled": bool(state.get("shadow_enabled", False)),
+                "dark_enabled": bool(state.get("dark_enabled", False)),
+                "absolute_enabled": bool(state.get("absolute_enabled", False)),
+                "input_mode": state.get("input_mode", ""),
+                "config": cfg_path,
+                "message": t("To switch defense modes use the system `defense` command "
+                             "(defense shadow|dark|absolute on|off) — switching requires the C core.",
+                             "切换防御模式请使用系统 `defense` 命令"
+                             "（defense shadow|dark|absolute on|off）——切换需 C 核心执行。"),
+            }, ensure_ascii=False)
+
+        return True, json.dumps({
+            "status": "ok",
+            "requested": {"mode": mode, "action": action},
+            "executed": False,
+            "message": t("Defense mode switching is executed by the system command: "
+                         "`defense [shadow|dark|absolute] [on|off]`",
+                         "防御模式切换由系统命令执行：`defense [shadow|dark|absolute] [on|off]`"),
+        }, ensure_ascii=False)
     except Exception as e:
         return False, str(e)
 register_skill("defense_mode", defense_mode, risk="medium")
 
 def perm_set(args_json: str) -> Tuple[bool, str]:
+    """权限设置（【0.6.0】真实写入 /LINGOS/system/config/ai_permissions.json——
+    与 App「设置→权限」及权限网关同一事实源）
+    参数: {"perm": "location", "mode": "deny|allow_once|allow_while|allow_always|shadow"}"""
     try:
-        return True, t("Permission setting via system commands", "权限设置请使用系统命令")
+        args = json.loads(args_json or "{}")
+        perm = str(args.get("perm", "") or "").strip()
+        mode = str(args.get("mode", "") or "").strip()
+        if not perm or not mode:
+            return False, t("Usage: {'perm': '<name>', 'mode': '<deny|allow_once|allow_while|allow_always|shadow>'}",
+                            "用法：{\"perm\": \"<权限名>\", \"mode\": \"<deny|allow_once|allow_while|allow_always|shadow>\"}")
+        valid_modes = ("deny", "allow_once", "allow_while", "allow_always", "shadow")
+        if mode not in valid_modes:
+            return False, t(f"Invalid mode '{mode}' (valid: {', '.join(valid_modes)})",
+                            f"无效模式 '{mode}'（可选：{', '.join(valid_modes)}）")
+        perm_file = "/LINGOS/system/config/ai_permissions.json"
+        data = {}
+        try:
+            if os.path.exists(perm_file):
+                with open(perm_file, "r", encoding="utf-8") as f:
+                    data = json.load(f) or {}
+        except Exception:
+            data = {}
+        data[perm] = mode
+        os.makedirs(os.path.dirname(perm_file), exist_ok=True)
+        with open(perm_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True, json.dumps({
+            "status": "ok", "data": {perm: mode}, "file": perm_file,
+            "message": t("Permission updated — effective immediately (shared with the App and the permission gateway).",
+                         "权限已更新——立即生效（与 App 及权限网关共用同一存储）。"),
+        }, ensure_ascii=False)
     except Exception as e:
         return False, str(e)
 register_skill("perm_set", perm_set, risk="medium")
@@ -1237,35 +1294,83 @@ register_skill("alert_query", alert_query, risk="low")
 
 def typhoon_predict(args_json: str) -> Tuple[bool, str]:
     """
-    台风路径预测（AI + 历史匹配）
-    参数: {"typhoon_id": "TY2025-01", "lat": 19.0, "lon": 115.0}
+    台风路径预测（【0.6.0】真实数据——国家气象中心 NMC 官方预报，零编造）
+    参数: {"typhoon_id": "（可选）台风编号，缺省=最近活动台风"}
+    数据源: http://typhoon.nmc.cn/weatherservice/typhoon/jsons/{list_default,view_<id>}
     """
     try:
-        args = json.loads(args_json)
-        lat = args.get("lat", 20.0)
-        lon = args.get("lon", 115.0)
+        import urllib.request as _ul
+        args = json.loads(args_json or "{}")
+        tid = str(args.get("typhoon_id", "") or "").strip()
+        base = "http://typhoon.nmc.cn/weatherservice/typhoon/jsons"
 
-        # 模拟预测：未来 72 小时，每 6 小时一个点
-        paths = []
-        for i in range(0, 72, 6):
-            paths.append({
-                "time_offset": i,
-                "lat": lat + i * 0.02 + random.uniform(-0.1, 0.1),
-                "lon": lon + i * 0.03 + random.uniform(-0.1, 0.1),
-                "probability": 80 - i * 0.5
-            })
+        def _fetch(u, timeout=12):
+            req = _ul.Request(u, headers={"User-Agent": "Mozilla/5.0 (LINGOS)"})
+            with _ul.urlopen(req, timeout=timeout) as r:
+                txt = r.read().decode("utf-8", "ignore")
+            i, j = txt.find("("), txt.rfind(")")
+            return json.loads(txt[i + 1:j]) if i >= 0 and j > i else json.loads(txt)
+
+        if not tid:
+            lst = _fetch(base + "/list_default").get("typhoonList", [])
+            act = [x for x in lst if len(x) > 7 and x[7] == "start"] or lst
+            if not act:
+                return True, json.dumps({"status": "ok", "message": "当前无台风活动",
+                                         "predictions": [], "source": "NMC"}, ensure_ascii=False)
+            tid = str(act[0][0])
+
+        v = _fetch(base + "/view_" + tid).get("typhoon", [])
+        if not isinstance(v, list) or len(v) < 9:
+            return False, t("Typhoon '%s' not found" % tid, "未找到台风 '%s'（编号可能过期）" % tid)
+        name_cn = v[2] if len(v) > 2 else ""
+        name_en = v[1] if len(v) > 1 else ""
+        points = v[8] if isinstance(v[8], list) else []
+        if not points:
+            return True, json.dumps({"status": "ok", "typhoon_id": tid, "name": name_cn,
+                                     "message": "该台风暂无路径点数据"}, ensure_ascii=False)
+
+        obs = []
+        for p in points[-3:]:
+            try:
+                obs.append({"time": p[1], "grade": p[3], "lon": p[4], "lat": p[5],
+                            "pressure": p[6], "wind": p[7]})
+            except Exception:
+                continue
+
+        forecasts, update_time = [], ""
+        last = points[-1]
+        # 机构预报段（BABJ=北京/RJTD=东京 等）——真实官方预报（非插值）
+        for idx in (11, 10):
+            if len(last) > idx and isinstance(last[idx], dict):
+                for agency, seg in last[idx].items():
+                    if not isinstance(seg, list):
+                        continue
+                    for f in seg:
+                        try:
+                            forecasts.append({"agency": agency, "offset_h": f[0], "time": f[1],
+                                              "lon": f[2], "lat": f[3], "pressure": f[4],
+                                              "wind": f[5], "grade": f[7] if len(f) > 7 else ""})
+                        except Exception:
+                            continue
+                if forecasts:
+                    break
+        if len(last) > 12 and isinstance(last[12], list) and len(last[12]) > 1:
+            update_time = str(last[12][1])
 
         result = {
             "status": "ok",
-            "typhoon_id": args.get("typhoon_id", "unknown"),
-            "predictions": paths,
-            "sources": ["AI", "historical"]
+            "typhoon_id": tid,
+            "name": name_cn or name_en,
+            "number": v[5] if len(v) > 5 and v[5] else "",
+            "observations": obs,
+            "forecast": forecasts[:24],
+            "update": update_time,
+            "source": "NMC 国家气象中心官方预报（真实数据——未插值未编造）",
         }
-
         return True, json.dumps(result, ensure_ascii=False)
 
     except Exception as e:
-        return False, str(e)
+        return False, t(f"Typhoon data fetch failed: {e}", f"台风数据获取失败：{e}")
 register_skill("typhoon_predict", typhoon_predict, risk="low")
 
 
@@ -1274,27 +1379,59 @@ register_skill("typhoon_predict", typhoon_predict, risk="low")
 # =============================================================
 
 def vision_locate(args_json: str) -> Tuple[bool, str]:
-    """定位物体位置"""
+    """定位物体位置（【0.6.0】真实数据——查询视觉记忆库 /LINGOS/data/vision/vision.db）"""
     try:
-        args = json.loads(args_json)
+        import sqlite3 as _sq
+        args = json.loads(args_json or "{}")
         object_name = args.get("object", "")
         if not object_name:
             return False, t("Missing 'object' parameter", "缺少 'object' 参数")
 
-        # 调用视觉模块查询（通过C端或直接查询数据库）
-        # 实际实现应查询 vision.db
+        db_path = "/LINGOS/data/vision/vision.db"
+        if not os.path.exists(db_path):
+            return True, json.dumps({
+                "status": "ok", "object": object_name, "found": False,
+                "message": t("Vision database not yet created (no detections recorded). "
+                             "Vision runs via lingos_visiond — make sure it is running.",
+                             "视觉数据库尚未创建（暂无检测记录）。视觉由 lingos_visiond 守护执行——"
+                             "请确认其已运行且检测已开启。"),
+            }, ensure_ascii=False)
+
+        conn = _sq.connect(db_path)
+        conn.row_factory = _sq.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT label, world_x, world_y, confidence, timestamp, track_id "
+            "FROM objects WHERE label = ? ORDER BY timestamp DESC LIMIT 1",
+            (object_name,))
+        row = cur.fetchone()
+        if not row:
+            # 模糊匹配（label 含关键词）
+            cur.execute(
+                "SELECT label, world_x, world_y, confidence, timestamp, track_id "
+                "FROM objects WHERE label LIKE ? ORDER BY timestamp DESC LIMIT 1",
+                ("%" + object_name + "%",))
+            row = cur.fetchone()
+        conn.close()
+
+        if not row:
+            return True, json.dumps({
+                "status": "ok", "object": object_name, "found": False,
+                "message": t("Object not found in recent detections",
+                             "近期检测记录中未找到该物体"),
+            }, ensure_ascii=False)
+
         result = {
-            "object": object_name,
-            "world_x": 120.5,
-            "world_y": 85.3,
-            "zone": "living_room",
-            "last_seen": int(time.time()),
-            "confidence": 0.87
+            "status": "ok", "object": row["label"], "found": True,
+            "world_x": row["world_x"], "world_y": row["world_y"],
+            "confidence": row["confidence"], "last_seen": row["timestamp"],
+            "track_id": row["track_id"],
+            "source": "vision.db（实时检测数据）",
         }
         return True, json.dumps(result, ensure_ascii=False)
 
     except Exception as e:
-        return False, str(e)
+        return False, t(f"vision_locate error: {e}", f"视觉定位查询失败：{e}")
 register_skill("vision_locate", vision_locate, risk="low")
 
 
@@ -1304,21 +1441,61 @@ register_skill("vision_locate", vision_locate, risk="low")
 
 def voice_command(args_json: str) -> Tuple[bool, str]:
     """
-    执行语音命令（通过文本触发）
-    参数: {"command": "hello"}
+    语音命令状态（【0.6.0】诚实实现——查询 voiced 守护与可执行命令，不再假装 executed）
+    参数: {"command": "（可选）要执行的命令文本"}
     """
     try:
-        args = json.loads(args_json)
+        args = json.loads(args_json or "{}")
         cmd = args.get("command", "")
-        if not cmd:
-            return False, t("Missing 'command' parameter", "缺少 'command' 参数")
 
-        # 调用语音命令模块（通过C端）
+        # ① voiced 守护运行状态（/proc 扫描——与 C 端拉起逻辑一致）
+        voiced_running = False
+        try:
+            for pid in os.listdir("/proc"):
+                if not pid.isdigit():
+                    continue
+                try:
+                    with open("/proc/%s/comm" % pid, "r") as f:
+                        if f.read().strip() == "lingos_voiced":
+                            voiced_running = True
+                            break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # ② 唤醒词配置（voice_config）
+        wake_cfg = "/LINGOS/system/config/voice.json"
+        wake_info = {}
+        try:
+            if os.path.exists(wake_cfg):
+                with open(wake_cfg, "r", encoding="utf-8") as f:
+                    wake_info = json.load(f) or {}
+        except Exception:
+            pass
+
         result = {
+            "status": "ok",
+            "voiced_running": voiced_running,
             "command": cmd,
-            "status": "executed",
-            "message": t(f"Voice command '{cmd}' executed", f"语音命令 '{cmd}' 已执行")
+            "executed": False,   # 诚实：语音命令由 voiced 守护链执行，此处仅查询/转达
+            "wakeword": wake_info.get("wakeword", wake_info.get("wake_word", "")),
+            "message": t(
+                ("voiced daemon is running. Voice wake/commands are handled by the voice pipeline "
+                 "(voiced → STT → AI). To control devices by voice, just speak the wake word."),
+                ("voiced 守护运行中。语音唤醒/命令由语音管线处理（voiced → STT → AI）。"
+                 "设备语音控制请在唤醒后直接说出指令。")) if voiced_running else t(
+                ("voiced daemon is NOT running — voice wake is unavailable. "
+                 "Start it via the main program (auto-started) or manually: lingos_voiced &"),
+                ("voiced 守护未运行——语音唤醒不可用。请通过主程序启动（自动拉起），"
+                 "或手动运行：lingos_voiced &")),
         }
+        if cmd:
+            result["note"] = t(
+                "Command text received. If you want an action performed, use the corresponding "
+                "tool (e.g. ha_control / sys_command) instead of voice_command.",
+                "已收到命令文本。如需执行动作，请改用对应工具（如 ha_control / sys_command），"
+                "voice_command 仅用于语音链路状态查询。")
         return True, json.dumps(result, ensure_ascii=False)
 
     except Exception as e:
@@ -1332,25 +1509,47 @@ register_skill("voice_command", voice_command, risk="low")
 
 def rule_query(args_json: str) -> Tuple[bool, str]:
     """
-    查询规则状态
-    参数: {"rule_name": "my_rule"}
+    查询规则状态（【0.6.0】真实数据——读规则引擎存储 /LINGOS/system/config/rules.json）
+    参数: {"rule_name": "（可选）按名过滤"}
     """
     try:
-        args = json.loads(args_json)
+        args = json.loads(args_json or "{}")
         rule_name = args.get("rule_name", "")
 
-        # 调用规则引擎查询（通过C端）
-        result = {
-            "status": "ok",
-            "rules": [
-                {"name": "typhoon_alert", "enabled": True, "trigger_count": 3},
-                {"name": "high_memory", "enabled": False, "trigger_count": 0}
-            ]
-        }
-        if rule_name:
-            result["query"] = rule_name
+        rules_path = "/LINGOS/system/config/rules.json"
+        rules = []
+        if os.path.exists(rules_path):
+            try:
+                with open(rules_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                raw = data.get("rules", data) if isinstance(data, dict) else data
+                if isinstance(raw, list):
+                    for r in raw:
+                        if not isinstance(r, dict):
+                            continue
+                        item = {
+                            "name": r.get("name", ""),
+                            "enabled": r.get("enabled", True),
+                            "trigger": r.get("trigger", r.get("when", "")),
+                            "action": r.get("action", r.get("then", "")),
+                        }
+                        for k in ("trigger_count", "last_triggered", "last_run"):
+                            if k in r:
+                                item[k] = r[k]
+                        rules.append(item)
+            except Exception as e:
+                return False, t(f"rules.json parse error: {e}", f"规则存储解析失败：{e}")
 
-        return True, json.dumps(result, ensure_ascii=False)
+        if rule_name:
+            rules = [r for r in rules if rule_name in r.get("name", "")]
+
+        return True, json.dumps({
+            "status": "ok",
+            "query": rule_name,
+            "count": len(rules),
+            "rules": rules,
+            "storage": rules_path,
+        }, ensure_ascii=False)
 
     except Exception as e:
         return False, str(e)

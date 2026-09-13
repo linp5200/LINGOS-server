@@ -84,30 +84,96 @@ def parse_skill_md(path: str) -> Optional[Dict]:
 # 扫描/安装/删除
 # =============================================================
 
-def scan_skills() -> List[Dict]:
-    """扫描 SKILLS_ROOT 下所有技能 → [{name, builtin, path, desc}]"""
-    result: List[Dict] = []
-    if not os.path.isdir(SKILLS_ROOT):
-        return result
+def parse_skill_json(path: str) -> Optional[Dict]:
+    """【0.6.0】解析 skill.json（C skill_store 约定）→ {name, description, risk, handler, parameters}"""
+    if not path or not os.path.exists(path):
+        return None
     try:
-        for entry in sorted(os.listdir(SKILLS_ROOT)):
-            sdir = os.path.join(SKILLS_ROOT, entry)
-            if not os.path.isdir(sdir):
-                continue
-            md_path = os.path.join(sdir, SKILL_MD)
-            meta = parse_skill_md(md_path) if os.path.exists(md_path) else None
-            builtin = os.path.exists(os.path.join(sdir, BUILTIN_MARK))
-            result.append({
-                "name": entry,
-                "builtin": builtin,
-                "path": sdir,
-                "description": (meta or {}).get("description", ""),
-                "risk": (meta or {}).get("risk", "low"),
-                "has_handler": os.path.exists(os.path.join(sdir, HANDLER_PY)),
-                "has_requirements": os.path.exists(os.path.join(sdir, REQUIREMENTS)),
-            })
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        return {
+            "name": data.get("name", ""),
+            "description": data.get("description", ""),
+            "risk": data.get("risk", "low"),
+            "handler": data.get("handler", "python"),
+            "handler_path": data.get("handler_path", ""),
+            "parameters": data.get("parameters", {"type": "object", "properties": {}}),
+            "body": "",
+        }
     except Exception as e:
-        logger.warning("scan_skills failed: %s", e)
+        logger.warning("parse_skill_json failed: %s: %s", path, e)
+        return None
+
+def _scan_one_skill_dir(sdir: str, entry_name: str) -> Optional[Dict]:
+    """扫描单个技能目录（兼容 SKILL.md 与 skill.json 两种规范）"""
+    md_path = os.path.join(sdir, SKILL_MD)
+    js_path = os.path.join(sdir, "skill.json")
+    meta = None
+    meta_source = ""
+    if os.path.exists(md_path):
+        meta = parse_skill_md(md_path)
+        meta_source = "SKILL.md"
+    if (not meta or not meta.get("name")) and os.path.exists(js_path):
+        meta = parse_skill_json(js_path)
+        meta_source = "skill.json"
+    if not meta:
+        meta = {"name": entry_name, "description": "", "risk": "low"}
+        meta_source = "(default)"
+
+    # 实现文件探测：handler.py / <name>.py / main.py
+    handler_candidates = [
+        os.path.join(sdir, HANDLER_PY),
+        os.path.join(sdir, (meta.get("handler_path") or entry_name) + ".py"),
+        os.path.join(sdir, entry_name + ".py"),
+        os.path.join(sdir, "main.py"),
+    ]
+    handler_file = ""
+    for hc in handler_candidates:
+        if os.path.isfile(hc):
+            handler_file = hc
+            break
+
+    builtin = os.path.exists(os.path.join(sdir, BUILTIN_MARK))
+    return {
+        "name": entry_name,
+        "builtin": builtin,
+        "path": sdir,
+        "description": meta.get("description", ""),
+        "risk": meta.get("risk", "low"),
+        "parameters": meta.get("parameters", {"type": "object", "properties": {}}),
+        "meta_source": meta_source,
+        "has_handler": bool(handler_file),
+        "handler_file": handler_file,
+        "has_requirements": os.path.exists(os.path.join(sdir, REQUIREMENTS)),
+    }
+
+def scan_skills() -> List[Dict]:
+    """扫描技能（【0.6.0】统一两套规范：SKILL.md / skill.json；两个区域：
+    /LINGOS/skills 与 /LINGOS/skills/enabled）→ [{name, builtin, path, ...}]"""
+    result: List[Dict] = []
+    seen = set()
+    roots = [SKILLS_ROOT, os.path.join(SKILLS_ROOT, "enabled")]
+    skip = {"enabled", "market", "__pycache__", "store", "builtin", "custom"}
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        try:
+            for entry in sorted(os.listdir(root)):
+                if entry.startswith(".") or entry in skip:
+                    continue
+                sdir = os.path.join(root, entry)
+                if not os.path.isdir(sdir):
+                    continue
+                if entry in seen:
+                    continue
+                info = _scan_one_skill_dir(sdir, entry)
+                if info:
+                    result.append(info)
+                    seen.add(entry)
+        except Exception as e:
+            logger.warning("scan_skills failed at %s: %s", root, e)
     return result
 
 def install_skill(src_dir: str) -> Tuple[bool, str]:
@@ -180,8 +246,9 @@ def load_custom_skills(target_registry: Dict = None) -> int:
             continue
         if name in target_registry:
             continue  # 同名内置/已注册优先，不覆盖
-        sdir = skill["path"]
-        handler_path = os.path.join(sdir, HANDLER_PY)
+        handler_path = skill.get("handler_file") or os.path.join(skill["path"], HANDLER_PY)
+        # 【0.6.0】技能 schema 补 parameters（与注册表形态统一）
+        _params = skill.get("parameters") or {"type": "object", "properties": {}}
 
         def make_executor(hp):
             def executor(args_json: str) -> Tuple[bool, str]:
@@ -191,9 +258,12 @@ def load_custom_skills(target_registry: Dict = None) -> int:
                         return False, "handler load error"
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
-                    if not hasattr(mod, "run"):
-                        return False, "handler.py must define run(args_json) -> (bool, str)"
-                    return mod.run(args_json)
+                    # 【0.6.0】入口兼容：run / handle / execute / main
+                    for fn in ("run", "handle", "execute", "main"):
+                        f = getattr(mod, fn, None)
+                        if f and callable(f):
+                            return f(args_json)
+                    return False, "handler must define run(args_json) / handle(args_json)"
                 except Exception as e:
                     return False, "skill handler error: %s" % str(e)
             return executor
@@ -202,10 +272,12 @@ def load_custom_skills(target_registry: Dict = None) -> int:
             "func": make_executor(handler_path),
             "description": skill["description"],
             "risk": skill["risk"],
+            "parameters": _params,
             "source": "custom_skill",
         }
         count += 1
-        logger.info("registered custom skill: %s (risk=%s)", name, skill["risk"])
+        logger.info("registered custom skill: %s (risk=%s, meta=%s)",
+                    name, skill["risk"], skill.get("meta_source", ""))
     return count
 
 

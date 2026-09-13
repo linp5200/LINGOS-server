@@ -330,6 +330,11 @@ int registry_save(void) {
         cJSON_AddStringToObject(item, "version", g_entries[i].version);
         cJSON_AddNumberToObject(item, "status", g_entries[i].status);
         cJSON_AddStringToObject(item, "path", g_entries[i].path);
+        if (g_entries[i].metadata) {
+            /* 【0.6.0 修复】持久化 metadata（此前不保存 → 技能描述/风险/参数在
+             *  保存后丢失，下次加载只剩空壳。skill_store 依赖 metadata.definition */
+            cJSON_AddItemToObject(item, "metadata", cJSON_Duplicate((cJSON*)g_entries[i].metadata, 1));
+        }
         cJSON_AddNumberToObject(item, "created_at", (double)g_entries[i].created_at);
         cJSON_AddNumberToObject(item, "updated_at", (double)g_entries[i].updated_at);
         cJSON_AddItemToArray(entries, item);
@@ -483,6 +488,7 @@ int registry_load(void) {
             cJSON *version = cJSON_GetObjectItem(item, "version");
             cJSON *status = cJSON_GetObjectItem(item, "status");
             cJSON *path = cJSON_GetObjectItem(item, "path");
+            cJSON *metadata = cJSON_GetObjectItem(item, "metadata");
             cJSON *created = cJSON_GetObjectItem(item, "created_at");
             cJSON *updated = cJSON_GetObjectItem(item, "updated_at");
 
@@ -495,6 +501,8 @@ int registry_load(void) {
                 if (version && cJSON_IsString(version)) safe_strncpy(e->version, version->valuestring, sizeof(e->version));
                 if (status && cJSON_IsNumber(status)) e->status = (registry_status_t)status->valueint;
                 if (path && cJSON_IsString(path)) safe_strncpy(e->path, path->valuestring, sizeof(e->path));
+                /* 【0.6.0 修复】恢复 metadata（与 registry_save 配对——技能定义不丢失） */
+                if (metadata) e->metadata = cJSON_Duplicate(metadata, 1);
                 if (created && cJSON_IsNumber(created)) e->created_at = (time_t)created->valuedouble;
                 if (updated && cJSON_IsNumber(updated)) e->updated_at = (time_t)updated->valuedouble;
                 g_entry_count++;

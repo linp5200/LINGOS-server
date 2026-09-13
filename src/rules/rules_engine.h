@@ -41,6 +41,11 @@ int rules_engine_list(rule_t *out, int max_count);
 int rules_engine_check_and_execute(void);
 const rule_config_t* rules_engine_get_config(void);
 /**
+ * @brief 【0.6.0】启动规则周期评估线程（首次接线——此前引擎从不评估）
+ * @return 0 成功，-1 失败
+ */
+int rules_engine_start_watchdog(void);
+/**
  * @brief 加载规则引擎配置
  * @return 0 成功，-1 失败
  */

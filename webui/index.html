@@ -214,23 +214,24 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 
 <!-- AI 对话 -->
 <div class="page" id="p-chat">
-  <div class="phead"><div class="l"><div class="k">▍AI CHAT</div><h1>AI 对话</h1></div><div class="r">会话 <b>#4 系统架构讨论</b> · <span class="tag g">deepseek-chat</span><br>上下文 <b>62%</b> · 8.4k tok</div></div>
+  <div class="phead"><div class="l"><div class="k">▍AI CHAT</div><h1>AI 对话</h1></div><div class="r" id="chatHeadR">未连接 · 需访问令牌</div></div>
   <div class="chatwrap">
-    <div class="chathead"><span>#4 系统架构讨论</span><span class="mod">deepseek-chat</span><span class="ctx"><span class="tok">↑1.2k ↓3.4k</span><span>缓存 <b style="color:var(--green)">on</b></span></span></div>
-    <div class="chatmsgs">
-      <div class="cmsg"><div class="who">N</div><div class="bub"><div class="meta">NOOK · 人格 诺克</div>好的，先生。我们继续系统架构讨论——上轮已定 0.4.3 命名与目录重构方向。<div class="thinkblk">▸ 继续话题 · 检查记忆中有 0.4.3 裁决</div></div></div>
-      <div class="cmsg u"><div class="who">我</div><div class="bub"><div class="meta">你 · 14:02</div>列出新命名规范的完整示例，含三包型</div></div>
-      <div class="cmsg"><div class="who">N</div><div class="bub"><div class="meta">NOOK · 思考 0.8s</div><div class="toolblk"><span class="nm">[ memory_search ]</span> 0.4.3 命名 <span class="ok">→ 3 条</span></div>好的先生，按新规范：<pre>LINGOS_server_linux_v0.4.3_aarch64_allbin.tar.gz
-LINGOS_server_linux_v0.4.3_aarch64_sysbin.tar.gz
-LINGOS_server_linux_v0.4.3_aarch64_plugin.tar.gz</pre>三包型齐出，架构保留原写法，apk 无包型后缀。</div></div>
-      <div class="cmsg"><div class="who">N</div><div class="bub"><div class="meta">NOOK</div>是否还需要我补充 App 端命名示例或进入目录重构细节？</div></div>
+    <div class="chathead"><span>#default</span><span class="mod" id="chatModel">--</span><span class="ctx"><span class="tok" id="chatTok">↑0 ↓0</span><span id="chatState">离线</span></span></div>
+    <div class="chatmsgs" id="chatMsgs">
+      <div class="cmsg"><div class="who">N</div><div class="bub"><div class="meta">NOOK</div>连接后即可对话（下方输入访问令牌 → 连接）。令牌来自 App 连接页或终端 token 指令。</div></div>
     </div>
     <div class="chatin">
-      <button class="mic">🎤</button>
-      <textarea placeholder="输入消息…… （/ 可切换模型 · Shift+Enter 换行）"></textarea>
-      <button class="send">SEND</button>
+      <textarea id="chatInput" placeholder="输入消息…（Enter 发送 · Shift+Enter 换行）" onkeydown="chatKey(event)"></textarea>
+      <button class="send" id="chatSendBtn" onclick="chatSend()">SEND</button>
+      <button class="mic" onclick="chatStop()" title="中断当前回复">■</button>
     </div>
-    <div class="chatstatus"><span>MODEL deepseek-chat</span><span>TOKEN ↑1.2k ↓3.4k</span><span style="margin-left:auto">本地 · WS 2939 · 流式</span></div>
+    <div class="chatstatus" style="display:flex;align-items:center;gap:8px">
+      <span id="wsState">WS: 未连接</span>
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+        <input id="wsToken" type="password" placeholder="访问令牌" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:inherit;font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:4px;width:150px"/>
+        <button onclick="wsConnect()" style="background:rgba(90,200,250,.1);border:1px solid rgba(90,200,250,.4);font-family:var(--mono);font-size:10px;padding:3px 10px;cursor:pointer;border-radius:4px">连接</button>
+      </span>
+    </div>
   </div>
 </div>
 
@@ -381,27 +382,21 @@ LINGOS_server_linux_v0.4.3_aarch64_plugin.tar.gz</pre>三包型齐出，架构�
 <!-- 端口 -->
 <div class="page" id="p-ports">
   <div class="phead"><div class="l"><div class="k">▍NETWORK / PORT</div><h1>端口与网络</h1></div><div class="r">端口改动用 <b>port set</b> 指令族 · 不进配置向导</div></div>
-  <div class="card"><div class="ct"><span>服务端口</span><b>port list</b></div>
-    <div class="portrow"><span class="pn">2937</span><span class="pu">TCP 认证 · lingosd</span><span class="stat run">● LISTEN</span></div>
-    <div class="portrow"><span class="pn">2939</span><span class="pu">WebSocket 事件 · ai_server</span><span class="stat run">● LISTEN · 4 客户端</span></div>
-    <div class="portrow"><span class="pn">8080</span><span class="pu">HTTP WebUI/API</span><span class="stat run">● LISTEN</span></div>
-    <div class="portrow"><span class="pn">8088</span><span class="pu">HTTP 音频 REST (TTS/STT)</span><span class="stat run">● LISTEN</span></div>
-    <div class="portrow"><span class="pn">8890-93</span><span class="pu">视觉流 (rtsp/mjpeg/ocr/标定)</span><span class="stat idle">○ 未启用(无摄像头)</span></div>
+  <div class="card"><div class="ct"><span>服务端口</span><b>实时探测</b></div>
+    <div id="portRows"><div class="portrow"><span class="pn">--</span><span class="pu">加载中…</span><span class="stat idle">○</span></div></div>
   </div>
 </div>
 
 <!-- 更新 -->
 <div class="page" id="p-update">
-  <div class="phead"><div class="l"><div class="k">▍UPDATE</div><h1>升级更新</h1></div><div class="r">当前 <b>LN-0.4.4</b> · 内部 0.4.3</div></div>
-  <div class="warnbox">● 已是最新版本 <b>LN-0.4.4</b>（检查于 14:00）<button>检查更新</button></div>
+  <div class="phead"><div class="l"><div class="k">▍UPDATE</div><h1>升级更新</h1></div><div class="r">当前 <b id="upCur">--</b></div></div>
+  <div class="warnbox" id="upStatus">● 加载中… <button onclick="checkUpdate()">检查更新</button></div>
   <div class="grid g2">
-    <div class="card"><div class="ct"><span>更新历史</span></div><div class="evlog">
-      <div class="e"><span class="lv d">0.0.6</span><span class="tx">端口指令族/高级设置/venv → 0.4.3 重构</span></div>
-      <div class="e"><span class="lv">0.0.4</span><span class="tx">日志体系/指令翻译/技能安装/三级记忆</span></div>
-      <div class="e"><span class="lv">0.0.3</span><span class="tx">DeepSeek 思考/余额/模型列表</span></div></div></div>
-    <div class="card"><div class="ct"><span>升级 bin · lingos-upgrade</span></div>
-      <div style="font-family:var(--mono);font-size:9px;color:var(--g);line-height:2">迁移链 <b style="color:var(--w)">0.0.6 → 0.4.3</b><br>目录搬迁 etc/var/share · 配置转换<br>备份回滚 · sha256 校验 · 看门狗</div>
-      <div style="margin-top:8px"><button style="background:rgba(255,190,77,.08);border:1px solid rgba(255,190,77,.4);color:var(--amber);font-family:var(--mono);font-size:9px;padding:5px 12px;cursor:pointer">执行升级向导</button></div></div>
+    <div class="card"><div class="ct"><span>检查结果</span></div><div class="evlog" id="upLog">
+      <div class="e"><span class="lv">--</span><span class="tx">尚未检查</span></div></div></div>
+    <div class="card"><div class="ct"><span>更新源</span></div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--g);line-height:2" id="upSrc">repo.conf 未配置</div>
+      <div style="margin-top:8px"><button onclick="checkUpdate()" style="background:rgba(255,190,77,.08);border:1px solid rgba(255,190,77,.4);color:var(--amber);font-family:var(--mono);font-size:9px;padding:5px 12px;cursor:pointer">检查更新</button></div></div>
   </div>
 </div>
 
@@ -1119,9 +1114,130 @@ async function bindData(){
   bindConsole(); bindSessions(); bindAlert(); bindProviders(); bindSkills(); bindMemory(); bindWeather(); bindVision(); bindLog(); bindFiles(); bindSys();
   /* 【0.5.0】新功能页 */
   bindHome(); bindTimeline(); bindNotify(); bindDashboard(); bindMedia(); bindKb(); bindOptions();
+  /* 【0.6.0】端口/更新（真实数据——清除静态假数据） */
+  bindPorts(); bindUpdate();
 }
+
+/* ===== 【0.6.0】端口与更新（真实数据） ===== */
+async function bindPorts(){
+  var r = await apiCmd('port_list');
+  var box = document.getElementById('portRows');
+  if(!box) return;
+  if(!r || r.status!=='ok' || !r.data){
+    box.innerHTML = '<div class="portrow"><span class="pn">--</span><span class="pu">服务端不可达</span><span class="stat idle">○ 未知</span></div>';
+    return;
+  }
+  var rows = '';
+  r.data.forEach(function(p){
+    var ok = p.listening;
+    rows += '<div class="portrow"><span class="pn">'+p.port+'</span><span class="pu">'+p.desc+'</span>'
+         +  '<span class="stat '+(ok?'run':'idle')+'">'+(ok?'● LISTEN':'○ 未监听')+'</span></div>';
+  });
+  box.innerHTML = rows;
+}
+async function bindUpdate(){
+  var si = await apiCmd('system_info');
+  var cur = (si && si.status==='ok' && si.data && si.data.version) ? si.data.version : '--';
+  setTxt('#upCur', cur);
+}
+async function checkUpdate(){
+  setTxt('#upStatus', '● 检查中… ');
+  var r = await apiCmd('update_check');
+  var box = document.getElementById('upLog');
+  if(!r || r.status!=='ok'){
+    setTxt('#upStatus', '● 检查失败（服务端不可达） <button onclick="checkUpdate()">重试</button>');
+    return;
+  }
+  var msg = r.message || '--';
+  setTxt('#upStatus', '● '+msg+' <button onclick="checkUpdate()">重新检查</button>');
+  setTxt('#upSrc', r.source ? ('源: '+r.source) : 'repo.conf 未配置');
+  var when = r.checked ? new Date(r.checked*1000).toLocaleString() : '--';
+  if(box){
+    box.innerHTML = '<div class="e"><span class="lv '+(r.update_available?'d':'')+'">'
+      + (r.latest || '—') + '</span><span class="tx">当前 '+(r.current||'--')
+      + ' · '+(r.update_available?'可更新':'已是最新')+' · '+when+'</span></div>';
+  }
+}
+
+/* ===== 【0.6.0】AI 对话：真实 WS 流式（清除假对话——App 协议同款） ===== */
+var wsChat = null, chatAuthed = false, curAi=null, curThink=null;
+(function(){ var t=localStorage.getItem('lingos_ws_token'); var el=document.getElementById('wsToken'); if(el&&t) el.value=t; })();
+function wsSetState(s){ var el=document.getElementById('wsState'); if(el) el.textContent='WS: '+s; }
+function chatScroll(){ var b=document.getElementById('chatMsgs'); if(b) b.scrollTop=b.scrollHeight; }
+function chatAppend(role, text, meta){
+  var box=document.getElementById('chatMsgs'); if(!box) return null;
+  var wrap=document.createElement('div'); wrap.className='cmsg'+(role==='u'?' u':'');
+  var inner='<div class="who">'+(role==='u'?'我':'N')+'</div><div class="bub">'
+    +(meta?('<div class="meta">'+meta+'</div>'):'')+'<span class="ct"></span></div>';
+  wrap.innerHTML=inner;
+  var span=wrap.querySelector('.ct'); span.textContent=text||'';
+  box.appendChild(wrap); chatScroll();
+  return span;
+}
+function wsConnect(){
+  if(wsChat){ try{wsChat.close();}catch(e){} wsChat=null; }
+  var tok=(document.getElementById('wsToken')||{}).value||'';
+  if(tok) localStorage.setItem('lingos_ws_token',tok);
+  if(!tok){ wsSetState('需要访问令牌'); return; }
+  var proto=(location.protocol==='https:')?'wss://':'ws://';
+  wsSetState('连接中…');
+  try{ wsChat=new WebSocket(proto+location.hostname+':2939'); }catch(e){ wsSetState('错误'); return; }
+  wsChat.onopen=function(){ wsSetState('认证中…'); wsChat.send(JSON.stringify({type:'auth',token:tok})); };
+  wsChat.onclose=function(){ chatAuthed=false; wsSetState('已断开'); var st=document.getElementById('chatState'); if(st) st.textContent='离线'; };
+  wsChat.onerror=function(){ wsSetState('错误'); };
+  wsChat.onmessage=function(ev){ try{ wsOnEvent(JSON.parse(ev.data)); }catch(e){} };
+}
+function wsOnEvent(m){
+  if(!m||!m.type) return;
+  if(m.type==='chat_event'&&m.data){ wsOnEvent(m.data); return; }
+  switch(m.type){
+    case 'auth_ok':
+      chatAuthed=true; wsSetState('已连接'); 
+      var st=document.getElementById('chatState'); if(st) st.textContent='就绪';
+      setTxt('#chatHeadR','已连接 · WS 2939'); break;
+    case 'auth_error':
+      wsSetState('令牌无效'); break;
+    case 'content':
+      if(!curAi) curAi=chatAppend('n','','NOOK · 流式');
+      if(curAi&&m.delta) curAi.textContent+=m.delta; chatScroll(); break;
+    case 'thinking_delta':
+      if(!curThink) curThink=chatAppend('n','','思考中…');
+      if(curThink&&m.delta) curThink.textContent+=m.delta; chatScroll(); break;
+    case 'tool_call':
+      if(!curAi) curAi=chatAppend('n','','NOOK');
+      if(curAi) curAi.textContent+='\n[tool] '+(m.name||''); chatScroll(); break;
+    case 'tool_result':
+      if(curAi) curAi.textContent+='\n[result] '+String(m.content||'').slice(0,300); chatScroll(); break;
+    case 'tool_error':
+      if(curAi) curAi.textContent+='\n[error] '+(m.error||''); chatScroll(); break;
+    case 'done':
+      curAi=null; curThink=null;
+      if(m.usage){ setTxt('#chatTok','↑'+(m.usage.prompt_tokens||0)+' ↓'+(m.usage.completion_tokens||0)); }
+      if(m.model){ setTxt('#chatModel',m.model); }
+      break;
+    case 'meta':
+      if(m.model) setTxt('#chatModel',m.model); break;
+    case 'error':
+      chatAppend('n','⚠️ '+(m.msg||m.message||'错误'),'system'); break;
+  }
+}
+function chatKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); chatSend(); } }
+function chatSend(){
+  var inp=document.getElementById('chatInput'); if(!inp) return;
+  var text=(inp.value||'').trim();
+  if(!text) return;
+  if(!wsChat||!chatAuthed){ chatAppend('n','未连接——请先输入访问令牌并点击「连接」','system'); return; }
+  chatAppend('u',text,'你');
+  inp.value='';
+  curAi=null; curThink=null;
+  wsChat.send(JSON.stringify({type:'chat',prompt:text,session_id:'default'}));
+}
+function chatStop(){
+  if(wsChat&&chatAuthed){ try{ wsChat.send(JSON.stringify({type:'interrupt'})); }catch(e){} }
+}
+
 bindData();
 setInterval(bindData, 20000);
-</script></script>
+</script>
 </body>
 </html>

@@ -705,8 +705,12 @@ void log_draw_status_bar(const char *version, int ai_status, const char *mode, i
     if (!tasks_text) tasks_text = "Tasks";
 
     char status_line[512];
+    /* 【0.6.0 修复】格式串与实参对齐（12 槽）：
+     * 此前 0.5.2 修 "746808" 垃圾数字时多补了 1 个 %s 但总数仍差一槽 →
+     * %d 收到字符串指针、%s 收到 int 0 → musl 下 strnlen(NULL) 段错误（启动即崩）。
+     * 正确布局：粗体/青/状态色/状态符/白/LINGOS | 暗/模式/值 | 任务/数量/复位 */
     safe_snprintf(status_line, sizeof(status_line),
-             "%s%s %s%s %s | %s %s | %s %d%s",
+             "%s%s %s%s %s | %s %s %s | %s %s %d%s",
              COLOR_BOLD, COLOR_CYAN,
              status_color, status_symbol,
              COLOR_WHITE, ling_os,

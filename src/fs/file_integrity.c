@@ -32,10 +32,14 @@ static int recreate_version_file(void) {
 static int recreate_skill_index(void) {
     const char *root = lingos_data_root();
     char path[512];
-    snprintf(path, sizeof(path), "%s/skills/index.json", root);
+    /* 【0.6.0 修复】路径对齐（原 /skills/ 与读取方 /registry/skills/ 分歧——
+     *   lingosd registry_list、ai_server.py SKILL_INDEX_PATH、fs_layout 均读
+     *   /registry/skills/index.json；本处为唯一分歧点，已统一） */
+    snprintf(path, sizeof(path), "%s/registry/skills/index.json", root);
     FILE *fp = fopen(path, "w");
     if (!fp) return -1;
-    /* 技能索引由Python管理，C端仅创建空占位 */
+    /* 技能索引由 C/Python 管理，此处仅创建空占位（真实内容由
+     * registry_skill_write_index 导出） */
     fprintf(fp, "[]\n");
     fclose(fp);
     return 0;
@@ -65,7 +69,8 @@ static int recreate_state_file(void) {
 
 static key_file_t key_files[] = {
     {"/version", NULL, recreate_version_file},
-    {"/skills/index.json", "skills", recreate_skill_index},
+    /* 【0.6.0】marker=NULL——仅缺失时补占位，绝不覆盖已有索引（防误擦除技能） */
+    {"/registry/skills/index.json", NULL, recreate_skill_index},
     {"/data/ai_memory/memory_registry.json", "memory_registry", recreate_memory_registry},
     {"/Ensystem/state.json", "state", recreate_state_file},
     {NULL, NULL, NULL}

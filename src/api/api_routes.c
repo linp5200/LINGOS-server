@@ -492,7 +492,12 @@ int api_route_update(struct MHD_Connection *conn, const char *path, const char *
     }
 
     if (strcmp(path, "check") == 0) {
-        send_ok(conn, "{\"update_available\":false,\"latest\":\"LN-0.4.3\"}");
+        /* 【0.5.2 修复】版本动态化（原硬编码 LN-0.4.3——先生报告版本显示不更新） */
+        char upd_body[160];
+        safe_snprintf(upd_body, sizeof(upd_body),
+                      "{\"update_available\":false,\"latest\":\"%s\"}",
+                      version_get());
+        send_ok(conn, upd_body);
         return MHD_YES;
     }
 

@@ -39,6 +39,7 @@
 #include "cJSON.h"
 #include "safe_string.h"
 #include "connection_handler.h"
+#include "../core/version.h"
 
 #define SOCKET_PATH DAEMON_SOCKET_PATH
 #define BUF_SIZE 16384
@@ -75,6 +76,18 @@ static int daemon_init(void) {
     nook_repair_init();
     nook_idle_init();
 
+    /* 【0.6.0】规则引擎接线（此前：引擎完整但从不初始化/从不周期评估） */
+    {
+        extern int rules_engine_init(void);
+        extern int rules_engine_start_watchdog(void);
+        if (rules_engine_init() == 0) {
+            rules_engine_start_watchdog();
+            LOG_INFO_T("Lingosd", "Init", "RulesEngine", "rules engine initialized + watchdog started");
+        } else {
+            LOG_WARN_T("Lingosd", "Init", "RulesEngine", "rules engine init failed (continuing)");
+        }
+    }
+
     ai_config_load();
     LOG_INFO_T("Lingosd", "Init", "OK", "lingosd initialized successfully");
     return 0;
@@ -87,6 +100,12 @@ static char* read_skill_index(void) {
     safe_snprintf(index_path, sizeof(index_path), "%s/registry/skills/index.json", root);
 
     FILE *fp = fopen(index_path, "r");
+    /* 【0.5.2 修复】空文件视为无索引（防返回空串——调用方 JSON 解析失败） */
+    if (fp) {
+        fseek(fp, 0, SEEK_END);
+        if (ftell(fp) <= 0) { fclose(fp); fp = NULL; }
+        else fseek(fp, 0, SEEK_SET);
+    }
     if (!fp) {
         LOG_WARN_T("Lingosd", "ReadSkillIndex", "NoIndex", "registry index not found, using default");
         return strdup(
@@ -146,7 +165,8 @@ static void send_json(int client_fd, const char *status, const char *result_type
 
     if (!json_str) {
         LOG_ERROR_T("Lingosd", "SendJSON", "PrintFail", "cJSON_PrintUnformatted failed");
-        write(client_fd, "{\"status\":\"error\"}\n", 20);
+        /* 【0.5.2 修复】长度 20 → 实际 19（防越界写出垃圾字节） */
+        write(client_fd, "{\"status\":\"error\"}\n", sizeof("{\"status\":\"error\"}\n") - 1);
         return;
     }
 
@@ -488,7 +508,8 @@ static void handle_command(int client_fd, const char *json_req) {
     if (strcmp(cmd, "skill_schemas") == 0) {
         char *skill_json = read_skill_index();
         if (skill_json) {
-            write(client_fd, "{\"status\":\"ok\",\"result\":", 31);
+            /* 【0.5.2 修复】长度 31 → 实际 24（防越界写出垃圾字节——曾致 AI 端 JSON 解析失败） */
+            write(client_fd, "{\"status\":\"ok\",\"result\":", sizeof("{\"status\":\"ok\",\"result\":") - 1);
             write(client_fd, skill_json, strlen(skill_json));
             write(client_fd, "}\n", 2);
             free(skill_json);
@@ -504,8 +525,61 @@ static void handle_command(int client_fd, const char *json_req) {
         char index_path[512];
         safe_snprintf(index_path, sizeof(index_path), "%s/registry/skills/index.json", data_root);
         FILE *fp = fopen(index_path, "r");
+        long fsz = 0;
+        if (fp) {
+            fseek(fp, 0, SEEK_END);
+            fsz = ftell(fp);
+            fseek(fp, 0, SEEK_SET);
+            /* 【0.5.2 修复】空文件视为无索引（原会输出 {"result":} 破坏解析） */
+            if (fsz <= 0) { fclose(fp); fp = NULL; }
+        }
         if (!fp) {
-            LOG_WARN_T("Lingosd", "HandleCmd", "RegistryList", "index.json not found");
+            /* 【0.5.2 新增】index.json 缺失/为空 → 回退读主注册表 type=4 技能条目
+             *   （skill_store 启用技能时写入 /registry/core/registry.json）——技能不丢失 */
+            char regp[512];
+            safe_snprintf(regp, sizeof(regp), "%s/registry/core/registry.json", data_root);
+            FILE *rf = fopen(regp, "r");
+            if (rf) {
+                fseek(rf, 0, SEEK_END);
+                long rlen = ftell(rf);
+                fseek(rf, 0, SEEK_SET);
+                char *rbuf = malloc((size_t)rlen + 1);
+                if (rbuf) {
+                    size_t rr = fread(rbuf, 1, (size_t)rlen, rf);
+                    rbuf[rr] = '\0';
+                    fclose(rf);
+                    cJSON *regj = cJSON_Parse(rbuf);
+                    free(rbuf);
+                    cJSON *out2 = cJSON_CreateArray();
+                    if (regj) {
+                        cJSON *ent = cJSON_GetObjectItem(regj, "entries");
+                        if (cJSON_IsArray(ent)) {
+                            int n2 = cJSON_GetArraySize(ent);
+                            for (int i2 = 0; i2 < n2; i2++) {
+                                cJSON *e2 = cJSON_GetArrayItem(ent, i2);
+                                cJSON *t2 = cJSON_GetObjectItem(e2, "type");
+                                if (cJSON_IsNumber(t2) && t2->valueint == 4)
+                                    cJSON_AddItemToArray(out2, cJSON_Duplicate(e2, 1));
+                            }
+                        }
+                        cJSON_Delete(regj);
+                    }
+                    char *oj = cJSON_PrintUnformatted(out2);
+                    cJSON_Delete(out2);
+                    if (oj) {
+                        write(client_fd, "{\"status\":\"ok\",\"result\":", sizeof("{\"status\":\"ok\",\"result\":") - 1);
+                        write(client_fd, oj, strlen(oj));
+                        write(client_fd, "}\n", 2);
+                        free(oj);
+                    } else {
+                        send_json(client_fd, "error", NULL, "print failed");
+                    }
+                    cJSON_Delete(json_root);
+                    return;
+                }
+                fclose(rf);
+            }
+            LOG_WARN_T("Lingosd", "HandleCmd", "RegistryList", "no index.json & no skill in registry.json");
             send_json(client_fd, "error", NULL, "registry index not found");
         } else {
             fseek(fp, 0, SEEK_END);
@@ -516,7 +590,8 @@ static void handle_command(int client_fd, const char *json_req) {
                 size_t read_len = fread(buf, 1, len, fp);
                 buf[read_len] = '\0';
                 fclose(fp);
-                write(client_fd, "{\"status\":\"ok\",\"result\":", 31);
+                /* 【0.5.2 修复】长度 31 → 实际 24（防越界写出垃圾字节——曾致 AI 端 JSON 解析失败） */
+                write(client_fd, "{\"status\":\"ok\",\"result\":", sizeof("{\"status\":\"ok\",\"result\":") - 1);
                 write(client_fd, buf, strlen(buf));
                 write(client_fd, "}\n", 2);
                 free(buf);
@@ -716,7 +791,7 @@ int main(int argc, char **argv) {
         LOG_WARN_T("Lingosd", "Main", "PIDFail", "cannot write PID file %s: %s", PID_PATH, strerror(errno));
     }
 
-    LOG_INFO_T("Lingosd", "Main", "Ready", "Daemon listening on %s (version LN-0.4.3)", SOCKET_PATH);
+    LOG_INFO_T("Lingosd", "Main", "Ready", "Daemon listening on %s (version %s)", SOCKET_PATH, version_get());
 
     /* 【新增】创建 registry.sock（供 Python skill_loader/registry_client 查询注册表） */
     int reg_fd = -1;

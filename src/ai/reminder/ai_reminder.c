@@ -311,6 +311,33 @@ int reminder_trigger(const char *id) {
 
     LOG_INFO_T("Reminder", "Trigger", "OK", "reminder %s triggered: %s", id, reminder.content);
 
+    /* 【0.6.0】推送到 App/Web（修复：提醒此前仅终端打印——不达用户）
+     *   WS 广播（弱符号——无 WS 的二进制自动跳过）+ 通知轨迹落盘 */
+    {
+        extern int websocket_broadcast_all(const char *message) __attribute__((weak));
+        /* 通知中心轨迹（与 syscall notify 同文件约定） */
+        const char *nroot = lingos_data_root();
+        char ndir[512], nfile[512];
+        safe_snprintf(ndir, sizeof(ndir), "%s/data/notifications", nroot);
+        mkdir(ndir, 0755);
+        safe_snprintf(nfile, sizeof(nfile), "%s/sys_notify.jsonl", ndir);
+        FILE *nf = fopen(nfile, "a");
+        if (nf) {
+            fprintf(nf, "{\"ts\":%ld,\"title\":\"\\u23f0 Reminder\",\"body\":\"%s\",\"level\":\"reminder\"}\n",
+                    (long)time(NULL), reminder.content);
+            fclose(nf);
+        }
+        if (websocket_broadcast_all) {
+            char evbuf[768];
+            /* body 截断保护（512 字段 + 结构开销） */
+            safe_snprintf(evbuf, sizeof(evbuf),
+                          "{\"type\":\"notify\",\"title\":\"\\u23f0 Reminder\",\"body\":\"%s\",\"level\":\"reminder\"}",
+                          reminder.content);
+            websocket_broadcast_all(evbuf);
+            LOG_INFO_T("Reminder", "Trigger", "Pushed", "reminder %s broadcast to clients", id);
+        }
+    }
+
     /* 检查是否需要重复 */
     if (reminder.repeat > 0) {
         reminder_t new_reminder;

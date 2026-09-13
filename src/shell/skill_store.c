@@ -254,6 +254,11 @@ static int register_skill_entry(const char *name, const char *version,
 
     int ret = save_registry(root_json);
     cJSON_Delete(root_json);
+    /* 【0.6.0】同步刷新技能索引（AI 侧即时可见——无需重启） */
+    if (ret == 0) {
+        extern int registry_skill_write_index(void);
+        registry_skill_write_index();
+    }
     return ret;
 }
 
@@ -277,6 +282,11 @@ static int unregister_skill_entry(const char *name) {
     }
     int ret = save_registry(root_json);
     cJSON_Delete(root_json);
+    /* 【0.6.0】同步刷新技能索引 */
+    if (ret == 0) {
+        extern int registry_skill_write_index(void);
+        registry_skill_write_index();
+    }
     return ret;
 }
 

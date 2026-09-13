@@ -261,6 +261,35 @@ int rules_engine_check_and_execute(void) {
 }
 
 /* ============================================================
+ * 【0.6.0】周期评估线程（接线：此前引擎完整但从不初始化/从不评估）
+ * ============================================================ */
+
+static void* rules_watchdog_thread(void *arg) {
+    (void)arg;
+    LOG_INFO_T("RulesEngine", "Watchdog", "Start", "periodic rule evaluation thread started");
+    for (;;) {
+        int interval = (g_config.check_interval > 0) ? g_config.check_interval : 30;
+        if (interval < 5) interval = 5;      /* 下界防忙等 */
+        if (interval > 3600) interval = 3600;
+        sleep((unsigned)interval);
+        rules_engine_check_and_execute();
+    }
+    return NULL;
+}
+
+int rules_engine_start_watchdog(void) {
+    pthread_t t;
+    if (pthread_create(&t, NULL, rules_watchdog_thread, NULL) != 0) {
+        LOG_ERROR_T("RulesEngine", "Watchdog", "ThreadFail", "cannot create watchdog thread");
+        return -1;
+    }
+    pthread_detach(t);
+    LOG_INFO_T("RulesEngine", "Watchdog", "OK", "watchdog started (interval=%ds)",
+               g_config.check_interval > 0 ? g_config.check_interval : 30);
+    return 0;
+}
+
+/* ============================================================
  * 获取配置
  * ============================================================ */
 

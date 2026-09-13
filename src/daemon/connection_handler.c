@@ -13,6 +13,7 @@
 #include "../common/safe_string.h"
 #include "../lib/cJSON/cJSON.h"
 #include "../drivers/linux_io.h"
+#include "../ai/ai_server_protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,7 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
@@ -849,6 +851,73 @@ static void handle_connection_code(connection_session_t *sess, const uint8_t *pa
     }
 }
 
+/* ============================================================
+ * 【0.5.2 修复】TCP 通道命令转发（先生 2026-09-12 实测修复）
+ *
+ *   背景：此前 TCP 通道（2937）只认 ping/system_status —— App 在 WS
+ *   不可用时回退 TCP 发送的命令（system_info/weather_current/
+ *   options_list 等）全部被拒（unknown command）。本函数与 WS 通道
+ *   ws_forward_command 行为一致：转发到 /LINGOS/run/ai.sock（Python
+ *   ai_server），响应经 MSG_COMMAND_RESPONSE 回推给 App。
+ *
+ * @return 0 = 转发成功（响应已发回）；-1 = 失败（调用方回退报错）
+ * ============================================================ */
+static int tcp_forward_to_ai(connection_session_t *sess, const char *cmd_json) {
+    if (!sess || !cmd_json) return -1;
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    safe_strncpy(addr.sun_path, AI_SOCKET_PATH, sizeof(addr.sun_path));
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    struct timeval tv;
+    tv.tv_sec = 15;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        LOG_WARN_T("Connection", "FwdAI", "ConnectFail", "ai.sock: %s", strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    /* 请求：原始 JSON + 换行（ai_server 按行读取） */
+    char req[CONNECTION_RECV_BUF_SIZE];
+    safe_snprintf(req, sizeof(req), "%s\n", cmd_json);
+    if (write(fd, req, strlen(req)) <= 0) {
+        LOG_WARN_T("Connection", "FwdAI", "WriteFail", "%s", strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    /* 响应：读满一行（以 \n 结尾）或缓冲上限（帧头预留 12 字节） */
+    static __thread char resp[CONNECTION_SEND_BUF_SIZE - 12];
+    ssize_t total = 0;
+    while (total < (ssize_t)sizeof(resp) - 1) {
+        ssize_t r = read(fd, resp + total, sizeof(resp) - 1 - total);
+        if (r <= 0) break;
+        total += r;
+        if (resp[total - 1] == '\n') break;   /* ai_server 每条响应一行 */
+    }
+    close(fd);
+
+    if (total <= 0) {
+        LOG_WARN_T("Connection", "FwdAI", "NoResp", "no response from ai server");
+        return -1;
+    }
+    if (resp[total - 1] == '\n') total--;
+    resp[total] = '\0';
+
+    LOG_INFO_T("Connection", "FwdAI", "OK", "cmd forwarded, resp_len=%zd", total);
+    return connection_send_message(sess->session_id, MSG_COMMAND_RESPONSE,
+                                   (const uint8_t *)resp, (uint32_t)total);
+}
+
 static void handle_command(connection_session_t *sess, const uint8_t *payload,
                            uint32_t payload_len) {
     LOG_DEBUG_T("Connection", "HandleCmd", "Enter", "session=%u, payload_len=%u", sess->session_id, payload_len);
@@ -897,6 +966,13 @@ static void handle_command(connection_session_t *sess, const uint8_t *payload,
                                (const uint8_t *)resp, strlen(resp));
         LOG_DEBUG_T("Connection", "HandleCmd", "Status", "status response sent");
     } else {
+        /* 【0.5.2 修复】未知命令 → 统一转发 ai.sock（Python 命令族）
+         *   先生 2026-09-12 实测：App 在 WS 不可用时回退 TCP 发送命令，
+         *   此前一概被拒（unknown command）→ 现与 WS 通道行为一致 */
+        if (tcp_forward_to_ai(sess, json_str) == 0) {
+            cJSON_Delete(root);
+            return;
+        }
         LOG_WARN_T("Connection", "HandleCmd", "Unknown", "unknown command='%s'", command);
         send_error(sess, ERR_COMMAND_UNKNOWN, tr("Unknown command", "未知命令"));
     }

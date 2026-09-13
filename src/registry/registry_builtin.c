@@ -14,6 +14,7 @@
 #include "registry.h"
 #include "log_extra.h"
 #include "safe_string.h"
+#include "../core/version.h"
 #include <string.h>
 
 typedef struct {
@@ -65,7 +66,8 @@ int registry_register_builtin_modules(void) {
         const char *prefix = (BUILTIN[i].type == REG_TYPE_MODULE) ? "module:" : "component:";
         safe_snprintf(e.id, sizeof(e.id), "%s%s", prefix, BUILTIN[i].id);
         safe_strncpy(e.name, BUILTIN[i].name, sizeof(e.name));
-        safe_strncpy(e.version, "LN-0.4.4", sizeof(e.version));
+        /* 【0.5.2 修复】版本动态化（原硬编码 LN-0.4.4——与系统版本不同步） */
+        safe_strncpy(e.version, version_get(), sizeof(e.version));
         if (BUILTIN[i].path) safe_strncpy(e.path, BUILTIN[i].path, sizeof(e.path));
         e.type = BUILTIN[i].type;
         e.status = REG_STATUS_ACTIVE;

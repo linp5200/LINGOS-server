@@ -142,6 +142,25 @@ typedef void (*registry_change_cb)(const char *id, int action, void *user_data);
 int registry_on_change(registry_change_cb cb, void *user_data);
 
 /* ============================================================
+ * 技能注册（registry_skill.c——【0.6.0】接线：加载 + 索引导出）
+ * ============================================================ */
+
+/**
+ * @brief 加载所有技能目录（builtin + custom + store）到注册表
+ *        并同步导出技能索引（/LINGOS/registry/skills/index.json）
+ * @return 加载的技能数（>=0）
+ */
+int registry_skill_load_all(void);
+
+/**
+ * @brief 导出技能索引到 /LINGOS/registry/skills/index.json
+ *        合并「内存注册表 type=4」+「registry.json 磁盘条目」，供
+ *        lingosd registry_list 与 Python 文件回退统一读取
+ * @return 写入的技能数（>=0），-1 失败
+ */
+int registry_skill_write_index(void);
+
+/* ============================================================
  * 自检集成 API
  * ============================================================ */
 
