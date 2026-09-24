@@ -33,6 +33,7 @@
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <ctype.h>
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -214,10 +215,11 @@ struct upload_ctx {
     FILE *fp;
     char path[MAX_FILE_PATH];
     int failed;
-    int mode;              /* 0=文件上传 1=/api/cmd 命令代理 */
-    char *buf;             /* mode=1: 累积请求体 */
+    int mode;              /* 0=文件上传 1=/api/cmd 命令代理 2=/api/webhook 外部触发 */
+    char *buf;             /* mode>=1: 累积请求体 */
     size_t buf_len;
     size_t buf_cap;
+    char webhook_id[64];   /* mode=2: webhook ID（URL 尾段，已过滤字符） */
 };
 
 static void free_upload_ctx(struct upload_ctx *ctx) {
@@ -358,8 +360,8 @@ static enum MHD_Result upload_handler(struct MHD_Connection *connection,
         return MHD_YES;
     }
     if (*upload_data_size != 0) {
-        if (ctx->mode == 1) {
-            /* 命令代理：累积 body */
+        if (ctx->mode >= 1) {
+            /* 命令代理 / webhook：累积 body */
             size_t need = ctx->buf_len + *upload_data_size + 1;
             if (need > ctx->buf_cap) {
                 size_t ncap = ctx->buf_cap ? ctx->buf_cap * 2 : 1024;
@@ -395,6 +397,26 @@ static enum MHD_Result upload_handler(struct MHD_Connection *connection,
             } else {
                 api_cmd_forward(connection, ctx->buf);
             }
+            free_upload_ctx(ctx);
+            *con_cls = NULL;
+            return MHD_YES;
+        }
+        if (ctx->mode == 2) {
+            /* 【2026-09-18】Webhook 外部触发：组装 webhook_trigger 命令 → ai.sock
+             * body 为 JSON（{ 或 [ 开头）时内联 payload（≤4KB）；否则仅触发 */
+            int is_json = (ctx->buf && ctx->buf_len && ctx->buf[0] &&
+                           (ctx->buf[0] == '{' || ctx->buf[0] == '['));
+            char reqbuf[8192];
+            if (is_json && ctx->buf_len <= 4096) {
+                safe_snprintf(reqbuf, sizeof(reqbuf),
+                              "{\"cmd\":\"webhook_trigger\",\"webhook_id\":\"%s\",\"payload\":%s}",
+                              ctx->webhook_id, ctx->buf);
+            } else {
+                safe_snprintf(reqbuf, sizeof(reqbuf),
+                              "{\"cmd\":\"webhook_trigger\",\"webhook_id\":\"%s\"}",
+                              ctx->webhook_id);
+            }
+            api_cmd_forward(connection, reqbuf);
             free_upload_ctx(ctx);
             *con_cls = NULL;
             return MHD_YES;
@@ -499,6 +521,54 @@ static enum MHD_Result request_handler(void *cls,
         struct upload_ctx *ctx = calloc(1, sizeof(struct upload_ctx));
         if (!ctx) return MHD_NO;
         ctx->mode = 1;
+        *con_cls = ctx;
+        return MHD_YES;
+    }
+
+    /* 【2026-09-18 接线】POST /api/webhook/<id> —— 外部系统触发（此前只有注册表无路由）
+     * 流程：URL 提取 id → 累积 body → 转发 ai.sock（webhook_trigger → home_ext 执行绑定动作）
+     * 安全：id 字符过滤（防注入）+ 限流 + 公网需 Bearer token（局域网按 S9 策略免 token） */
+    if (strncmp(url, "/api/webhook/", 13) == 0 && strcmp(method, "POST") == 0) {
+        const char *wid = url + 13;
+        char safe_id[64];
+        size_t wi = 0;
+        for (const char *p = wid; *p && wi < 48; p++) {
+            if (isalnum((unsigned char)*p) || *p == '_' || *p == '-') {
+                safe_id[wi++] = *p;
+            } else {
+                break;   /* 遇到非法字符（含 / ? 等）即止 */
+            }
+        }
+        safe_id[wi] = '\0';
+        if (wi == 0) {
+            send_json_response(connection, MHD_HTTP_BAD_REQUEST,
+                               "{\"status\":\"error\",\"msg\":\"missing webhook id\"}");
+            return MHD_YES;
+        }
+
+        const char *cip = http_client_ip(connection);
+        if (!access_rate_allow(cip)) {
+            send_json_response(connection, MHD_HTTP_TOO_MANY_REQUESTS,
+                               "{\"status\":\"error\",\"code\":\"rate_limited\"}");
+            return MHD_YES;
+        }
+        {
+            const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
+            int has_token = (auth && strncmp(auth, "Bearer ", 7) == 0);
+            if (access_needs_token(cip, has_token)) {
+                if (!has_token || !connection_verify_token(auth + 7)) {
+                    send_json_response(connection, MHD_HTTP_UNAUTHORIZED,
+                                       "{\"status\":\"error\",\"code\":\"unauthorized\","
+                                       "\"msg\":\"公网 webhook 需要有效 Bearer token\"}");
+                    return MHD_YES;
+                }
+            }
+        }
+
+        struct upload_ctx *ctx = calloc(1, sizeof(struct upload_ctx));
+        if (!ctx) return MHD_NO;
+        ctx->mode = 2;
+        safe_strncpy(ctx->webhook_id, safe_id, sizeof(ctx->webhook_id));
         *con_cls = ctx;
         return MHD_YES;
     }

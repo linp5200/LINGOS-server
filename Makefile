@@ -77,12 +77,9 @@ endif
 # ================================================================
 # 【0.5.0 先生要求：链接适配 Ubuntu 22.04~25.10】
 # 去掉 -lcurl：Ubuntu 22.04 的 libcurl 传递依赖 7 个版本敏感 soname
-#   (libldap-2.5 / liblber-2.5 / libavcodec.58 / libavformat.58 /
-#    libswscale.5 / libavutil.56 / libunistring.2)
-# 在 25.10 上全部不存在 → 二进制无法启动。
-# 现改为：内网 HTTP 用内置 socket 实现（src/net/http_client.c），
-#         需要 https/重定向时 dlopen("libcurl.so.4") 运行时加载 → 可选依赖。
-BASE_LDFLAGS = $(LDFLAGS) -lpthread -lm -lseccomp -lsqlite3 -lmosquitto -ldl
+# 【2026-09-18】alertd 生命线 https 数据源（USGS/EEW 四源）→ libssl 直连
+#   libssl.so.3 / libcrypto.so.3 soname 在 22.04~25.10 稳定（0.5.0 审计清单内）
+BASE_LDFLAGS = $(LDFLAGS) -lpthread -lm -lseccomp -lsqlite3 -lmosquitto -ldl -lssl -lcrypto
 
 # 主程序（TUI 关闭时 NOTCURSES_LIBS 为空）
 TUI_LDFLAGS = $(BASE_LDFLAGS) $(NOTCURSES_LIBS) $(if $(filter 1,$(ENABLE_SYSTEM_MHD)),-lmicrohttpd,)
@@ -93,7 +90,7 @@ MINIMAL_LDFLAGS = $(BASE_LDFLAGS) $(if $(filter 1,$(ENABLE_SYSTEM_MHD)),-lmicroh
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-VERSION = "LN-0.6.1"
+VERSION = "LN-0.6.2"
 CFLAGS += -DLINGOS_VERSION="\"$(VERSION)\""
 
 SRC_DIR = src
@@ -129,6 +126,7 @@ PLATFORM_SRCS = $(SRC_DIR)/drivers/linux_io.c \
 
 NET_SRCS = $(SRC_DIR)/net/tcp_client.c \
            $(SRC_DIR)/net/http_client.c \
+           $(SRC_DIR)/net/https_client.c \
            $(MHD_COMPAT_SRCS) \
            $(SRC_DIR)/net/mqtt/mqtt_client.c \
            $(SRC_DIR)/net/mqtt/mqtt_ha.c \

@@ -324,7 +324,7 @@ static void ensure_default_configs(void) {
                 fprintf(fp, "max_restart_per_hour = 5\n");
                 fprintf(fp, "enable_core_dump = 0\n");
                 fprintf(fp, "fallback_to_offline = 1\n");
-                fprintf(fp, "heartbeat_timeout = 180\n");
+                fprintf(fp, "heartbeat_timeout = 60\n");
                 fclose(fp);
             }
         } else if (strcmp(config_files[i], "user_profile.json") == 0) {

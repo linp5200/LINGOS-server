@@ -56,7 +56,13 @@ double alert_utils_get_source_weight(const char *source) {
 
 int alert_utils_is_china_source(const char *source) {
     if (!source) return 0;
-    return (strstr(source, "CN") || strstr(source, "China") || strstr(source, "中国")) ? 1 : 0;
+    if (strstr(source, "CN") || strstr(source, "China") || strstr(source, "中国")) return 1;
+    /* 【2026-09-18】EEW 四源/NMC 台风接线补充：
+     *   自有源名不含 "CN" 前缀——不补则多源 merge 时中国源优先级失效
+     *   （CENC 恰含 CN 侥幸命中；SC/CWA/NMC 未识别 → 可能选中外国源） */
+    if (strstr(source, "CENC") || strstr(source, "CWA") ||
+        strstr(source, "SC-EEW") || strstr(source, "NMC")) return 1;
+    return 0;
 }
 
 /* ============================================================

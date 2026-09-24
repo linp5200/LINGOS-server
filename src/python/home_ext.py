@@ -38,6 +38,53 @@ _presence = {"state": "unknown", "since": 0, "source": ""}
 
 
 # =============================================================
+# 【2026-09-18 接线】HA 实体控制桥（方案2 §1.3 设计一——治「孤岛」）
+#   此前 entity_set_state / scene_apply 只写内存 cache（HA 里的真设备纹丝不动）
+#   现：HA 已配置 → 真实 service call；未配置 → 本地缓存 + 明确标注
+# =============================================================
+_STATE_SERVICE = {
+    "on": "turn_on", "off": "turn_off",
+    "open": "open_cover", "closed": "close_cover",
+    "lock": "lock", "unlock": "unlock",
+    "playing": "media_play", "paused": "media_pause",
+    "home": "home", "not_home": "not_home",
+}
+# 纯本地域（无 HA 对应）——不尝试桥接
+_LOCAL_DOMAINS = {"virtual", "scene", "automation", "script"}
+# 高风险域（桥接时走 ha_control 高风险检查——开锁等需确认）
+_HIGH_RISK_DOMAINS = {"lock"}
+
+
+def _entity_domain(entity_id: str) -> str:
+    return entity_id.split(".", 1)[0] if "." in entity_id else ""
+
+
+def _ha_bridge_control(entity_id: str, state: str) -> dict:
+    """实体控制桥：HA 已配置 → service call；否则 {"bridged": False, "reason": ...}"""
+    domain = _entity_domain(entity_id)
+    if not domain or domain in _LOCAL_DOMAINS:
+        return {"bridged": False, "reason": "local_domain"}
+    try:
+        import ha_integration as HA
+    except Exception:
+        return {"bridged": False, "reason": "ha_module_unavailable"}
+    try:
+        cfg = HA.ha_load_config()
+        if not cfg.get("host"):
+            return {"bridged": False, "reason": "ha_not_configured"}
+        service = _STATE_SERVICE.get(str(state).lower(), str(state).lower())
+        # 高风险域（锁等）→ 用 need_confirm 版（危机之外的常规路径不静默开锁）
+        if domain in _HIGH_RISK_DOMAINS:
+            r = HA.cmd_ha_control(domain, service, entity_id, "")
+            return {"bridged": True, "service": service, "result": r,
+                    "note": "high-risk domain — confirmation flow applies"}
+        r = HA._ha_do_control(cfg, domain, service, entity_id, "")
+        return {"bridged": True, "service": service, "result": r}
+    except Exception as e:
+        logger.debug("ha bridge failed: %s", e)
+        return {"bridged": False, "reason": "bridge_error", "msg": str(e)}
+
+# =============================================================
 # 存储
 # =============================================================
 def _default_config() -> dict:
@@ -298,12 +345,16 @@ def cmd_entity_set_state(entity_id: str = "", state: str = "", **attrs) -> dict:
     if not entity_id:
         return {"status": "error", "msg": "缺少 entity_id"}
     _state_cache[entity_id] = {"state": state, "attrs": attrs, "ts": int(time.time())}
+    # 【2026-09-18 接线】HA 桥：已配置 HA → 真实设备 service call（此前只写内存——孤岛修复）
+    bridge = _ha_bridge_control(entity_id, state)
     # 触发自动化
     try:
         _run_automations("state_changed", {"entity_id": entity_id, "state": state})
     except Exception as e:
         logger.debug("automation trigger failed: %s", e)
-    return {"status": "ok", "data": _state_cache[entity_id]}
+    data = dict(_state_cache[entity_id])
+    data["ha_bridge"] = bridge
+    return {"status": "ok", "data": data}
 
 
 # =============================================================
@@ -347,7 +398,16 @@ def cmd_scene_apply(scene_id: str = "") -> dict:
         eid = it.get("id")
         st = it.get("state")
         _state_cache[eid] = {"state": st, "ts": int(time.time()), "scene": sc.get("name")}
-        applied.append({"id": eid, "state": st})
+        # 【2026-09-18 接线】场景实体经 HA 桥落地真设备（此前只动内存）
+        entry = {"id": eid, "state": st}
+        try:
+            br = _ha_bridge_control(eid, st)
+            if br.get("bridged"):
+                r = br.get("result", {})
+                entry["ha"] = r.get("status", "ok") if isinstance(r, dict) else "ok"
+        except Exception as e:
+            entry["ha"] = "bridge_error: %s" % e
+        applied.append(entry)
     try:
         _run_automations("scene_applied", {"scene": sc.get("name"), "entities": applied})
     except Exception:

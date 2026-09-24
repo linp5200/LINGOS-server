@@ -18,11 +18,16 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <sys/statvfs.h>
+#include <sys/select.h>
 #include <signal.h>
 #include <errno.h>
 #include <time.h>
 #include <dirent.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "data_path.h"
 #include "linux_io.h"
@@ -101,6 +106,11 @@ static volatile int g_ai_available = 0;
 static pthread_t g_ai_watchdog_thread;
 static volatile int g_ai_restart_attempts = 0;
 static volatile int g_ai_restart_failed = 0;
+
+/* 【2026-09-24】argv 选项（--fast / --safe / --diagnose——server mode 前置框架） */
+static int g_opt_fast = 0;      /* 跳过非关键后台检查（快速启动） */
+static int g_opt_safe = 0;      /* 最小启动：不含 AI 与 aux 守护 */
+static int g_opt_diagnose = 0;  /* 诊断模式：打印环境+就绪后退出（不进 Shell） */
 
 extern int ai_status_query(void);
 extern int ensure_ai_server_running(void);
@@ -189,6 +199,24 @@ static void stop_ai_watchdog(void) {
 static void send_exit_signal_to_supervisor(void) {
     pid_t ppid = getppid();
     if (ppid > 1) {
+        /* 【2026-09-19 修复】仅当父进程确为 lingos_supervisor 才发 SIGUSR1——
+         * 原实现直接 kill(ppid)：终端直跑（./lingos_linux）时父进程是 shell，
+         * SIGUSR1 默认动作会误杀 shell。现按 /proc/<pid>/comm 严格判定。 */
+        char comm_path[64], comm[64] = {0};
+        safe_snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", (int)ppid);
+        FILE *cf = fopen(comm_path, "r");
+        if (cf) {
+            if (fgets(comm, sizeof(comm), cf)) {
+                char *nl = strchr(comm, '\n');
+                if (nl) *nl = '\0';
+            }
+            fclose(cf);
+        }
+        if (strcmp(comm, "lingos_supervisor") != 0) {
+            LOG_DEBUG_T("Main", "Exit", "NotifySupervisor", "parent '%s' is not supervisor, skip",
+                        comm[0] ? comm : "?");
+            return;
+        }
         if (kill(ppid, SIGUSR1) == 0) {
             LOG_INFO_T("Main", "Exit", "NotifySupervisor", "Sent SIGUSR1 to supervisor (PID=%d)", ppid);
         } else {
@@ -204,6 +232,12 @@ static void send_exit_signal_to_supervisor(void) {
 static volatile int g_heartbeat_stop = 0;
 static pthread_t g_heartbeat_thread;
 
+/* 【2026-09-24】前向声明（心跳内附带 aux 状态采样用） */
+static int aux_daemon_running(const char *name);
+
+/* 【2026-09-24 心跳增强】JSON 格式：ts/pid/uptime + 服务状态（每 10s 采样一次）
+ *   旧 supervisor 兼容：其解析失败时回退纯数字（本文件同时保留数字回读防御）。
+ *   服务状态采样用"文件存在 + /proc 扫描"轻检查——不阻塞心跳。 */
 static void* heartbeat_write_thread(void *arg) {
     (void)arg;
     const char *root = lingos_data_root();
@@ -214,13 +248,28 @@ static void* heartbeat_write_thread(void *arg) {
     safe_snprintf(run_dir, sizeof(run_dir), "%s/run", root);
     mkdir(run_dir, 0755);
 
+    time_t start = time(NULL);
+    int beat = 0;
+    int svc_lingosd = 0, svc_ai = 0, svc_alertd = 0;
     while (!g_heartbeat_stop) {
         time_t now = time(NULL);
+        if (beat % 10 == 0) {
+            char p[512];
+            safe_snprintf(p, sizeof(p), "%s/run/daemon.sock", root);
+            svc_lingosd = (access(p, F_OK) == 0);
+            safe_snprintf(p, sizeof(p), "%s/run/ai.sock", root);
+            svc_ai = (access(p, F_OK) == 0);
+            svc_alertd = aux_daemon_running("lingos_alertd");
+        }
         FILE *fp = fopen(heartbeat_path, "w");
         if (fp) {
-            fprintf(fp, "%ld\n", now);
+            fprintf(fp, "{\"ts\":%ld,\"pid\":%d,\"uptime\":%ld,"
+                        "\"services\":{\"lingosd\":%d,\"ai\":%d,\"alertd\":%d}}\n",
+                    (long)now, (int)getpid(), (long)(now - start),
+                    svc_lingosd, svc_ai, svc_alertd);
             fclose(fp);
         }
+        beat++;
         sleep(1);
     }
     return NULL;
@@ -632,12 +681,109 @@ int ensure_ai_server_running(void) {
 }
 
 /* ============================================================
+ * 【2026-09-24 新增】服务守护线程（监督树补全——第二层 liveness）
+ *   · lingosd（每 5s）：socket 健康检查 → 失败重拉（复用 ensure_daemon_running）
+ *   · aux 守护（每 30s）：alertd/visiond/voiced /proc 检查 → 缺失软拉回
+ *   （AI 服务另有专用 AI watchdog——本线程不含 AI）
+ * ============================================================ */
+static volatile int g_svc_watchdog_stop = 0;
+static volatile int g_svc_watchdog_running = 0;
+static pthread_t g_svc_watchdog_thread;
+
+static void* service_watchdog_thread_func(void *arg) {
+    (void)arg;
+    LOG_INFO_T("Main", "ServiceWatchdog", "Start", "service watchdog started (lingosd + aux)");
+    g_svc_watchdog_running = 1;
+
+    int ticks = 0;
+    int lingosd_fail = 0;
+    int lingosd_gave_up = 0;
+
+    while (!g_svc_watchdog_stop) {
+        sleep(5);
+        if (g_svc_watchdog_stop) break;
+        ticks++;
+
+        /* ---- lingosd（每 5s 检查；2 次失败后重拉，最多 3 次重试） ---- */
+        if (!is_service_healthy(DAEMON_SOCKET_PATH)) {
+            lingosd_fail++;
+            LOG_WARN_T("Main", "ServiceWatchdog", "LingosdDown",
+                       "lingosd unhealthy (streak=%d)", lingosd_fail);
+            if (lingosd_fail >= 2 && lingosd_fail <= 4 && !lingosd_gave_up) {
+                if (ensure_daemon_running() == 0) {
+                    LOG_INFO_T("Main", "ServiceWatchdog", "LingosdRecovered",
+                               "lingosd restarted successfully");
+                    uart_puts(tr("✅ lingosd recovered (service watchdog).\n",
+                                 "✅ lingosd 已自动恢复（服务守护）。\n"));
+                    lingosd_fail = 0;
+                } else {
+                    LOG_WARN_T("Main", "ServiceWatchdog", "LingosdRestartFail",
+                               "lingosd restart failed (attempt %d)", lingosd_fail - 1);
+                }
+            } else if (lingosd_fail == 5) {
+                lingosd_gave_up = 1;
+                LOG_ERROR_T("Main", "ServiceWatchdog", "LingosdGiveUp",
+                            "lingosd recovery failed after retries — giving up (manual fix needed)");
+                uart_puts(COLOR_RED);
+                uart_puts(tr("\n⚠ lingosd (API core 8080/2939) unavailable — auto-recovery failed.\n"
+                             "  Try: bash lingos.sh doctor  (or restart the system)\n",
+                             "\n⚠ lingosd（API 核心 8080/2939）不可用——自动恢复失败。\n"
+                             "  排查：bash lingos.sh doctor（或重启系统）\n"));
+                uart_puts(COLOR_RESET);
+            }
+        } else {
+            if (lingosd_fail >= 2) {
+                LOG_INFO_T("Main", "ServiceWatchdog", "LingosdBack", "lingosd back to healthy");
+            }
+            lingosd_fail = 0;
+            lingosd_gave_up = 0;
+        }
+
+        /* ---- aux 守护（每 30s = 6 ticks；--safe 模式跳过） ---- */
+        if (ticks % 6 == 0 && !g_opt_safe) {
+            static const char *aux_names[] = { "lingos_alertd", "lingos_visiond", "lingos_voiced" };
+            for (size_t i = 0; i < sizeof(aux_names) / sizeof(aux_names[0]); i++) {
+                if (!aux_daemon_running(aux_names[i])) {
+                    LOG_WARN_T("Main", "ServiceWatchdog", "AuxMissing",
+                               "%s missing — relaunching", aux_names[i]);
+                    ensure_aux_daemon(aux_names[i]);
+                }
+            }
+        }
+    }
+
+    g_svc_watchdog_running = 0;
+    LOG_INFO_T("Main", "ServiceWatchdog", "Stop", "service watchdog stopped");
+    return NULL;
+}
+
+static void start_service_watchdog(void) {
+    if (g_svc_watchdog_running) return;
+    g_svc_watchdog_stop = 0;
+    if (pthread_create(&g_svc_watchdog_thread, NULL, service_watchdog_thread_func, NULL) != 0) {
+        LOG_WARN_T("Main", "ServiceWatchdog", "ThreadFail", "failed to start service watchdog");
+        return;
+    }
+    LOG_INFO_T("Main", "ServiceWatchdog", "Started", "service watchdog thread started");
+}
+
+static void stop_service_watchdog(void) {
+    if (!g_svc_watchdog_thread) return;
+    g_svc_watchdog_stop = 1;
+    pthread_join(g_svc_watchdog_thread, NULL);
+}
+
+/* ============================================================
  * 正常退出函数
  * ============================================================ */
-static void normal_exit(int exit_code) {
-    LOG_INFO_T("Main", "Exit", "Normal", "Exiting with code %d", exit_code);
+/* 【2026-09-19】normal_exit 参数化：支持自定义退出原因（信号停止等场景）；
+ * 原实现所有路径统一记 "Normal exit"——信号退出会覆盖异常标记（修复模式死机制根因） */
+static void normal_exit_with_reason(int exit_code, const char *reason) {
+    LOG_INFO_T("Main", "Exit", "Normal", "Exiting with code %d (reason: %s)",
+               exit_code, reason ? reason : "Normal exit");
 
-    exit_status_mark_clean(exit_code, "Normal exit");
+    exit_status_mark_clean(exit_code, reason ? reason : "Normal exit");
+    stop_service_watchdog();
     stop_ai_watchdog();
     stop_background_initialization();
     stop_heartbeat_writer();
@@ -671,13 +817,24 @@ static void normal_exit(int exit_code) {
     exit(exit_code);
 }
 
+/* 【2026-09-19】默认正常退出（包装） */
+static void normal_exit(int exit_code) {
+    normal_exit_with_reason(exit_code, "Normal exit");
+}
+
 /* ============================================================
  * 信号处理
  * ============================================================ */
 static void signal_exit_handler(int sig) {
     LOG_WARN_T("Main", "Signal", "Received", "signal=%d, exiting gracefully", sig);
-    exit_status_mark_abnormal(sig, "Signal received");
-    normal_exit(128 + sig);
+    /* 【2026-09-19 修复】原实现：mark_abnormal(sig) → normal_exit(→mark_clean)，
+     * 异常标记被立即覆盖 → 修复模式永不触发（死机制根因之二）。
+     * 现语义定稿：
+     *   · 信号退出（TERM/INT）= 优雅停止 → 记 clean（原因写明信号，可追溯）
+     *   · 崩溃/断电/强杀 = 无机会标记 → 运行脏标记残留 → 下次启动检出异常 */
+    char reason[64];
+    safe_snprintf(reason, sizeof(reason), "Stopped (signal %d)", sig);
+    normal_exit_with_reason(128 + sig, reason);
 }
 
 static void emergency_output(const char *msg) {
@@ -686,13 +843,235 @@ static void emergency_output(const char *msg) {
 }
 
 /* ============================================================
+ * 【2026-09-19 新增】单实例锁（flock——防双实例端口冲突）
+ *   背景：先生环境日志实证一天 4 次端口冲突（2937/2939/8080/8088 全 BindFail）
+ *   语义：锁被占 → 读锁内 PID → 明确提示并返回 -2（main 退出码 75）
+ *         supervisor 见 75 码停止重启循环（防互抢）
+ *   说明：O_CLOEXEC——fork+exec 的子进程自动释放 fd，不误持锁
+ * ============================================================ */
+static int acquire_instance_lock(void) {
+    const char *root = lingos_data_root();
+    char dir[512], path[512];
+    safe_snprintf(dir, sizeof(dir), "%s/run", root);
+    mkdir(dir, 0755);
+    safe_snprintf(path, sizeof(path), "%s/run/lingos.lock", root);
+
+    int fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        LOG_WARN_T("Main", "InstanceLock", "OpenFail",
+                   "cannot open %s (%s) — continuing without lock", path, strerror(errno));
+        return -1;   /* 无法建锁不阻塞启动（防弹——如只读环境） */
+    }
+
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        char buf[64] = {0};
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        long other = (n > 0) ? atol(buf) : 0;
+        char msg[512];
+        if (other > 0) {
+            safe_snprintf(msg, sizeof(msg),
+                "\n[LING OS] 检测到已有实例正在运行（PID %ld）——本次启动退出。\n"
+                "[LING OS] Another instance is already running (PID %ld) — exiting.\n"
+                "[LING OS] 提示：如需重启请用  bash lingos.sh restart\n\n",
+                other, other);
+        } else {
+            safe_strncpy(msg,
+                "\n[LING OS] 检测到已有实例正在运行——本次启动退出。\n"
+                "[LING OS] Another instance is already running — exiting.\n"
+                "[LING OS] 提示：如需重启请用  bash lingos.sh restart\n\n",
+                sizeof(msg));
+        }
+        write(STDERR_FILENO, msg, strlen(msg));
+        LOG_WARN_T("Main", "InstanceLock", "AlreadyRunning",
+                   "another instance holds the lock (pid=%ld)", other);
+        close(fd);
+        return -2;
+    }
+
+    /* 写入本进程 PID（供诊断/脚本读取） */
+    if (ftruncate(fd, 0) == 0) {
+        char pidbuf[32];
+        int plen = safe_snprintf(pidbuf, sizeof(pidbuf), "%d\n", (int)getpid());
+        if (plen > 0) {
+            ssize_t w = write(fd, pidbuf, (size_t)plen);
+            (void)w;
+        }
+    }
+    LOG_INFO_T("Main", "InstanceLock", "OK", "instance lock acquired (pid=%d)", (int)getpid());
+    return fd;   /* 保持打开——进程存活期间持锁；退出自动释放 */
+}
+
+/* ============================================================
+ * 【2026-09-19 新增】等待 registry.sock 就绪
+ *   背景：ai_server 经 registry.sock 加载技能注册表；此前主程序不等它 →
+ *   首启/慢环境 AI 回退内置技能表（自定义技能缺席）。超时仅告警不阻塞。
+ * ============================================================ */
+static void wait_for_registry_ready(int timeout_sec) {
+    char path[512];
+    safe_snprintf(path, sizeof(path), "%s/run/registry.sock", lingos_data_root());
+    for (int i = 0; i < timeout_sec * 2; i++) {
+        if (access(path, F_OK) == 0) {
+            LOG_DEBUG_T("Main", "RegistryWait", "Ready", "registry.sock present after %d ms", i * 500);
+            return;
+        }
+        usleep(500000);
+    }
+    LOG_WARN_T("Main", "RegistryWait", "Timeout",
+               "registry.sock not ready after %ds — AI may fall back to built-in skills", timeout_sec);
+}
+
+/* ============================================================
+ * 【2026-09-19 新增】启动就绪报告（到 Shell 前打印 + 写 run/ready 文件）
+ *   对应主流（systemd Type=notify / K8s readiness）的轻量对应物：
+ *   用户一眼可见"哪些服务就绪、哪些降级"，不再靠猜。
+ * ============================================================ */
+static int check_local_port(int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+
+    /* 非阻塞 + 500ms 超时——启动路径绝不因端口探测挂起 */
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((unsigned short)port);
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    int ok = 0;
+    int r = connect(fd, (struct sockaddr *)&sa, sizeof(sa));
+    if (r == 0) {
+        ok = 1;
+    } else if (errno == EINPROGRESS) {
+        fd_set wfds;
+        FD_ZERO(&wfds);
+        FD_SET(fd, &wfds);
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 500000;
+        if (select(fd + 1, NULL, &wfds, NULL, &tv) > 0) {
+            int soerr = 0;
+            socklen_t slen = sizeof(soerr);
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen) == 0 && soerr == 0) {
+                ok = 1;
+            }
+        }
+    }
+    close(fd);
+    return ok;
+}
+
+static void rd_line(const char *label, int ok) {
+    uart_puts(ok ? COLOR_GREEN : COLOR_YELLOW);
+    uart_puts("  ");
+    uart_puts(label);
+    uart_puts(ok ? "  [ OK ]\n" : "  [ -- ]\n");
+    uart_puts(COLOR_RESET);
+}
+
+static void print_readiness_report(void) {
+    int ok_daemon  = is_service_healthy(DAEMON_SOCKET_PATH);
+    int ok_ai      = is_service_healthy(AI_SOCKET_PATH);
+    int ok_alertd  = aux_daemon_running("lingos_alertd");
+    int ok_visiond = aux_daemon_running("lingos_visiond");
+    int ok_voiced  = aux_daemon_running("lingos_voiced");
+    int ok_tcp     = check_local_port(2937);
+    int ok_http    = check_local_port(8080);
+    int ok_audio   = check_local_port(8088);
+
+    uart_puts("\n");
+    uart_puts(COLOR_BOLD);
+    uart_puts(tr("  ── LING OS readiness report ─────────────────────────\n",
+                 "  ── LING OS 就绪报告 ─────────────────────────────────\n"));
+    uart_puts(COLOR_RESET);
+    rd_line(tr("lingosd   (8080/2939)", "lingosd   (8080/2939)"), ok_daemon);
+    rd_line(tr("ai_server (ai.sock/8088)", "ai_server (ai.sock/8088)"), ok_ai);
+    rd_line(tr("alertd    (lifeline)", "alertd    (生命线)"), ok_alertd);
+    rd_line(tr("visiond   (vision)", "visiond   (视觉)"), ok_visiond);
+    rd_line(tr("voiced    (voice)", "voiced    (语音)"), ok_voiced);
+    {
+        char lb[96];
+        safe_snprintf(lb, sizeof(lb), "%s", tr("tcp 2937 (app channel)", "tcp 2937 (App 主通道)"));
+        rd_line(lb, ok_tcp);
+        safe_snprintf(lb, sizeof(lb), "%s", tr("http 8080 (web ui)", "http 8080 (Web UI)"));
+        rd_line(lb, ok_http);
+        safe_snprintf(lb, sizeof(lb), "%s", tr("audio 8088 (tts/stt)", "audio 8088 (语音 REST)"));
+        rd_line(lb, ok_audio);
+    }
+    if (!ok_daemon || !ok_tcp) {
+        uart_puts(COLOR_YELLOW);
+        uart_puts(tr("  ⚠ core service degraded — see notes: bash lingos.sh doctor\n",
+                     "  ⚠ 核心服务有降级——排查提示：bash lingos.sh doctor\n"));
+        uart_puts(COLOR_RESET);
+    }
+    uart_puts("\n");
+
+    /* 写 run/ready（单行 JSON——供脚本/supervisor/Web 读取） */
+    {
+        const char *root = lingos_data_root();
+        char rpath[512];
+        safe_snprintf(rpath, sizeof(rpath), "%s/run/ready", root);
+        FILE *rf = fopen(rpath, "w");
+        if (rf) {
+            char tsbuf[64];
+            time_t now = time(NULL);
+            struct tm *tmv = localtime(&now);
+            if (tmv) strftime(tsbuf, sizeof(tsbuf), "%Y-%m-%dT%H:%M:%S", tmv);
+            else safe_strncpy(tsbuf, "?", sizeof(tsbuf));
+            fprintf(rf, "{\"version\":\"%s\",\"ts\":%ld,\"time\":\"%s\","
+                        "\"services\":{\"lingosd\":%d,\"ai\":%d,\"alertd\":%d,\"visiond\":%d,"
+                        "\"voiced\":%d,\"tcp2937\":%d,\"http8080\":%d,\"audio8088\":%d}}\n",
+                    version_get(), (long)now, tsbuf,
+                    ok_daemon, ok_ai, ok_alertd, ok_visiond, ok_voiced,
+                    ok_tcp, ok_http, ok_audio);
+            fclose(rf);
+            LOG_INFO_T("Main", "Readiness", "Report",
+                       "daemon=%d ai=%d alertd=%d visiond=%d voiced=%d tcp=%d http=%d audio=%d",
+                       ok_daemon, ok_ai, ok_alertd, ok_visiond, ok_voiced,
+                       ok_tcp, ok_http, ok_audio);
+        }
+    }
+}
+
+/* ============================================================
  * 主函数
  * ============================================================ */
 int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+    /* 【2026-09-24】argv 框架（--fast / --safe / --diagnose / --version / --help）
+     *   ——启动参数统一入口（server mode 的 --server 未来接入点） */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--fast") == 0) {
+            g_opt_fast = 1;
+        } else if (strcmp(argv[i], "--safe") == 0) {
+            g_opt_safe = 1;
+        } else if (strcmp(argv[i], "--diagnose") == 0) {
+            g_opt_diagnose = 1;
+        } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
+            printf("LING OS %s\n", version_get());
+            return 0;
+        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            printf("LING OS %s\n", version_get());
+            printf("用法: lingos_linux [选项]\n");
+            printf("  --fast      快速启动（跳过非关键后台检查）\n");
+            printf("  --safe      最小启动（不含 AI 与辅助守护）\n");
+            printf("  --diagnose  诊断模式（打印环境与就绪报告后退出）\n");
+            printf("  --version   显示版本\n");
+            printf("  --help      显示帮助\n");
+            return 0;
+        }
+    }
 
     show_startup_banner();
+
+    /* 【2026-09-19】单实例锁（flock——防双实例端口冲突；日志实证的根因修复） */
+    int instance_lock_fd = acquire_instance_lock();
+    if (instance_lock_fd == -2) {
+        /* 已有实例在运行：明确提示后退出（supervisor 见 75 码将停止重启循环） */
+        return EXIT_ALREADY_RUNNING;
+    }
+    (void)instance_lock_fd;   /* 进程存活期间保持打开（锁随 fd 释放） */
+
     start_heartbeat_writer();
 
     exit_status_t exit_status;
@@ -705,6 +1084,10 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+
+    /* 【2026-09-19】写运行脏标记：崩溃/断电/强杀后由下次启动的修复模式检出
+     *   （修复旧 BUG：异常标记被覆盖 → 修复模式永不触发） */
+    exit_status_mark_running();
 
     LOG_INFO_T("Main", "Startup", "Entry", "LING OS Version: %s", version_get());
 
@@ -911,9 +1294,10 @@ int main(int argc, char **argv) {
 
 after_wizard:
     /* 加载配置（供语言初始化使用） */
-    if (!is_first_start) {
-        config_core_load(config_core_get_mutable());
-    }
+    /* 【2026-09-24 配置单载收口】无论首启与否统一刷新全局配置——
+     *   原实现仅非首启加载：首启向导保存后全局配置依赖副作用同步（脆弱）。
+     *   config_core_load 幂等（同文件重读），此处一次性收口（向导保存 → 全局一致）。 */
+    config_core_load(config_core_get_mutable());
     /* 初始化语言（必须在 config_core_load 之后） */
     lang_init();
 
@@ -948,19 +1332,64 @@ after_wizard:
         return 1;
     }
 
-    if (ensure_ai_server_running() != 0) {
-        error_shell_run();
-        return 1;
-    }
+    if (g_opt_safe) {
+        /* 【2026-09-24】--safe 最小启动：仅核心（lingosd + Shell），不含 AI 与 aux 守护 */
+        uart_puts(COLOR_YELLOW);
+        uart_puts(tr("\n⚠ Safe mode (--safe): AI and auxiliary daemons are skipped.\n",
+                     "\n⚠ 安全模式（--safe）：AI 与辅助守护已跳过。\n"));
+        uart_puts(COLOR_RESET);
+        LOG_WARN_T("Main", "Startup", "SafeMode", "safe mode: AI + aux daemons skipped");
+    } else {
+        /* 【2026-09-19 顺序修正】生命线先行：alertd 不依赖 AI——
+         *   原顺序 ai_server → alertd：AI 最坏 ~40s 启动期间预警守护缺席，
+         *   且 AI 失败曾连带生命线永不启动（违反"生命线不依赖 AI"定位） */
+        ensure_aux_daemon("lingos_alertd");
 
-    /* 【0.6.0】辅助守护进程（软启动——生命线 alertd + 视觉/语音内核） */
-    ensure_aux_daemon("lingos_alertd");
-    ensure_aux_daemon("lingos_visiond");
-    ensure_aux_daemon("lingos_voiced");
+        /* 【2026-09-19 竞态修正】等待 registry.sock（ai_server 用它加载技能注册表）——
+         *   此前不等：首启/慢环境技能表回退内置，自定义技能缺席（日志实证 fallback） */
+        wait_for_registry_ready(10);
+
+        /* 【2026-09-19 软降级】AI 启动失败不再终止系统（AI watchdog 后台持续重试）——
+         *   AI 不可用不影响生命线与核心服务（跛脚范式） */
+        if (ensure_ai_server_running() != 0) {
+            uart_puts(COLOR_YELLOW);
+            uart_puts(tr(
+                "\n⚠ AI service failed to start — system continues without AI for now.\n"
+                "  AI watchdog will keep retrying in the background.\n",
+                "\n⚠ AI 服务启动失败——系统先继续启动（AI 暂不可用）。\n"
+                "  AI watchdog 将在后台持续重试。\n"));
+            uart_puts(COLOR_RESET);
+            LOG_WARN_T("Main", "Startup", "AISoftDegrade",
+                       "AI server failed to start; continuing (soft degrade, watchdog will retry)");
+        }
+
+        /* 视觉/语音内核（软启动——缺失不阻塞主程序） */
+        ensure_aux_daemon("lingos_visiond");
+        ensure_aux_daemon("lingos_voiced");
+    }
 
     connection_load_config(NULL);
     if (connection_server_start(NULL) != 0) {
         LOG_WARN_T("Main", "ConnectionServer", "StartFail", "connection server failed to start");
+        /* 【2026-09-24 错误策略统一】关键通道失败不再静默——
+         *   原仅 WARN 藏日志（用户遭遇"shell 正常但 App 连不上"的迷惑体验） */
+        uart_puts(COLOR_RED);
+        uart_puts(tr(
+            "\n╔══════════════════════════════════════════════════════════╗\n"
+            "║  ⚠ [CRITICAL] TCP 2937 failed to start!                   ║\n"
+            "║  ⚠ [严重] TCP 2937 主通道启动失败——App 将无法连接！         ║\n"
+            "║                                                          ║\n"
+            "║  Possible cause: another instance is occupying the port. ║\n"
+            "║  可能原因：另一实例占用端口。                              ║\n"
+            "║  Try: bash lingos.sh doctor  /  bash lingos.sh restart   ║\n"
+            "╚══════════════════════════════════════════════════════════╝\n",
+            "\n╔══════════════════════════════════════════════════════════╗\n"
+            "║  ⚠ [严重] TCP 2937 主通道启动失败——App 将无法连接！         ║\n"
+            "║                                                          ║\n"
+            "║  可能原因：另一实例占用端口。                              ║\n"
+            "║  排查：bash lingos.sh doctor  或  bash lingos.sh restart  ║\n"
+            "╚══════════════════════════════════════════════════════════╝\n"));
+        uart_puts(COLOR_RESET);
     } else {
         LOG_INFO_T("Main", "ConnectionServer", "Started", "listening on ports %d/%d",
                    connection_get_config()->primary_port,
@@ -999,10 +1428,43 @@ after_wizard:
     config_load_all();
 
     start_background_initialization();
-    start_ai_watchdog();
+    if (g_opt_safe) {
+        LOG_WARN_T("Main", "Startup", "SafeMode", "AI watchdog skipped (safe mode)");
+    } else {
+        start_ai_watchdog();
+        /* 【2026-09-24】服务守护（监督树补全）：lingosd 5s 检查 + aux 30s 检查 */
+        start_service_watchdog();
+    }
 
-    if (async_self_check() != 0) {
+    if (g_opt_fast) {
+        LOG_INFO_T("Main", "Startup", "FastMode", "fast mode: async self-check skipped");
+    } else if (async_self_check() != 0) {
         LOG_WARN_T("Main", "AsyncSelfCheck", "Failed", "background check could not be started");
+    }
+
+    /* 【2026-09-19】启动就绪报告 + run/ready 就绪文件（到达 Shell 前） */
+    print_readiness_report();
+
+    /* 【2026-09-24】--diagnose 诊断模式：打印环境信息后退出（不进 Shell） */
+    if (g_opt_diagnose) {
+        uart_puts(tr("\n--diagnose: environment summary --\n", "\n--diagnose：环境摘要 --\n"));
+        uart_puts(tr("  version   : ", "  版本      : "));
+        uart_puts(version_get());
+        uart_puts("\n");
+        uart_puts(tr("  data root : ", "  数据根    : "));
+        uart_puts(lingos_data_root());
+        uart_puts("\n");
+        char logp[512];
+        safe_snprintf(logp, sizeof(logp), "%s/log/lingos.log", lingos_data_root());
+        uart_puts(tr("  log file  : ", "  日志文件  : "));
+        uart_puts(logp);
+        uart_puts("\n");
+        uart_puts(tr("  flags     : ", "  旗标      : "));
+        uart_puts(g_opt_fast ? "fast " : "");
+        uart_puts(g_opt_safe ? "safe " : "");
+        uart_puts("diagnose\n");
+        uart_puts(tr("--diagnose done (shell not entered) --\n", "--diagnose 完成（未进入 Shell）--\n"));
+        normal_exit(0);
     }
 
     startup_mode_t mode = startup_mode_get();

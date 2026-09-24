@@ -135,31 +135,29 @@ int exit_status_init(exit_status_t *status) {
     int loaded = load_status(status);
 
     if (loaded == 0) {
-        /* 检查上次是否正常退出 */
+        /* 【2026-09-19 修复】异常判定重写（修复模式此前永不触发）：
+         *   · 旧实现：信号退出时 mark_abnormal 被 normal_exit 的 mark_clean 覆盖，
+         *     且 init 将文件直接标 clean → 崩溃/断电全被吞掉 → repair_mode 死机制
+         *   · 新语义：运行期写"脏标记"（is_clean_exit=0 + reason=Running，由
+         *     exit_status_mark_running 在启动链判定后写入）；干净退出才置 1
+         *   · 兼容旧版文件：reason=="Running" 视为未干净退出（旧版运行中遗留） */
         int abnormal = 0;
-        if (!status->is_clean_exit) {
-            time_t now = time(NULL);
-            /* 如果上次退出时间在最近 30 秒内，且非正常退出，认为异常 */
-            if (status->last_exit_time > 0 &&
-                (now - status->last_exit_time) < 30) {
-                abnormal = 1;
-                LOG_WARN_T("ExitStatus", "Init", "Abnormal", "previous exit was abnormal");
-            } else {
-                /* 如果上次退出时间较早，可能是手动清理，重置状态 */
-                LOG_DEBUG_T("ExitStatus", "Init", "Old", "old exit status, clearing");
-                memset(status, 0, sizeof(exit_status_t));
-            }
+        if (!status->is_clean_exit ||
+            strcmp(status->last_exit_reason, "Running") == 0) {
+            abnormal = 1;
+            LOG_WARN_T("ExitStatus", "Init", "Abnormal",
+                       "previous exit was abnormal (reason='%s')", status->last_exit_reason);
         }
 
-        /* 更新 crash_count */
         if (abnormal) {
             status->crash_count++;
+            if (status->crash_count > 999) status->crash_count = 999;
             if (status->crash_count == 1) {
                 status->first_crash_time = time(NULL);
             }
             status->is_clean_exit = 0;
         } else {
-            /* 正常启动，重置崩溃计数 */
+            /* 上次正常退出，重置崩溃计数 */
             status->crash_count = 0;
             status->first_crash_time = 0;
             status->is_clean_exit = 1;
@@ -171,11 +169,8 @@ int exit_status_init(exit_status_t *status) {
         status->first_crash_time = 0;
     }
 
-    /* 更新启动时间 */
+    /* 更新启动时间（脏标记由 exit_status_mark_running() 在修复判定后写入） */
     status->last_start_time = time(NULL);
-    safe_strncpy(status->last_exit_reason, "Running", sizeof(status->last_exit_reason));
-
-    save_status(status);
 
     g_initialized = 1;
 
@@ -248,6 +243,23 @@ void exit_status_clear_abnormal(void) {
     LOG_INFO_T("ExitStatus", "ClearAbnormal", "OK", "abnormal flag cleared");
 }
 
+/* ============================================================
+ * 【2026-09-19 新增】运行脏标记
+ *   语义：进程启动链判定完成后即置"脏"——崩溃/断电/强杀不留痕的
+ *   问题由此解决（文件保持 is_clean_exit=0 直到干净退出才置 1）。
+ * ============================================================ */
+void exit_status_mark_running(void) {
+    if (!g_initialized) {
+        exit_status_init(&g_status);
+    }
+    exit_status_t *status = &g_status;
+    status->last_start_time = time(NULL);
+    status->is_clean_exit = 0;   /* 脏：未完成干净退出前保持 0 */
+    safe_strncpy(status->last_exit_reason, "Running", sizeof(status->last_exit_reason));
+    save_status(status);
+    LOG_DEBUG_T("ExitStatus", "MarkRunning", "OK", "marked running (dirty until clean exit)");
+}
+
 const exit_status_t* exit_status_get(void) {
     if (!g_initialized) {
         exit_status_init(NULL);
@@ -279,6 +291,19 @@ void exit_status_format_message(const exit_status_t *status,
         safe_strncpy(time_str, "Unknown", sizeof(time_str));
     }
 
+    /* 【2026-09-19】原因显示优化："Running"（未完成退出标记）→ 通俗描述 */
+    char reason_disp[192];
+    if (strcmp(status->last_exit_reason, "Running") == 0) {
+        safe_strncpy(reason_disp,
+                     is_zh ? "未完成正常退出（崩溃 / 断电 / 被强制结束）"
+                           : "did not complete a clean shutdown (crash / power loss / killed)",
+                     sizeof(reason_disp));
+    } else if (status->last_exit_reason[0]) {
+        safe_strncpy(reason_disp, status->last_exit_reason, sizeof(reason_disp));
+    } else {
+        safe_strncpy(reason_disp, is_zh ? "未知" : "Unknown", sizeof(reason_disp));
+    }
+
     if (is_zh) {
         safe_snprintf(buf, size,
                       "系统上次异常退出\n"
@@ -287,7 +312,7 @@ void exit_status_format_message(const exit_status_t *status,
                       "时间: %s\n"
                       "连续异常次数: %d",
                       status->last_exit_code,
-                      status->last_exit_reason[0] ? status->last_exit_reason : "未知",
+                      reason_disp,
                       time_str,
                       status->crash_count);
     } else {
@@ -298,7 +323,7 @@ void exit_status_format_message(const exit_status_t *status,
                       "Time: %s\n"
                       "Consecutive abnormal exits: %d",
                       status->last_exit_code,
-                      status->last_exit_reason[0] ? status->last_exit_reason : "Unknown",
+                      reason_disp,
                       time_str,
                       status->crash_count);
     }

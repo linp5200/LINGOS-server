@@ -3211,16 +3211,160 @@ def cmd_monitor_remove(camera_id: str = "cam0") -> dict:
 
 
 # ========== 【0.4.3】AI 识别引擎 ai_vision.*（先生类目——给 AI 用：检测/OCR/标定/追踪） ==========
+# 【2026-09-18 接线】三个命令从「空桩」改为真实调用本地引擎：
+#   detect    → /LINGOS/run/yolo.sock（JSON 行协议）
+#   ocr       → 127.0.0.1:8892（4B 大端长度 + JPEG → JSON 行）
+#   calibrate → 127.0.0.1:8893（JSON 行协议 {"cmd":"get"}）
+# 无帧来源/引擎未运行 → 明确错误（不再静默空数组/空文本——诚实原则）
 
-def cmd_ai_vision_detect() -> dict:
-    """AI 识别引擎：对监控最新帧做物体检测（YOLO）——给 AI 用，结果不自动叠加监控画面
-    叠加需高级设置开关（先生叠加态）"""
+def _vis_overlay_enabled() -> bool:
+    """叠加开关（monitor.json 的 ai_vision_overlay——与 cmd_ai_vision_overlay 同源）"""
     try:
-        import yolo_service as YS
-        return {"status": "ok", "data": {"engine": "yolo_service", "note": "检测服务由监控/ai_vision 编排拉起",
-                "detections": [], "overlay": False}}
+        p = "/LINGOS/system/config/monitor.json"
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                return bool(json.load(f).get("ai_vision_overlay", False))
+    except Exception:
+        pass
+    return False
+
+
+def _vis_get_frame(image_path: str = ""):
+    """获取一帧（JPEG 字节）。优先 image_path；否则监控抓拍。返回 (bytes, src)；失败 (b"", err)"""
+    if image_path:
+        if not os.path.exists(image_path):
+            return b"", t("image_path not found: %s" % image_path, "image_path 不存在：%s" % image_path)
+        try:
+            with open(image_path, "rb") as f:
+                return f.read(), image_path
+        except Exception as e:
+            return b"", str(e)
+    try:
+        monitor_service.load_cfg()
+        snap = monitor_service.cmd_snapshot("cam0")
     except Exception as e:
-        return {"status": "error", "msg": str(e)}
+        return b"", t("snapshot failed: %s" % e, "快照失败：%s" % e)
+    if snap.get("status") != "ok":
+        return b"", snap.get("msg", t("no frame source", "无帧来源"))
+    fp = snap.get("data", {}).get("file", "")
+    if fp and os.path.exists(fp):
+        try:
+            with open(fp, "rb") as f:
+                return f.read(), fp
+        except Exception as e:
+            return b"", str(e)
+    return b"", t("snapshot produced no file", "快照未产出文件")
+
+
+def _vis_call_yolo_engine(jpeg: bytes, threshold: float = 0.5) -> dict:
+    """调 yolo.sock（Unix socket——JSON 行协议）；引擎未运行 → not_running"""
+    import socket as _sock
+    import base64 as _b64
+    sock_path = "/LINGOS/run/yolo.sock"
+    if not os.path.exists(sock_path):
+        return {"error_type": "not_running",
+                "msg": t("YOLO engine not running (start yolo_service / lingos_visiond first)",
+                         "YOLO 引擎未运行（请先启动 yolo_service / lingos_visiond）")}
+    try:
+        c = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+        c.settimeout(20)
+        c.connect(sock_path)
+        c.sendall((json.dumps({"cmd": "detect",
+                               "image": _b64.b64encode(jpeg).decode(),
+                               "threshold": float(threshold)}) + "\n").encode())
+        buf = b""
+        while b"\n" not in buf:
+            chunk = c.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        c.close()
+        if not buf:
+            return {"error_type": "empty_response",
+                    "msg": t("YOLO engine returned nothing", "YOLO 引擎无响应")}
+        return json.loads(buf.decode("utf-8", "ignore").strip().split("\n")[0])
+    except (ConnectionRefusedError, FileNotFoundError):
+        # socket 残留但服务未跑（或已被清理）——统一报 not_running
+        return {"error_type": "not_running",
+                "msg": t("YOLO engine not running (socket exists but service is down)",
+                         "YOLO 引擎未运行（socket 残留但服务已停）")}
+    except Exception as e:
+        return {"error_type": "socket_error", "msg": str(e)}
+
+
+def _vis_call_ocr_engine(jpeg: bytes) -> dict:
+    """调 OCR 服务（127.0.0.1:8892）；未运行 → not_running"""
+    import socket as _sock
+    import struct as _struct
+    try:
+        c = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+        c.settimeout(20)
+        c.connect(("127.0.0.1", 8892))
+        c.sendall(_struct.pack(">I", len(jpeg)) + jpeg)
+        buf = b""
+        while b"\n" not in buf:
+            chunk = c.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        c.close()
+        if not buf:
+            return {"error_type": "empty_response",
+                    "msg": t("OCR engine returned nothing", "OCR 引擎无响应")}
+        return json.loads(buf.decode("utf-8", "ignore").strip().split("\n")[0])
+    except ConnectionRefusedError:
+        return {"error_type": "not_running",
+                "msg": t("OCR engine not running (port 8892 — start ocr_service first)",
+                         "OCR 引擎未运行（端口 8892——请先启动 ocr_service）")}
+    except Exception as e:
+        return {"error_type": "socket_error", "msg": str(e)}
+
+
+def _vis_call_calibration(cmd_name: str = "get", **kw) -> dict:
+    """调标定服务（127.0.0.1:8893）；未运行 → not_running"""
+    import socket as _sock
+    try:
+        c = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+        c.settimeout(10)
+        c.connect(("127.0.0.1", 8893))
+        c.sendall((json.dumps({"cmd": cmd_name, **kw}) + "\n").encode())
+        buf = b""
+        while b"\n" not in buf:
+            chunk = c.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        c.close()
+        if not buf:
+            return {"error_type": "empty_response",
+                    "msg": t("Calibration engine returned nothing", "标定服务无响应")}
+        return json.loads(buf.decode("utf-8", "ignore").strip().split("\n")[0])
+    except ConnectionRefusedError:
+        return {"error_type": "not_running",
+                "msg": t("Calibration engine not running (port 8893 — start calibration_service first)",
+                         "标定服务未运行（端口 8893——请先启动 calibration_service）")}
+    except Exception as e:
+        return {"error_type": "socket_error", "msg": str(e)}
+
+
+def cmd_ai_vision_detect(image_path: str = "", threshold: float = 0.5) -> dict:
+    """AI 识别引擎：对（image_path 或监控最新帧）做 YOLO 物体检测
+    【2026-09-18 接线】原为「空数组假成功」→ 现真实调用 yolo.sock；结果不自动叠加监控画面
+    叠加需高级设置开关（先生叠加态）"""
+    jpeg, src = _vis_get_frame(str(image_path or ""))
+    if not jpeg:
+        return {"status": "error", "engine": "yolo_service", "error_type": "no_frame", "msg": src}
+    r = _vis_call_yolo_engine(jpeg, float(threshold or 0.5))
+    if r.get("error_type"):
+        return {"status": "error", "engine": "yolo_service",
+                "error_type": r.get("error_type"), "msg": r.get("msg", "")}
+    if r.get("status") != "ok":
+        return {"status": "error", "engine": "yolo_service",
+                "msg": r.get("error", t("YOLO detection failed", "YOLO 检测失败"))}
+    return {"status": "ok", "data": {"engine": "yolo_service", "source_frame": src,
+                                     "detections": r.get("detections", []),
+                                     "count": r.get("count", len(r.get("detections", []))),
+                                     "overlay": _vis_overlay_enabled()}}
 
 
 def cmd_ai_vision_ask(question: str = "", image_path: str = "") -> dict:
@@ -3244,22 +3388,38 @@ def cmd_ai_vision_ask(question: str = "", image_path: str = "") -> dict:
         return {"status": "error", "msg": str(e)}
 
 
-def cmd_ai_vision_ocr() -> dict:
-    """AI 识别引擎：OCR 文字识别（归 AI 内容——先生裁决）"""
-    try:
-        import ocr_service as OS
-        return {"status": "ok", "data": {"engine": "ocr_service", "text": "", "overlay": False}}
-    except Exception as e:
-        return {"status": "error", "msg": str(e)}
+def cmd_ai_vision_ocr(image_path: str = "") -> dict:
+    """AI 识别引擎：OCR 文字识别（归 AI 内容——先生裁决）
+    【2026-09-18 接线】原为「空文本假成功」→ 现真实调用 OCR 服务（8892）"""
+    jpeg, src = _vis_get_frame(str(image_path or ""))
+    if not jpeg:
+        return {"status": "error", "engine": "ocr_service", "error_type": "no_frame", "msg": src}
+    r = _vis_call_ocr_engine(jpeg)
+    if r.get("error_type"):
+        return {"status": "error", "engine": "ocr_service",
+                "error_type": r.get("error_type"), "msg": r.get("msg", "")}
+    # OCR 服务返回：结果数组 [{text, conf, left, top, width, height}...] 或 {"error": ...}
+    if isinstance(r, dict) and "error" in r:
+        return {"status": "error", "engine": "ocr_service", "msg": str(r["error"])}
+    items = r if isinstance(r, list) else r.get("items", [])
+    text = "".join(str(it.get("text", "")) for it in items if isinstance(it, dict))
+    return {"status": "ok", "data": {"engine": "ocr_service", "source_frame": src,
+                                     "text": text, "items": items,
+                                     "overlay": _vis_overlay_enabled()}}
 
 
 def cmd_ai_vision_calibrate() -> dict:
-    """AI 识别引擎：标定状态（自动棋盘格/手动——先生双模式）"""
-    try:
-        import calibration_service as CS
-        return {"status": "ok", "data": {"engine": "calibration_service", "calibrated": False}}
-    except Exception as e:
-        return {"status": "error", "msg": str(e)}
+    """AI 识别引擎：标定状态（自动棋盘格/手动——先生双模式）
+    【2026-09-18 接线】原为「恒 False 假成功」→ 现真实查询标定服务（8893）"""
+    r = _vis_call_calibration("get")
+    if r.get("error_type"):
+        return {"status": "error", "engine": "calibration_service",
+                "error_type": r.get("error_type"), "msg": r.get("msg", "")}
+    if isinstance(r, dict) and "error" in r and "mode" not in r:
+        return {"status": "error", "engine": "calibration_service", "msg": str(r["error"])}
+    calibrated = bool(isinstance(r, dict) and r.get("mode"))
+    return {"status": "ok", "data": {"engine": "calibration_service",
+                                     "calibrated": calibrated, "calibration": r}}
 
 
 def cmd_ai_vision_overlay(enable: bool = False) -> dict:
@@ -4643,9 +4803,10 @@ def handle_client(conn, addr):
         if cmd == "ai_vision_status":
             _reply(conn, "ai_vision_status", cmd_vision_status()); return
         if cmd == "ai_vision_detect":
-            _reply(conn, "ai_vision_detect", cmd_ai_vision_detect()); return
+            _reply(conn, "ai_vision_detect", cmd_ai_vision_detect(
+                str(req.get("image_path", "")), float(req.get("threshold", 0.5) or 0.5))); return
         if cmd == "ai_vision_ocr":
-            _reply(conn, "ai_vision_ocr", cmd_ai_vision_ocr()); return
+            _reply(conn, "ai_vision_ocr", cmd_ai_vision_ocr(str(req.get("image_path", "")))); return
         if cmd == "ai_vision_ask":
             _reply(conn, "ai_vision_ask", cmd_ai_vision_ask(
                 str(req.get("question", "")), str(req.get("image_path", "")))); return

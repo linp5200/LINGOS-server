@@ -12,6 +12,7 @@
 #include "../common/lang.h"
 #include "../drivers/uart.h"
 #include "../lib/log_extra.h"
+#include "../lib/lingos_config.h"   /* 【2026-09-19】LINGOS_RUN_DIR / 锁常量 / EXIT_ALREADY_RUNNING */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,7 @@
 #include <errno.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <fcntl.h>
 #include <time.h>
 #include <stdarg.h>
@@ -39,6 +41,7 @@ typedef struct {
 static exit_code_map_t g_exit_code_map[] = {
     {0,   "Normal exit", "正常退出"},
     {10,  "Configuration missing", "配置缺失"},
+    {EXIT_ALREADY_RUNNING, "Another instance already running", "已有实例在运行（单实例锁）"},
     {130, "Interrupted by user (Ctrl+C)", "用户中断 (Ctrl+C)"},
     {137, "Killed by OOM killer", "被 OOM Killer 杀死"},
     {139, "Segmentation fault", "段错误"},
@@ -122,7 +125,7 @@ static void create_default_config(void) {
         "max_restart_per_hour = 5\n"
         "enable_core_dump = 0\n"
         "fallback_to_offline = 1\n"
-        "heartbeat_timeout = 180\n");
+        "heartbeat_timeout = 60\n");
     fclose(fp);
     LOG_INFO_T("Supervisor", "CreateConfig", "OK", "created %s", path);
 }
@@ -229,10 +232,24 @@ static void sigterm_handler(int sig) {
     LOG_WARN_T("Supervisor", "SigTerm", "Received", "shutdown requested");
     g_shutdown_requested = 1;
     if (g_child_pid > 0) {
-        kill(g_child_pid, SIGKILL);
-        int status;
-        waitpid(g_child_pid, &status, 0);
-        g_child_pid = -1;
+        /* 【2026-09-19 修复】原直接 SIGKILL 子进程——子进程来不及记"干净退出"，
+         *   下次启动误入修复模式，且注册表来不及保存。改为 SIGTERM 优先
+         *   （子进程优雅收尾），最多等 2s，仍未退出再强杀兜底。 */
+        kill(g_child_pid, SIGTERM);
+        for (int i = 0; i < 20; i++) {
+            int st;
+            pid_t r = waitpid(g_child_pid, &st, WNOHANG);
+            if (r == g_child_pid) {
+                g_child_pid = -1;
+                break;
+            }
+            usleep(100000);
+        }
+        if (g_child_pid > 0) {
+            kill(g_child_pid, SIGKILL);
+            waitpid(g_child_pid, NULL, 0);
+            g_child_pid = -1;
+        }
     }
     exit(0);
 }
@@ -295,6 +312,75 @@ static void start_child(void) {
     LOG_INFO_T("Supervisor", "StartChild", "OK", "child PID=%d", pid);
 }
 
+/* ============================================================
+ * 【2026-09-19 新增】单实例锁（防双 supervisor → 双叉子互抢端口）
+ *   返回 0 成功（fd 保持打开）；-2 已被占用；-1 无法建锁（不阻塞）
+ * ============================================================ */
+static int acquire_supervisor_lock(void) {
+    const char *root = lingos_data_root();
+    char dir[512], path[512];
+    safe_snprintf(dir, sizeof(dir), "%s/run", root);
+    mkdir(dir, 0755);
+    safe_snprintf(path, sizeof(path), "%s/run/supervisor.lock", root);
+
+    int fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        LOG_WARN_T("Supervisor", "Lock", "OpenFail", "cannot open %s (%s) — continue without lock",
+                   path, strerror(errno));
+        return -1;
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        char buf[64] = {0};
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        long other = (n > 0) ? atol(buf) : 0;
+        LOG_WARN_T("Supervisor", "Lock", "AlreadyRunning",
+                   "another supervisor holds the lock (pid=%ld) — exiting", other);
+        close(fd);
+        return -2;
+    }
+    if (ftruncate(fd, 0) == 0) {
+        char pidbuf[32];
+        int plen = safe_snprintf(pidbuf, sizeof(pidbuf), "%d\n", (int)getpid());
+        if (plen > 0) { ssize_t w = write(fd, pidbuf, (size_t)plen); (void)w; }
+    }
+    LOG_INFO_T("Supervisor", "Lock", "OK", "supervisor lock acquired (pid=%d)", (int)getpid());
+    return fd;
+}
+
+/* ============================================================
+ * 【2026-09-19 新增】子进程路径解析
+ *   原为相对路径 "./lingos_linux"——依赖 cwd；脚本从任意目录启动、
+ *   全捆部署在 bin/ 下时均会 execl 失败。改为多级探测（与主程序同款模式）。
+ * ============================================================ */
+static void resolve_child_binary(void) {
+    char exe[512];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n > 0) {
+        exe[n] = '\0';
+        char *slash = strrchr(exe, '/');
+        if (slash) {
+            *slash = '\0';
+            char cand[512];
+            safe_snprintf(cand, sizeof(cand), "%s/lingos_linux", exe);
+            if (access(cand, X_OK) == 0) {
+                safe_strncpy(g_child_binary, cand, sizeof(g_child_binary));
+                LOG_INFO_T("Supervisor", "ResolveChild", "OK", "child binary: %s", g_child_binary);
+                return;
+            }
+        }
+    }
+    if (access("/LINGOS/bin/lingos_linux", X_OK) == 0) {
+        safe_strncpy(g_child_binary, "/LINGOS/bin/lingos_linux", sizeof(g_child_binary));
+    } else if (access("/LINGOS/lingos_linux", X_OK) == 0) {
+        safe_strncpy(g_child_binary, "/LINGOS/lingos_linux", sizeof(g_child_binary));
+    } else {
+        LOG_WARN_T("Supervisor", "ResolveChild", "Fallback",
+                   "no absolute path found — keeping default: %s", g_child_binary);
+        return;
+    }
+    LOG_INFO_T("Supervisor", "ResolveChild", "OK", "child binary: %s", g_child_binary);
+}
+
 static void* heartbeat_thread_func(void *arg) {
     (void)arg;
     LOG_DEBUG_T("Supervisor", "Heartbeat", "Started", "heartbeat monitor thread started");
@@ -312,8 +398,17 @@ static void* heartbeat_thread_func(void *arg) {
         time_t now = time(NULL);
         FILE *fp = fopen(heartbeat_path, "r");
         if (fp) {
-            long ts;
-            if (fscanf(fp, "%ld", &ts) == 1) {
+            char hb[512] = {0};
+            if (fgets(hb, sizeof(hb), fp)) {
+                long ts = 0;
+                /* 【2026-09-24 心跳增强】新格式 JSON：{"ts":...,"services":{...}}
+                 *   兼容旧格式（纯数字时间戳）——双解析 */
+                char *p = strstr(hb, "\"ts\":");
+                if (p) {
+                    ts = atol(p + 5);
+                } else {
+                    ts = atol(hb);
+                }
                 if (ts > g_last_heartbeat) g_last_heartbeat = ts;
             }
             fclose(fp);
@@ -369,6 +464,8 @@ static void start_recovery_shell(void) {
     _exit(1);
 }
 
+static int g_restart_streak = 0;   /* 【2026-09-24】连续快速重启计数（稳定运行 300s 后清零） */
+
 static void restart_child(void) {
     if (g_shutdown_requested) return;
     if (g_user_initiated_exit) {
@@ -376,8 +473,14 @@ static void restart_child(void) {
         return;
     }
     if (g_config.auto_restart_delay > 0) {
-        LOG_DEBUG_T("Supervisor", "Restart", "Delay", "waiting %d seconds", g_config.auto_restart_delay);
-        sleep(g_config.auto_restart_delay);
+        /* 【2026-09-24 退避升级】固定 3s → 指数退避（3/6/12/24/48s，封顶 60s）——
+         *   对齐 systemd RestartSteps 思路：连续崩溃时先快速恢复、越频繁等待越久 */
+        int shift = g_restart_streak < 4 ? g_restart_streak : 4;
+        long delay = (long)g_config.auto_restart_delay << shift;
+        if (delay > 60) delay = 60;
+        LOG_INFO_T("Supervisor", "Restart", "Backoff",
+                   "streak=%d, waiting %ld seconds (exponential backoff)", g_restart_streak, delay);
+        sleep((unsigned)delay);
     }
 
     if (is_throttled()) {
@@ -386,6 +489,7 @@ static void restart_child(void) {
         return;
     }
 
+    g_restart_streak++;
     record_restart();
     start_child();
 }
@@ -443,7 +547,21 @@ int main(int argc, char **argv) {
     log_system_init();
     LOG_INFO_T("Supervisor", "Main", "Start", "LING OS Supervisor v%s starting", LINGOS_VERSION);
 
+    /* 【2026-09-19】单实例锁（防双 supervisor → 双叉子互抢端口） */
+    {
+        int sup_lock = acquire_supervisor_lock();
+        if (sup_lock == -2) {
+            LOG_WARN_T("Supervisor", "Main", "AlreadyRunning",
+                       "another supervisor instance is running — exiting");
+            return EXIT_ALREADY_RUNNING;
+        }
+        (void)sup_lock;   /* 进程存活期间保持打开 */
+    }
+
     load_config();
+
+    /* 【2026-09-19】子进程路径解析（修复相对路径 "./lingos_linux" 的 cwd 依赖） */
+    resolve_child_binary();
 
     signal(SIGCHLD, sigchld_handler);
     signal(SIGTERM, sigterm_handler);
@@ -466,6 +584,14 @@ int main(int argc, char **argv) {
         int status;
         pid_t ret = waitpid(g_child_pid, &status, WNOHANG);
 
+        /* 【2026-09-24】退避复位：子进程稳定运行 >300s → 清空连续重启计数 */
+        if (ret == 0 && g_child_pid > 0 && g_restart_streak > 0 &&
+            (time(NULL) - start_time) > 300) {
+            LOG_INFO_T("Supervisor", "Restart", "StreakReset",
+                       "child stable for >300s — restart streak reset (was %d)", g_restart_streak);
+            g_restart_streak = 0;
+        }
+
         if (ret == g_child_pid) {
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);
@@ -476,8 +602,22 @@ int main(int argc, char **argv) {
                     LOG_DEBUG_T("Supervisor", "Main", "CleanExit", "normal exit, supervisor stopping");
                     break;
                 }
+                /* 【2026-09-19】子进程报告"已有实例在运行"（单实例锁失败）→
+                 *   本监督者停止（防：双实例互抢端口 + 重启风暴） */
+                if (exit_code == EXIT_ALREADY_RUNNING) {
+                    LOG_WARN_T("Supervisor", "Main", "AlreadyRunning",
+                               "child reports another instance is running — supervisor stopping");
+                    uart_puts(tr("\n⚠ Another LING OS instance is already running.\n"
+                                 "  This supervisor stops to avoid port conflicts.\n",
+                                 "\n⚠ 检测到另一个 LING OS 实例正在运行。\n"
+                                 "  本监督者停止以避免端口冲突。\n"));
+                    break;
+                }
                 handle_crash(status);
-                if (g_child_pid > 0 && !g_shutdown_requested) start_time = time(NULL);
+                /* 【2026-09-19】用户主动退出/停机请求且未被重启（start_child 会重置
+                 * 该标志）→ 监督者干净收尾退出（避免 waitpid ECHILD 噪音与空转） */
+                if (g_user_initiated_exit || g_shutdown_requested) break;
+                if (g_child_pid > 0) start_time = time(NULL);
             } else if (WIFSIGNALED(status)) {
                 int signal = WTERMSIG(status);
                 LOG_WARN_T("Supervisor", "Main", "ChildSignaled", "child killed by signal %d", signal);
@@ -488,7 +628,8 @@ int main(int argc, char **argv) {
                     }
                 }
                 handle_crash(status);
-                if (g_child_pid > 0 && !g_shutdown_requested) start_time = time(NULL);
+                if (g_user_initiated_exit || g_shutdown_requested) break;   /* 【2026-09-19】同上 */
+                if (g_child_pid > 0) start_time = time(NULL);
             } else {
                 LOG_WARN_T("Supervisor", "Main", "ChildUnknown", "child exited with unknown status");
                 handle_crash(status);
@@ -509,9 +650,12 @@ int main(int argc, char **argv) {
     stop_heartbeat_monitor();
 
     if (g_child_pid > 0) {
-        kill(g_child_pid, SIGTERM);
-        sleep(1);
-        kill(g_child_pid, SIGKILL);
+        /* 【2026-09-19】先探活再发信号（防 PID 复用误伤——子进程可能已被回收） */
+        if (kill(g_child_pid, 0) == 0) {
+            kill(g_child_pid, SIGTERM);
+            sleep(1);
+            kill(g_child_pid, SIGKILL);
+        }
         waitpid(g_child_pid, NULL, 0);
     }
 

@@ -21,7 +21,9 @@
 #include <netdb.h>
 #include <errno.h>
 
-static char repo_url[256] = "repo.lingos.local";
+/* 【2026-09-18】默认地址清空（原 "repo.lingos.local" 为死域名——
+ *  导致 app search/update 永远失败且误导。现：未配置时明确提示引导用户设置） */
+static char repo_url[256] = "";
 static int repo_port = 80;
 static int repo_use_https = 0;
 static int repo_initialized = 0;
@@ -60,7 +62,13 @@ int repo_client_init(void) {
         }
         fclose(fp);
     } else {
-        LOG_WARN_T("RepoClient", "Init", "NoConfig", "using default repo url");
+        LOG_WARN_T("RepoClient", "Init", "NoConfig",
+                   "repo not configured — set repo_url in /LINGOS/system/config/repo.conf");
+    }
+
+    if (repo_url[0] == '\0') {
+        LOG_INFO_T("RepoClient", "Init", "NotConfigured",
+                   "repo client idle (no repo_url configured — features disabled honestly)");
     }
 
     repo_initialized = 1;
@@ -73,6 +81,13 @@ int repo_client_init(void) {
  * ============================================================ */
 static char *http_get(const char *path) {
     LOG_DEBUG_T("RepoClient", "HTTPGet", "Enter", "path=%s", path);
+
+    /* 【2026-09-18】未配置 → 明确失败（不再向死域名请求） */
+    if (repo_url[0] == '\0') {
+        LOG_WARN_T("RepoClient", "HTTPGet", "NotConfigured",
+                   "repo_url not configured — set it in /LINGOS/system/config/repo.conf");
+        return NULL;
+    }
 
     char request[1024];
     safe_snprintf(request, sizeof(request),

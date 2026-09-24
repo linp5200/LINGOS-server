@@ -64,6 +64,7 @@ private:
     void refreshMedia();
     void refreshKb();
     void refreshOptions();
+    void refreshAbout();   /* 【2026-09-18】关于页动态化（版本/真实安全状态） */
 
     ApiClient *m_api = nullptr;
     QListWidget *m_nav = nullptr;
@@ -85,6 +86,7 @@ private:
     QTextEdit *m_kbView = nullptr;
     QTextEdit *m_optionsView = nullptr;
     QTextEdit *m_logView = nullptr;
+    QTextEdit *m_aboutView = nullptr;
 
     QLineEdit *m_input = nullptr;
     QTimer *m_refreshTimer = nullptr;

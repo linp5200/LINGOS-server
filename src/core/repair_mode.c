@@ -190,6 +190,19 @@ int repair_mode_run(void) {
         return 0;
     }
 
+    /* 【2026-09-19 修复】非交互环境（nohup/后台/无 tty）不进入交互菜单——
+     *   原实现 getchar() 立即 EOF → 菜单无限循环（supervisor 自动重启场景必触发）。
+     *   改为：跑一次自动修复（尽力而为）→ 清除标记 → 继续启动。 */
+    if (!isatty(STDIN_FILENO)) {
+        LOG_WARN_T("RepairMode", "Run", "NonInteractive",
+                   "no tty — running non-interactive auto repair, then continuing");
+        int r = do_auto_repair();
+        exit_status_clear_abnormal();
+        LOG_INFO_T("RepairMode", "Run", "NonInteractiveDone",
+                   "auto repair result=%d, continuing startup", r);
+        return 0;
+    }
+
     /* 检查连续崩溃次数，如果超过阈值且时间窗口内，可能自动执行自动修复 */
     if (status->crash_count >= 3 &&
         (time(NULL) - status->first_crash_time) < 300) {

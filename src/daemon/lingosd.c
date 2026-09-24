@@ -88,6 +88,17 @@ static int daemon_init(void) {
         }
     }
 
+    /* 【2026-09-18 接线】每日自动更新检查（此前 update_auto_check_start 零调用者——
+     * 完整线程实现从不运行）。现接：改为走本机 update_check（真实源）。 */
+    {
+        extern int update_auto_check_start(void);
+        if (update_auto_check_start() == 0) {
+            LOG_INFO_T("Lingosd", "Init", "UpdateAutoCheck", "daily update check thread started");
+        } else {
+            LOG_WARN_T("Lingosd", "Init", "UpdateAutoCheck", "update check start failed (continuing)");
+        }
+    }
+
     ai_config_load();
     LOG_INFO_T("Lingosd", "Init", "OK", "lingosd initialized successfully");
     return 0;

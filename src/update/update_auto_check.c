@@ -11,7 +11,7 @@
 #include "../common/data_path.h"
 #include "../common/lang.h"
 #include "../lib/log_extra.h"
-#include "../net/tcp_client.h"
+#include "../net/http_client.h"
 #include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,8 +21,6 @@
 #include <unistd.h>
 #include <signal.h>
 
-#define REPO_URL "repo.lingos.local"
-#define REPO_PATH "/version"
 #define CHECK_INTERVAL 86400
 #define UPDATE_CHECK_FILE "/LINGOS/state/last_update_check"
 
@@ -72,46 +70,54 @@ static void save_check_time(time_t t) {
  * ============================================================ */
 
 int update_auto_check_now(void) {
-    LOG_INFO_T("UpdateAuto", "Check", "Start", "checking for updates");
+    LOG_INFO_T("UpdateAuto", "Check", "Start", "checking for updates (via local ai_server update_check)");
 
-    char request[512];
-    safe_snprintf(request, sizeof(request),
-        "GET %s HTTP/1.0\r\n"
-        "Host: %s\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        REPO_PATH, REPO_URL);
-
-    char response[4096] = {0};
-    int ret = tcp_send_recv(REPO_URL, 80, request, response, sizeof(response), 10000);
-
-    if (ret != 0) {
-        LOG_WARN_T("UpdateAuto", "Check", "HTTPFail", "tcp_send_recv returned %d", ret);
+    /* 【2026-09-18 接线】原实现直连 repo.lingos.local:80（死地址 + 明文 HTTP——
+     * 该检查从未成功过）。现改为走本机 lingosd /api/cmd 代理 →
+     * ai_server 的 update_check（真实源：repo.conf 的 repo_url / GitHub Releases）。
+     * 每日线程逻辑不变；有新版本 → 写通知中心（sys_notify.jsonl）。 */
+    char resp[8192] = {0};
+    int rc = http_post_json("http://127.0.0.1:8080/api/cmd",
+                            "{\"cmd\":\"update_check\"}", resp, sizeof(resp), 15);
+    if (rc != 0) {
+        LOG_WARN_T("UpdateAuto", "Check", "LocalFail",
+                   "update_check via 8080 failed rc=%d (lingosd not ready?)", rc);
         return 0;
     }
 
-    char *body = strstr(response, "\r\n\r\n");
-    if (!body) {
-        LOG_WARN_T("UpdateAuto", "Check", "ParseFail", "no HTTP body");
-        return 0;
+    /* 宽松解析 update_available 标志（json.dumps 默认带空格——两种写法都认） */
+    int avail = -1;
+    const char *k = strstr(resp, "update_available");
+    if (k) {
+        const char *t = strstr(k, "true");
+        const char *f = strstr(k, "false");
+        if (t && (!f || t < f)) avail = 1;
+        else if (f) avail = 0;
     }
-    body += 4;
 
-    const char *latest = strstr(body, "\"latest\":\"");
-    if (latest) {
-        latest += 10;
-        char version[32];
-        int i = 0;
-        while (*latest && *latest != '\"' && i < 31) {
-            version[i++] = *latest++;
+    if (avail == 1) {
+        /* 有新版本 → 通知中心（sys_notify.jsonl——与 notify syscall 同文件约定） */
+        const char *root = lingos_data_root();
+        char ndir[512], nfile[512];
+        safe_snprintf(ndir, sizeof(ndir), "%s/data/notifications", root);
+        mkdir(ndir, 0755);
+        safe_snprintf(nfile, sizeof(nfile), "%s/sys_notify.jsonl", ndir);
+        FILE *nf = fopen(nfile, "a");
+        if (nf) {
+            fprintf(nf, "{\"ts\":%ld,\"title\":\"Update available\","
+                        "\"body\":\"A new LINGOS version is available — open the update page.\","
+                        "\"level\":\"normal\"}\n", (long)time(NULL));
+            fclose(nf);
         }
-        version[i] = '\0';
-
-        LOG_INFO_T("UpdateAuto", "Check", "Latest", "latest version: %s", version);
+        LOG_INFO_T("UpdateAuto", "Check", "Available", "update available (notification written)");
         return 1;
     }
-
-    LOG_WARN_T("UpdateAuto", "Check", "Fail", "failed to parse response");
+    if (avail == 0) {
+        LOG_INFO_T("UpdateAuto", "Check", "UpToDate", "no update available");
+        return 0;
+    }
+    LOG_WARN_T("UpdateAuto", "Check", "ParseFail",
+               "cannot parse update_check response (no update_available flag)");
     return 0;
 }
 

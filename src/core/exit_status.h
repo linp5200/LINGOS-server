@@ -61,6 +61,14 @@ void exit_status_mark_clean(int exit_code, const char *reason);
 void exit_status_mark_abnormal(int signal, const char *reason);
 
 /**
+ * @brief 【2026-09-19】写运行脏标记（启动链判定完成后调用）
+ *        语义：进程运行期间持续为"脏"（is_clean_exit=0, reason=Running）——
+ *        崩溃/断电/强杀不会清除；仅 mark_clean（干净退出）置回 1。
+ *        修复模式据此可靠检出上次异常终止（修复旧版"永不触发"BUG）。
+ */
+void exit_status_mark_running(void);
+
+/**
  * @brief 清除异常标记（当用户选择"忽略并继续"时调用）
  */
 void exit_status_clear_abnormal(void);

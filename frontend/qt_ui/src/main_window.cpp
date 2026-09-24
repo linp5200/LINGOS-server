@@ -77,6 +77,7 @@ void MainWindow::refreshAll() {
     refreshMedia();
     refreshKb();
     refreshOptions();
+    refreshAbout();
     if (m_statusLabel) {
         const QJsonObject r = callCmd(QStringLiteral("system_info"));
         if (r.value("status").toString() == QStringLiteral("ok")) {
@@ -277,17 +278,37 @@ QWidget *MainWindow::buildLogPage() {
 QWidget *MainWindow::buildAboutPage() {
     QWidget *w = makePage(QStringLiteral("▍ABOUT  关于"),
                           QStringLiteral("LING OS · 本地优先 · 隐私第一"));
-    QTextEdit *out = addOutput(w, kFuiWhite);
-    out->setPlainText(QStringLiteral(
-        "LING OS Qt6 桌面前端\n"
-        "  版本    : 0.5.1（LN-0.5.1）\n"
-        "  服务端  : 版本号经 system_info 实时获取（未连接显示 --）\n"
-        "  数据根  : /LINGOS\n"
-        "  仓库    : github.com/linp5200/LINGOS-server\n"
-        "  界面    : FUI v2 · 灰白地形\n\n"
-        "  安全    : 加密传输 · 权限矩阵 · 审计日志 · 隐私保护模式\n"
-        "  说明    : 所有页面数据均来自主机实时接口，无数据一律显示 --（不模拟）\n"));
+    m_aboutView = addOutput(w, kFuiWhite);
+    refreshAbout();          /* 【2026-09-18】进入即刷新（refreshAll 亦会周期刷新） */
     return w;
+}
+
+/* 【2026-09-18】关于页动态化：
+ *   · 版本 ← system_info 实时（不再硬编码 0.5.1）
+ *   · 安全声明改为实际状态（Qt 走明文 HTTP /api/cmd——
+ *     原「加密传输」为误导，应用层加密仅覆盖 App↔服务端 TCP 通道） */
+void MainWindow::refreshAbout() {
+    if (!m_aboutView) return;
+    QString ver = QStringLiteral("--");
+    QString host = QStringLiteral("未连接");
+    const QJsonObject r = callCmd(QStringLiteral("system_info"));
+    if (r.value("status").toString() == QStringLiteral("ok")) {
+        const QJsonObject d = r.value("data").toObject();
+        ver = d.value("version").toString(d.value("internal_version").toString(QStringLiteral("--")));
+        host = QStringLiteral("%1:%2（system_info 实时）").arg(m_host).arg(m_port);
+    }
+    m_aboutView->setPlainText(QStringLiteral(
+        "LING OS Qt6 桌面前端\n"
+        "  服务端版本: %1\n"
+        "  连接      : %2\n"
+        "  数据根    : /LINGOS\n"
+        "  仓库      : github.com/linp5200/LINGOS-server\n"
+        "  界面      : FUI v2 · 灰白地形\n\n"
+        "  安全      : 权限矩阵 · 审计日志 · 隐私保护模式\n"
+        "  传输      : 本端为 HTTP /api/cmd（明文——如实标注）；\n"
+        "              应用层加密（X25519+XChaCha20）覆盖 App↔服务端 TCP 通道\n"
+        "  说明      : 所有页面数据均来自主机实时接口，无数据一律显示 --（不模拟）\n")
+        .arg(ver, host));
 }
 
 // ============================================================
@@ -546,7 +567,7 @@ void MainWindow::refreshOptions() {
 // UI 构建
 // ============================================================
 void MainWindow::buildUi() {
-    setWindowTitle(QStringLiteral("LING OS · Qt6 UI 0.5.1"));
+    setWindowTitle(QStringLiteral("LING OS · Qt6 UI"));   /* 【2026-09-18】去硬编码版本 */
     resize(1280, 800);
     setStyleSheet(QStringLiteral("QMainWindow{background:%1;} QWidget{background:transparent;}").arg(kFuiBg));
 

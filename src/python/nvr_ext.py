@@ -486,11 +486,41 @@ def cmd_onvif_probe(host: str = "", port: int = 80) -> dict:
 
 
 # =============================================================
+# 【2026-09-18 接线】go2rtc 集成（方案2 §2.3 设计一——注册表 → 真实推流器）
+#   docker-compose 已含 go2rtc（:1984 API / :8554 RTSP 输出）
+#   restream_add    → PUT  /api/streams?name=<id>&src=<rtsp>
+#   restream_remove → DELETE /api/streams?src=<name>
+#   go2rtc 不可用 → 保留登记 + 明确标注（不假装推流成功）
+# =============================================================
+GO2RTC_API = "http://127.0.0.1:1984/api"
+GO2RTC_RTSP_OUT = "rtsp://127.0.0.1:8554"
+
+
+def _go2rtc_request(method: str, path: str, query: dict = None):
+    """go2rtc API 请求。返回 (ok, data_or_msg)"""
+    import urllib.request
+    import urllib.parse
+    url = GO2RTC_API + path
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    try:
+        req = urllib.request.Request(url, method=method)
+        with urllib.request.urlopen(req, timeout=5) as r:
+            body = r.read().decode("utf-8", "ignore")
+            try:
+                return True, json.loads(body) if body.strip() else {}
+            except Exception:
+                return True, body
+    except Exception as e:
+        return False, str(e)
+
+
+# =============================================================
 # M14 · RTSP 重流（单连接多消费）
 # =============================================================
 def cmd_restream_add(camera_id: str = "", source: str = "",
                      port: int = 0) -> dict:
-    """登记一路重流：源 RTSP → 本地单连接 → 多消费者共享"""
+    """登记一路重流：源 RTSP → go2rtc 单连接 → 多消费者共享（真实推流）"""
     if not camera_id or not source:
         return {"status": "error", "msg": "缺少 camera_id 或 source"}
     cfg = _load()
@@ -499,14 +529,29 @@ def cmd_restream_add(camera_id: str = "", source: str = "",
     p = port or (rcfg.get("port_base", 8900) + len(_restream_registry))
     while p in used:
         p += 1
-    _restream_registry[camera_id] = {
+
+    entry = {
         "camera": camera_id, "source": source, "port": p,
         "consumers": 0, "created": int(time.time()),
     }
+
+    # 【2026-09-18】go2rtc 真实推流（不可用时明确标注——不假装）
+    ok, resp = _go2rtc_request("PUT", "/streams", {"name": camera_id, "src": source})
+    if ok:
+        entry["go2rtc"] = "streaming"
+        entry["play_urls"] = {
+            "rtsp": "%s/%s" % (GO2RTC_RTSP_OUT, camera_id),
+        }
+        logger.info("restream via go2rtc: %s ← %s", camera_id, source)
+    else:
+        entry["go2rtc"] = "unavailable"
+        entry["go2rtc_error"] = str(resp)[:200]
+        logger.warning("go2rtc unavailable for restream %s: %s", camera_id, str(resp)[:120])
+
+    _restream_registry[camera_id] = entry
     cfg.setdefault("cameras", {}).setdefault(camera_id, {})["restream_port"] = p
     _save(cfg)
-    logger.info("restream registered: %s → :%d", camera_id, p)
-    return {"status": "ok", "data": _restream_registry[camera_id]}
+    return {"status": "ok", "data": entry}
 
 
 def cmd_restream_list() -> dict:
@@ -515,7 +560,12 @@ def cmd_restream_list() -> dict:
 
 def cmd_restream_remove(camera_id: str = "") -> dict:
     r = _restream_registry.pop(camera_id, None)
-    return {"status": "ok", "data": {"removed": bool(r)}}
+    # 【2026-09-18】同步从 go2rtc 删除流
+    go2rtc_removed = False
+    if r:
+        ok, _ = _go2rtc_request("DELETE", "/streams", {"src": camera_id})
+        go2rtc_removed = ok
+    return {"status": "ok", "data": {"removed": bool(r), "go2rtc_removed": go2rtc_removed}}
 
 
 def cmd_restream_attach(camera_id: str = "") -> dict:

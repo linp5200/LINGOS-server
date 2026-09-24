@@ -942,9 +942,21 @@ def cron_add(args_json: str) -> Tuple[bool, str]:
         # 安全检查
         if "rm -rf" in command or "mkfs" in command or "dd if=" in command:
             return False, t("Dangerous command not allowed in cron", "定时任务中不允许危险命令")
-        # 写入 crontab
+        # 【2026-09-18 修复】追加式写入（原 `crontab /tmp/cron_temp` 为整表覆盖——
+        #   第二次添加会抹掉第一条）：读出既有 → 合并新任务 → 写回
+        existing = ""
+        try:
+            ok_l, out_l = call_syscall("exec_command", {"command": "crontab -l 2>/dev/null"})
+            if ok_l and out_l and isinstance(out_l, str) and "no crontab" not in out_l.lower():
+                existing = out_l
+        except Exception:
+            existing = ""
+        new_line = f"{schedule} {command}"
+        if new_line in existing:
+            return True, t("Cron job already exists (not duplicated)", "定时任务已存在（未重复添加）")
+        merged = (existing.rstrip("\n") + "\n" if existing.strip() else "") + new_line + "\n"
         with open("/tmp/cron_temp", "w") as f:
-            f.write(f"{schedule} {command}\n")
+            f.write(merged)
         success, result = call_syscall("exec_command", {"command": "crontab /tmp/cron_temp 2>&1"})
         os.remove("/tmp/cron_temp")
         if success:
@@ -1308,8 +1320,12 @@ def typhoon_predict(args_json: str) -> Tuple[bool, str]:
             req = _ul.Request(u, headers={"User-Agent": "Mozilla/5.0 (LINGOS)"})
             with _ul.urlopen(req, timeout=timeout) as r:
                 txt = r.read().decode("utf-8", "ignore")
-            i, j = txt.find("("), txt.rfind(")")
-            return json.loads(txt[i + 1:j]) if i >= 0 and j > i else json.loads(txt)
+            # 【2026-09-18 修复】NMC 响应为双层括号 JSONP `name(({...}))`——
+            # 原只剥一层 → 解析必失败。改为提取首个 '{' 到最后一个 '}'（通用安全）。
+            a, b = txt.find("{"), txt.rfind("}")
+            if a >= 0 and b > a:
+                return json.loads(txt[a:b + 1])
+            return json.loads(txt)
 
         if not tid:
             lst = _fetch(base + "/list_default").get("typhoonList", [])

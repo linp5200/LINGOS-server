@@ -69,6 +69,10 @@ int defense_mode_level(defense_mode_t mode);
 
 int defense_mode_apply_current(void);
 
+/* 【2026-09-18 接线】影子模式空数据 API（定义在 shadow_mode.c——此前无声明无调用者） */
+int shadow_mode_should_return_empty(const char *app_id, const char *perm);
+const char* shadow_mode_get_empty_data(const char *type);
+
 #ifdef __cplusplus
 }
 #endif

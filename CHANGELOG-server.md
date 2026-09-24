@@ -5,6 +5,58 @@
 
 ---
 
+## [0.6.2] - 2026-09-24（接线批次 + 启动链路完善）
+
+### 新增（Features）
+- **生命线数据源真实化（含 TLS 栈新建）**：
+  - 新建 `src/net/https_client.{h,c}`——libssl 直连（USGS/EEW 均为 https-only，
+    原纯 socket 走 http 实际不可达——301 静默失败根因修复）；二段式证书策略
+  - **EEW 秒级四源接入**（wolfx：CENC/SC/CWA/JMA——中国地震预警网/四川/台湾/日本，实测真实数据）
+  - 台风源重写：**NMC 国家气象中心真实数据**（原「编造默认事件」删除；实测台风"杜鹃"）
+  - CN_WARNING 编造清除（改真实解析用户配置源，失败=诚实空）
+  - 中国源识别补全（CENC/CWA/SC-EEW/NMC——merge 优先级修复）
+- **webhook HTTP 路由**（`POST /api/webhook/<id>`——注册表此前"只写不接"）
+- **ai_vision 三命令真实接线**（detect→yolo.sock / ocr→8892 / calibrate→8893；
+  引擎未运行=明确报错，不再空数组假成功）
+- **restream → go2rtc 集成**（PUT/DELETE /api/streams；不可用时诚实标注）
+- **home_ext → HA 实体控制桥**（场景/实体经 HA service call 落地真设备）
+- **启动链路完善**（对齐 systemd/K8s 主流实践）：
+  - **单实例锁三保险**（主程序 flock + supervisor 自锁 + 脚本全链预检——
+    日志实证一天 4 次端口冲突的根因修复；退出码 75 联动）
+  - **supervisor 接线上岗**（lingos.sh 监督者优先；崩溃自动恢复/心跳/限流真正生效；
+    子进程相对路径隐患修复）
+  - **修复模式死 BUG 修复**（运行脏标记机制——崩溃/断电/强杀下次启动必检出；
+    此前异常标记被覆盖导致修复模式永不触发）
+  - **服务顺序修正**（生命线 alertd 先行；AI 软降级——失败不再终止系统）
+  - **registry.sock 竞态修正**（ai_server 启动前等注册表就绪）
+  - **启动就绪报告**（到 Shell 前打印服务/端口一览表 + 写 /LINGOS/run/ready）
+  - **心跳增强**（JSON 格式携带服务状态；超时 180s→60s）
+  - **服务守护线程**（lingosd 5s 检查+自动重拉；aux 守护 30s 检查+软拉回）
+  - **指数退避**（重启 3/6/12/24/48s 封顶 60s + 稳定 300s 复位）
+  - **argv 框架**（--fast / --safe / --diagnose / --version / --help）
+  - 配置单载收口 + SIGUSR1 误杀防护 + supervisor 优雅 TERM
+
+### 修复（Fixes）
+- `cron_add` 追加式修复（原整表覆盖——第二次添加抹掉第一条）
+- `update_auto_check` 接线重写（原直连死地址；现走本机 update_check 真实源 + 启动自动运行）
+- `repo_client` 死地址清除（未配置=明确提示，不再打死域名）
+- 影子模式 C 端刹车接线（`shadow_mode` 体系此前零调用者）
+- Qt：版本动态化（读 /LINGOS/version）+ 清除"加密传输"误导声明
+- WebUI：会话页/视觉页静态假数据清除（空态，不模拟）
+
+### 变更（Changes）
+- Makefile/CI 链接 libssl（soname 22.04~25.10 稳定）；CI 增 libssl-dev
+- 内部版本 LN-0.6.1 → LN-0.6.2
+
+### 验证
+- 四文件完整编译（main/supervisor/exit_status/repair_mode → obj 0 错误）
+- test_exit_status.c 12/12 PASS（崩溃检出/干净退出/信号停止/连续崩溃/旧版兼容）
+- 单实例锁行为实测（阻塞+读 PID+退出码 75+释放后成功）
+- 数据源 harness 实测：EEW 四源 + NMC 台风 + USGS 全真实数据
+- 脚本残留检测实测（假 lingosd 检出+自动清理）
+
+---
+
 ## [0.6.1] - 2026-09-13（S1 应用层加密落地 + §2B 危机全权响应 + 影子模式）
 
 ### 新增（Features）

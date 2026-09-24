@@ -12,6 +12,7 @@
 #include "safe_string.h"
 #include "safe_exec.h"
 #include "permission_check.h"
+#include "defense_mode.h"   /* 【2026-09-18】影子模式接线（defense_mode_get） */
 #include "envelope.h"
 #include "crypto_core.h"
 #include <stdio.h>
@@ -742,6 +743,16 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "error_type", "missing_param");
             cJSON_AddStringToObject(result, "message", "Missing 'command'");
             ret = -1;
+        } else if (defense_mode_get() == DEFENSE_MODE_SHADOW) {
+            /* 【2026-09-18 接线】影子模式 C 端拦截（shadow_mode.c 体系此前零调用者）：
+             *   影子模式 = 假成功——命令不真正执行，返回结构正确的模拟结果
+             *   （与 Python 网关三态配合：App 设 shadow → 全链不产生真实副作用） */
+            cJSON_AddStringToObject(result, "status", "ok");
+            cJSON_AddStringToObject(result, "data", "");
+            cJSON_AddBoolToObject(result, "shadow", 1);
+            LOG_INFO_T("Syscall", "ExecCommand", "Shadow",
+                       "shadow mode active — command NOT executed (fake success): %.80s",
+                       cmd_item->valuestring);
         } else {
             /*
              * 【0.5.0 安全修复·S2】OWASP OS Command Injection Defense 三层落地
@@ -1261,6 +1272,10 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
         }
         cJSON_AddStringToObject(result, "status", "ok");
         cJSON_AddItemToObject(result, "current", pcurrent);
+        /* 【2026-09-18】防御模式状态（shadow/dark/absolute——App 与 Python 网关可见） */
+        cJSON_AddStringToObject(result, "defense_mode", defense_mode_name(defense_mode_get()));
+        cJSON_AddBoolToObject(result, "shadow_active",
+                              defense_mode_get() == DEFENSE_MODE_SHADOW);
     }
 
     else if (strcmp(operation, "crypto_encrypt") == 0 || strcmp(operation, "crypto_decrypt") == 0) {

@@ -232,14 +232,10 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 
 <!-- 会话管理 -->
 <div class="page" id="p-sessions">
-  <div class="phead"><div class="l"><div class="k">▍SESSIONS</div><h1>会话管理</h1></div><div class="r">共 <b>12</b> · token 总 <b>486K</b></div></div>
-  <div class="toolbar"><input placeholder="搜索会话…"><button>＋ 新建</button><span class="cnt">12 个会话</span></div>
+  <div class="phead"><div class="l"><div class="k">▍SESSIONS</div><h1>会话管理</h1></div><div class="r">共 <b>--</b> · token 总 <b>--</b></div></div>
+  <div class="toolbar"><input placeholder="搜索会话…"><button>＋ 新建</button><span class="cnt">-- 个会话</span></div>
   <div class="listwrap">
-    <div class="lrow"><div class="t"><div class="n">系统架构讨论 · 0.4.3 重构</div><div class="s">2026-09-04 13:40 · 86 条消息</div></div><span class="tag g">deepseek-chat</span><span class="st2">token <span class="tok">128K</span><br>活跃</span><div class="ops"><button>▶</button><button>⋯</button></div></div>
-    <div class="lrow"><div class="t"><div class="n">FUI v2 UI 风格迭代</div><div class="s">2026-09-04 11:22 · 64 条消息</div></div><span class="tag g">deepseek-chat</span><span class="st2">token <span class="tok">92K</span><br>活跃</span><div class="ops"><button>▶</button><button>⋯</button></div></div>
-    <div class="lrow"><div class="t"><div class="n">摄像头后端技术方案</div><div class="s">2026-09-03 20:10 · 152 条消息</div></div><span class="tag dim">kimi</span><span class="st2">token <span class="tok">210K</span></span><div class="ops"><button>▶</button><button>⋯</button></div></div>
-    <div class="lrow"><div class="t"><div class="n">语音系统配置排查</div><div class="s">2026-09-02 · 23 条</div></div><span class="tag dim">deepseek-chat</span><span class="st2">token <span class="tok">31K</span></span><div class="ops"><button>▶</button><button>⋯</button></div></div>
-    <div class="lrow"><div class="t"><div class="n">临时 · 2026-09-04 09:30</div><div class="s">默认会话</div></div><span class="tag dim">deepseek-chat</span><span class="st2">token <span class="tok">12K</span></span><div class="ops"><button>▶</button><button>⋯</button></div></div>
+    <div class="lrow"><div class="t"><div class="n" style="color:var(--d)">加载中…（连接主机后显示真实会话）</div><div class="s">无数据一律显示 --（不模拟）</div></div></div>
   </div>
 </div>
 
@@ -285,26 +281,19 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 
 <!-- 视觉 -->
 <div class="page" id="p-vision">
-  <div class="phead"><div class="l"><div class="k">▍VISION · CAM0</div><h1>视觉</h1></div><div class="r">RTSP 1080p30 · YOLO 0.50/0.40<br>世界坐标已标定</div></div>
+  <div class="phead"><div class="l"><div class="k">▍VISION</div><h1>视觉</h1></div><div class="r">--（monitor_status / ai_vision_status 实时填充）<br>--</div></div>
   <div class="cols" style="grid-template-columns:1.5fr 1fr">
-    <div class="card" style="padding:8px"><div style="border:1px solid rgba(255,255,255,.15);background:#14171C;aspect-ratio:16/9;position:relative;overflow:hidden">
-      <svg width="100%" height="100%" viewBox="0 0 480 270" preserveAspectRatio="xMidYMid slice"><rect width="480" height="270" fill="#14171C"/><path d="M0 168 L120 108 L360 108 L480 168 L480 270 L0 270 Z" fill="#1A1E24"/><path d="M120 108 L120 57 L360 57 L360 108" fill="none" stroke="rgba(255,255,255,.09)"/><path d="M120 57 L180 24 L360 57" fill="#171B21" stroke="rgba(255,255,255,.07)"/><rect x="380" y="130" width="34" height="34" fill="#151A20" stroke="rgba(255,255,255,.1)"/></svg>
-      <div style="position:absolute;top:8px;left:10px;display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:8.5px;color:var(--red)"><span style="width:6px;height:6px;border-radius:50%;background:var(--red);animation:bl 1s infinite"></span>REC</div>
-      <div style="position:absolute;top:8px;right:10px;font-family:var(--mono);font-size:8px;color:var(--g)">CAM0 · 客厅</div>
-      <div style="position:absolute;bottom:8px;left:10px;font-family:var(--mono);font-size:8px;color:var(--g)"><span style="color:var(--green)">2026-09-04 14:05:02</span> · CAM-0</div>
-      <div style="position:absolute;left:16%;top:18%;width:13%;height:40%;border:1px solid var(--green)"><span style="position:absolute;top:-14px;left:-1px;font-family:var(--mono);font-size:7px;background:var(--green);color:#08130b;padding:1px 4px">person 0.92 · 2.1m</span></div>
-      <div style="position:absolute;left:48%;top:30%;width:10%;height:34%;border:1px solid var(--green)"><span style="position:absolute;top:-14px;left:-1px;font-family:var(--mono);font-size:7px;background:var(--green);color:#08130b;padding:1px 4px">person 0.87</span></div>
-      <div style="position:absolute;left:74%;top:38%;width:9%;height:26%;border:1px solid var(--amber)"><span style="position:absolute;top:-14px;left:-1px;font-family:var(--mono);font-size:7px;background:var(--amber);color:#241300;padding:1px 4px">zone!</span></div>
+    <div class="card" style="padding:8px"><div style="border:1px solid rgba(255,255,255,.15);background:#14171C;aspect-ratio:16/9;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center">
+      <div style="text-align:center;font-family:var(--mono);font-size:9px;color:var(--d);line-height:2">
+        NO SIGNAL<br><span style="color:var(--dd)">摄像头未连接 —— 配置摄像头后此处显示实时预览</span><br><span style="color:var(--dd)">（无数据不模拟）</span>
+      </div>
     </div>
     <div style="display:flex;gap:6px;margin-top:8px"><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⏺ 录像</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">◉ 拍照</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⌖ 标定</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⚙ 设置</button></div></div>
     <div style="display:flex;flex-direction:column;gap:8px">
       <div class="card"><div class="ct"><span>检测事件流</span><b>vision_event</b></div><div class="evlog">
-        <div class="e"><span class="tm">14:05:01</span><span class="lv d">DET</span><span class="tx">person 0.92 · 沙发区</span></div>
-        <div class="e"><span class="tm">14:04:47</span><span class="lv d">DET</span><span class="tx">person 0.87 · 玄关</span></div>
-        <div class="e"><span class="tm">14:03:58</span><span class="lv a">ZONE</span><span class="tx">车道越界</span></div></div></div>
-      <div class="card"><div class="ct"><span>摄像头列表</span><b>2 路</b></div>
-        <div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px">CAM0 · 客厅</div><div class="s">RTSP 1080p</div></div><span class="tag g">LIVE</span></div>
-        <div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px">CAM1 · 门口</div><div class="s">USB /dev/video0</div></div><span class="tag dim">OFF</span></div></div>
+        <div class="e"><span class="tx" style="color:var(--d)">暂无事件（visiond 上报后实时显示）</span></div></div></div>
+      <div class="card"><div class="ct"><span>摄像头列表</span><b>--</b></div>
+        <div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px;color:var(--d)">未获取（monitor_list 实时填充）</div><div class="s">无数据不模拟</div></div><span class="tag dim">--</span></div></div>
     </div>
   </div>
 </div>
