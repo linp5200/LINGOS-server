@@ -65,6 +65,8 @@
 #include "backup.h"
 #include "connection_handler.h"
 #include "startup_mode.h"
+#include "server_mode.h"   /* 【0.7.0 P2】server mode（只显示日志——先生设定） */
+#include "../config/options.h"   /* 【0.7.0 P2-B】dev.prevent_clear（防清屏） */
 #include "../config/wizard_engine.h"
 #include "../config/config_renderer.h"
 #include "../config/config_core.h"   /* 用于 config_core_save_force */
@@ -1655,6 +1657,18 @@ static int handle_builtin_command(const char *cmd) {
         return 1;
     }
 
+    /* ----- server mode（【0.7.0 P2】先生设定：server mode on/off/stop/status） ----- */
+    if (strncmp(cmd, "server mode", 11) == 0) {
+        const char *args = cmd + 11;
+        while (*args == ' ') args++;
+        if (*args) {
+            server_mode_command(args);
+        } else {
+            server_mode_command("mode");
+        }
+        return 1;
+    }
+
     /* ----- desktop ----- */
     if (strcmp(cmd, "desktop") == 0) {
         handle_desktop_command();
@@ -2253,6 +2267,20 @@ static int handle_builtin_command(const char *cmd) {
  * FTF[Shell 主循环（含增强提示符）]
  * ============================================================ */
 void shell_run(void) {
+    /* 【0.7.0 P2】server mode 入口检测（先生设定：只显示日志、不接受输入）
+     *   · server_mode.json enabled=1 → 直接进入（持久化生效）
+     *   · startup.conf=server → 联动开启
+     *   · 退出（Ctrl-Q/Q）→ 返回 main → 优雅停止流程 */
+    server_mode_init();
+    if (startup_mode_get() == STARTUP_MODE_SERVER && !server_mode_is_active()) {
+        server_mode_set_enabled(1);
+    }
+    if (server_mode_is_active()) {
+        server_mode_run();
+        LOG_INFO_T("Shell", "ServerMode", "Returned", "server mode session over -> exit flow");
+        return;
+    }
+
     /* 【批次C】初始化本地技能商店（确保市场/启用目录存在） */
     skill_store_init();
 
@@ -2290,6 +2318,15 @@ void shell_run(void) {
         loop_count++;
 
         if (loop_count % 10 == 0 || last_status_bar_update == 0) {
+            /* 【0.7.0 P2】检查客户端停止请求（server mode stop 外部通道——危机时拒绝） */
+            {
+                char reqp[512];
+                safe_snprintf(reqp, sizeof(reqp), "%s/run/server_mode_stop_request", lingos_data_root());
+                if (access(reqp, F_OK) == 0) {
+                    unlink(reqp);
+                    server_mode_request_stop("client");
+                }
+            }
             int ai_ok = ai_status_query();
             int task_cnt = get_background_task_count();
             const char *mode = startup_mode_name(startup_mode_get());
@@ -2405,9 +2442,15 @@ void shell_run(void) {
                 while (idx > 0) {
                     safe_backspace_echo(cmd, &idx);
                 }
-            } else if (c == 0x0C) {   /* ^L：清屏 */
-                uart_puts("\033[2J\033[H");
-                uart_puts(prompt);
+            } else if (c == 0x0C) {   /* ^L：清屏（【0.7.0 P2-B】dev.prevent_clear → 防清屏） */
+                if (options_get("dev.prevent_clear") == 1) {
+                    uart_puts(tr("\r\n[防清屏] ^L 已禁用（dev.prevent_clear 开启——日志不丢失）\r\n",
+                                 "\r\n[防清屏] ^L 已禁用（dev.prevent_clear 开启——日志不丢失）\r\n"));
+                    uart_puts(prompt);
+                } else {
+                    uart_puts("\033[2J\033[H");
+                    uart_puts(prompt);
+                }
             } else if (c == 0x01) {   /* ^A：行首（无光标移动，忽略） */
                 /* no-op */
             } else if (c == 27) {

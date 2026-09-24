@@ -13,6 +13,7 @@
 #include "../common/data_path.h"
 #include "../common/lang.h"
 #include "../lib/log_extra.h"
+#include "../lib/api_log.h"   /* 【0.7.0 P2-B】API 日志 */
 #include "../lib/port_config.h"
 #include "../lib/cJSON/cJSON.h"
 #include <stdio.h>
@@ -35,6 +36,24 @@
 #define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 #define BUFFER_SIZE 4096
 #define HEARTBEAT_INTERVAL 30
+
+/* ============================================================
+ * 【0.7.0 S0-2 修复】JSON 字符串安全扫描
+ *   原实现混用 strchr / strrchr 定位字符串结束引号：
+ *     · strrchr → 定位到整条消息最后一个引号，吞掉后续 JSON 字段
+ *       （先生真机报告"消息截断"根因：AI 只收到 H","session_id":... 尾巴）
+ *     · strchr  → 不处理转义，值内含 \" 时提前截断
+ *   本函数：从 start 起扫描“第一个未转义引号”（跳过 \\ 与 \" 转义）。
+ * ============================================================ */
+static char *json_scan_str_end(const char *start) {
+    const char *p = start;
+    while (p && *p) {
+        if (*p == '\\' && p[1] != '\0') { p += 2; continue; }
+        if (*p == '"') return (char *)p;
+        p++;
+    }
+    return NULL;
+}
 
 /* ============================================================
  * WebSocket 客户端结构
@@ -524,6 +543,9 @@ static void ws_forward_auth_resp(ws_client_t *client, const char *req_id, int ap
 static void process_client_message(ws_client_t *client, const char *msg) {
     if (!client || !msg) return;
 
+    /* 【0.7.0 P2-B】API 日志（WS 通道——server mode 可查看） */
+    api_log("ws", "in", "-", 0, 0, (long)strlen(msg), NULL);
+
     /* 简单解析：{"type":"subscribe","topic":"/system/status"} */
     char *p = strstr(msg, "\"type\"");
     if (!p) return;
@@ -535,7 +557,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
         while (*p1 == ' ' || *p1 == '\t') p1++;
         if (*p1 == '"') {
             p1++;
-            char *end = strchr(p1, '"');
+            char *end = json_scan_str_end(p1);
             if (end) {
                 int len = end - p1;
                 if (len < (int)sizeof(type) - 1) {
@@ -569,7 +591,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                 while (*p2 == ' ' || *p2 == '\t') p2++;
                 if (*p2 == '"') {
                     p2++;
-                    char *end = strchr(p2, '"');
+                    char *end = json_scan_str_end(p2);
                     if (end) {
                         int len = end - p2;
                         if (len < (int)sizeof(token) - 1) { memcpy(token, p2, len); token[len] = '\0'; }
@@ -598,7 +620,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                     while (*c == ' ' || *c == '\t') c++;
                     if (*c == '"') {
                         c++;
-                        char *end = strrchr(c, '"');
+                        char *end = json_scan_str_end(c);
                         if (end) {
                             static char devbuf[64];
                             int dl = end - c;
@@ -635,7 +657,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                 while (*p2 == ' ' || *p2 == '\t') p2++;
                 if (*p2 == '"') {
                     p2++;
-                    char *end = strrchr(p2, '"');
+                    char *end = json_scan_str_end(p2);
                     if (end) {
                         int len = end - p2;
                         if (len < (int)sizeof(prompt) - 1) { memcpy(prompt, p2, len); prompt[len] = '\0'; }
@@ -653,7 +675,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                     while (*p2 == ' ' || *p2 == '\t') p2++;
                     if (*p2 == '"') {
                         p2++;
-                        char *end = strchr(p2, '"');
+                        char *end = json_scan_str_end(p2);
                         if (end) {
                             int len = end - p2;
                             if (len < (int)sizeof(model) - 1) { memcpy(model, p2, len); model[len] = '\0'; }
@@ -684,7 +706,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                     while (*p2 == ' ' || *p2 == '\t') p2++;
                     if (*p2 == '"') {
                         p2++;
-                        char *end = strchr(p2, '"');
+                        char *end = json_scan_str_end(p2);
                         if (end) {
                             int len = end - p2;
                             if (len > 0 && len < (int)sizeof(image_buf) - 1) {
@@ -727,7 +749,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                 if (dp) {
                     char *d2 = strchr(dp, '"');
                     if (d2) {
-                        char *d3 = strchr(d2 + 1, '"');
+                        char *d3 = json_scan_str_end(d2 + 1);
                         if (d3 && d3 - d2 - 1 < 128) {
                             char tmp[128];
                             memcpy(tmp, d2 + 1, d3 - d2 - 1);
@@ -778,7 +800,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
             while (*p1 == ' ' || *p1 == '\t') p1++;
             if (*p1 == '"') {
                 p1++;
-                char *end = strchr(p1, '"');
+                char *end = json_scan_str_end(p1);
                 if (end) {
                     int len = end - p1;
                     if (len < (int)sizeof(topic) - 1) {
@@ -818,7 +840,7 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                 while (*c == ' ' || *c == '\t') c++;
                 if (*c == '"') {
                     c++;
-                    char *end = strrchr(c, '"');
+                    char *end = json_scan_str_end(c);
                     if (end && end - c < (int)sizeof(req_id) - 1) {
                         memcpy(req_id, c, end - c);
                         req_id[end - c] = '\0';

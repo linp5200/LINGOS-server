@@ -12,7 +12,9 @@
 #include "safe_string.h"
 #include "safe_exec.h"
 #include "permission_check.h"
+#include "version.h"        /* 【0.7.0 修复】system_info 上报版本（App 版本显示根因修复） */
 #include "defense_mode.h"   /* 【2026-09-18】影子模式接线（defense_mode_get） */
+#include "../lib/api_log.h" /* 【0.7.0 P2-B】API 日志 + 设备修改日志 */
 #include "envelope.h"
 #include "crypto_core.h"
 #include <stdio.h>
@@ -352,6 +354,10 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
     LOG_DEBUG_T("Syscall", "Handle", "Enter", "operation='%s', args_json='%s'",
                 operation ? operation : "(null)", args_json ? args_json : "(null)");
 
+    /* 【0.7.0 P2-B】API 日志（socket 通道——daemon.sock 请求） */
+    api_log("socket", "in", operation ? operation : "-", 0, 0,
+            args_json ? (long)strlen(args_json) : 0, NULL);
+
     if (!operation || !args_json || !out) {
         safe_snprintf(out, out_len, "{\"status\":\"error\",\"error_type\":\"invalid_args\",\"message\":\"Invalid parameters\"}");
         LOG_ERROR_T("Syscall", "Handle", "Invalid", "operation=%p, args_json=%p, out=%p", (void*)operation, (void*)args_json, (void*)out);
@@ -404,7 +410,16 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "message", "Missing 'path' or 'content'");
             ret = -1;
         } else {
-            if (write_file_content(path_item->valuestring, content_item->valuestring) == 0) {
+            /* 【0.7.0 P2-B】设备修改日志：file_write → ADD（新文件）/ MOD（已存在）——两条式 */
+            int existed = (access(path_item->valuestring, F_OK) == 0);
+            const char *op7 = existed ? "MOD" : "ADD";
+            char reqid[32];
+            devmod_new_req_id(reqid, sizeof(reqid));
+            devmod_log(op7, path_item->valuestring, reqid, 0, (long)strlen(content_item->valuestring), 0, NULL);
+            int wr = write_file_content(path_item->valuestring, content_item->valuestring);
+            devmod_log(op7, path_item->valuestring, reqid, 1, (long)strlen(content_item->valuestring), 0,
+                       wr == 0 ? "ok" : "fail:write");
+            if (wr == 0) {
                 cJSON_AddStringToObject(result, "status", "ok");
                 cJSON_AddStringToObject(result, "data", "Written");
             } else {
@@ -423,8 +438,23 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "error_type", "missing_param");
             cJSON_AddStringToObject(result, "message", "Missing 'path'");
             ret = -1;
+        } else if (log_path_protected(path_item->valuestring)) {
+            /* 【0.7.0 P2-B】"不被清除"——日志目录删除拦截（先生设定：防手动删除） */
+            LOG_WARN_T("Syscall", "FileDelete", "LogProtected",
+                       "delete refused (log dir protected): %s", path_item->valuestring);
+            devmod_log("DEL", path_item->valuestring, NULL, 1, 0, 0, "fail:log-protected");
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "log_protected");
+            cJSON_AddStringToObject(result, "message", "日志目录受保护（不被清除）——删除被拒绝");
+            ret = -1;
         } else {
-            if (unlink(path_item->valuestring) == 0) {
+            /* 【0.7.0 P2-B】设备修改日志：DEL 两条式 */
+            char reqid[32];
+            devmod_new_req_id(reqid, sizeof(reqid));
+            devmod_log("DEL", path_item->valuestring, reqid, 0, 0, 0, NULL);
+            int dl = unlink(path_item->valuestring);
+            devmod_log("DEL", path_item->valuestring, reqid, 1, 0, 0, dl == 0 ? "ok" : "fail");
+            if (dl == 0) {
                 cJSON_AddStringToObject(result, "status", "ok");
                 cJSON_AddStringToObject(result, "data", "Deleted");
             } else {
@@ -565,6 +595,16 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddNumberToObject(data, "network_rx", (double)net_rx);
             cJSON_AddNumberToObject(data, "network_tx", (double)net_tx);
             cJSON_AddNumberToObject(data, "disk_usage", syscall_read_disk_usage());
+            /* 【0.7.0 修复】上报版本字段——App 关于页/连接信息依赖 system_info.version
+             * 此前响应缺此字段 → App 端 serverVersion 永远为空（先生报告"服务器版本不更新"根因）。
+             * 双格式：version=纯语义号（0.7.0）；internal_version=内部号（LN-0.7.0）。 */
+            {
+                const char *vfull = version_get();
+                const char *vnum = vfull;
+                if (vfull && strncmp(vfull, "LN-", 3) == 0) vnum = vfull + 3;
+                cJSON_AddStringToObject(data, "version", (vnum && *vnum) ? vnum : "unknown");
+                cJSON_AddStringToObject(data, "internal_version", (vfull && *vfull) ? vfull : "unknown");
+            }
             cJSON_AddStringToObject(result, "status", "ok");
             cJSON_AddItemToObject(result, "data", data);
         } else {

@@ -271,6 +271,21 @@ def check_skill_permission(skill_name: str, risk: str = "low",
 
     :return: (allowed, reason)。allowed=False 时 reason 为给 AI 的说明
     """
+    # 【0.7.0 P2.5 B4】危机全权模式（§2B 铁律：危险时刻全权响应——audit-only）
+    #   危机进行中：跳过一切权限限制（含平时禁用的高危项），仅记录审计日志。
+    #   危机解除后自动回归常规（仅 crisis_active() 为真时生效）。
+    try:
+        import sys as _sys, os as _os
+        _gdir = _os.path.dirname(_os.path.abspath(__file__))
+        if _gdir not in _sys.path:
+            _sys.path.insert(0, _gdir)
+        from crisis import crisis_active as _crisis_on
+        if _crisis_on():
+            logger.warning("CRISIS full-authority: skill '%s' allowed (audit-only)", skill_name)
+            return True, ""
+    except Exception:
+        pass
+
     # ① 确定所需权限
     perm = SKILL_PERM_OVERRIDE.get(skill_name)
     if perm is None:

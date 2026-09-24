@@ -164,6 +164,32 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             args = req.get("args", {})
             session = req.get("session", "default")
 
+            # 【0.7.0 P2.5 B3】危机例外（§2B：危险时刻全权已授——跳过确认，audit-only）
+            #   危机进行中：立即登记 approved，不弹终端 Y/N、不等 App——一切为人身安全让路。
+            try:
+                import sys as _sys, os as _os
+                _cdir = _os.path.dirname(_os.path.abspath(__file__))
+                if _cdir not in _sys.path:
+                    _sys.path.insert(0, _cdir)
+                from crisis import crisis_active as _crisis_on
+                if _crisis_on():
+                    with lock:
+                        pending_requests[rid] = {
+                            "skill": skill, "args": args, "session": session,
+                            "status": "approved", "timestamp": time.time(),
+                            "reason": "crisis mode — full authority (audit-only)",
+                            "approved_at": time.time(),
+                        }
+                        stats["total_requests"] += 1
+                        stats["approved"] += 1
+                    logger.warning("CRISIS override: auto-approve '%s' (skip confirm)", skill)
+                    sys.stdout.write(f"\n{t('[Auth] CRISIS — auto-approved: ', '[授权] 危机模式——自动批准：')}{skill}\n")
+                    sys.stdout.flush()
+                    conn.send(json.dumps({"request_id": rid}).encode() + b"\n")
+                    return
+            except Exception as _ce:
+                logger.debug("crisis check for auth failed: %s", _ce)
+
             with lock:
                 pending_requests[rid] = {
                     "skill": skill,

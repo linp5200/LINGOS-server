@@ -15,7 +15,8 @@
 
 typedef enum {
     STARTUP_MODE_SHELL = 0,   /* 默认进入 Shell CLI */
-    STARTUP_MODE_TUI = 1      /* 默认进入 TUI 桌面 */
+    STARTUP_MODE_TUI = 1,     /* 默认进入 TUI 桌面 */
+    STARTUP_MODE_SERVER = 2   /* 【0.7.0 P2】server mode（只显示日志——先生设定） */
 } startup_mode_t;
 
 /* ============================================================

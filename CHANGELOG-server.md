@@ -5,6 +5,101 @@
 
 ---
 
+## [0.7.0] - 2026-09-24（真机修复包 + server mode + 安全接线 + 危机链核心）
+
+> 本版 = 统一开发计划批次合并：P1（S 系列真机修复）+ P1.5（安全接线）+ P2（server mode 核心）
+> + P2.5（危机链核心接线）。**全部改动经静态语法检查**（先生指示：不本地编译、不推 CI 直至全部完成）。
+
+### 新增（Features）
+- **server mode（先生设定 2026-09-19 实施）**：
+  - 新建 `src/core/server_mode.{h,c}`——只显示日志、不接受输入（控制键唯一：Ctrl-Q/Q）
+  - 状态持久化 `server_mode.json`（on 后重启保持）· 日志文件尾随显示（tail 式增量）
+  - 终端 raw-ish 模式（捕获 Ctrl-Q——关闭 IXON 流控）· 退出恢复原终端设置
+  - **危机时严禁退出**（读 crisis_state.json——铁律：一切行为为人身安全让路）
+  - `server mode on/off/stop/status` shell 命令 + `startup mode=server` 启动联动
+  - Python 命令面（客户端）：`server_mode_status / server_mode_stop / server_mode_on`
+    ——停止走标志文件通道（C 端 shell 循环 + server mode 循环双检测）
+  - 服务器模式包（package_mode）：常规关闭无效（off 被拒——停止仅 `server mode stop`）
+- **出口白名单（先生裁决 S2 / OWASP LLM06 §3）**：
+  - 新建 `src/net/egress.{h,c}`——本机/局域网放行、169.254 云元数据拒绝、公网仅清单
+  - 内置清单：生命线（wolfx/usgs/nmc）+ 天气 + LLM 常用 + 语音 + 搜索 + 更新 + 通知
+  - 用户扩展：`/LINGOS/system/config/egress_allowlist.json`（domains 合并/通配/enabled 覆盖）
+  - 接入点：http_request / http_download / https 请求（hs_request）全覆盖
+- **开发调试日志（P2 核心）**：
+  - options 新"开发"组（`dev.debug_log` / `dev.api_log` / `dev.prevent_clear`——默认开）
+  - 四级判定链（main.c apply_dev_log_policy）：内部变量 build_channel > 版本号（0.x 开）> 手动关
+  - 落地：log_set_global_level 动态控制（文件全量写入不受影响）
+- **危机链接线（§2B · P2.5 核心）**：
+  - B3 **审批链危机例外**（authorization_service：危机中自动批准、跳过 Y/N——audit-only）
+  - B4 **权限危机全权模式**（permission_gateway：危机中一切技能放行——audit-only）
+
+### 修复（Fixes · S 系列真机问题全修复）
+- **S0-1 部署链断裂**（App 命令大面积 Unknown 根因）：
+  - install.sh 补 Python 全量部署（python/server/*.py → bin/ + plugin 子目录）
+  - lingos.sh start 自动同步（cmp 对比——幂等）+ main.c fallback 全量化与 mtime 重同步
+- **S0-2 WS 消息截断**（先生报告根因）：websocket_server.c 引号扫描
+  统一为 `json_scan_str_end`（第一个未转义引号）——替换 9 处 strchr/strrchr
+  （strrchr 会吞掉 JSON 尾巴 → "AI 只收到 H","session_id":... 的修复）
+- **App 服务器版本不更新**（先生报告）：system_info 响应补 version/internal_version
+  （C 端 syscall_handler + Python cmd_system_info 双端——此前响应缺字段）
+- **S1-1 唤醒词刷屏**：模拟检测（80/120 次假报）默认禁用——仅 LINGOS_WAKEWORD_SIM=1 测试
+- **S1-2 守护残留**：子进程 fork 统一 `child_daemon_prepare`（PR_SET_PDEATHSIG 内核级 +
+  父死复查）+ 主程序退出 `terminate_children`（pid 文件 TERM→KILL 双保险）
+- **S1-3 终端污染**：子守护 stdout/stderr 重定向到 /LINGOS/log/<name>.log
+- **S1-4 registry 竞态**：lingos.sh 等待改"真实 connect 测试"；main.c 新增
+  `wait_registry_connectable`（10s）；Python load_skill_schemas 重试 6 次
+- **S1-5 冷启动误判**：ensure_ai_server_running 首轮窗口 3s→8s
+- **S2-1 visiond 崩溃循环**：无摄像头 → 视觉待机（30s 重试保活）不再 abort
+- **S2-2 venv 检查误报**：降级为非计数警告（不再触发"未找到匹配策略"修复噪音）
+- **S2-3 registry 子目录**：fs_layout 补建 registry/{builtin,custom,store,skills/*} + core
+- **S2-4 YOLO 模型损坏**：加载前完整性预检（<1MB 视为损坏）+ 失败自动重下自愈
+- **S3-1 ready 生命周期**：停止/退出时删除 run/ready（防过期"服务=1"显示）
+- **S3-3 保存告警降级**：security_config_save 未加载时 ERROR→DEBUG（正常早退场景）
+- **S3-4 预警标题 (null)**：类型数组补全（HEALTH=7/SECURITY=8 越界 NULL 根因）+ 范围检查
+- **P1.5 安全接线**：
+  - **CORS**：api_routes.c 不再写死 `*`（接入 access_cors_add_headers 校验 Origin）；
+    monitor_service.py 改本机/内网回显（原 `*`）
+  - **限流补线**：/api/files 与 /nook/ask 补 access_rate_allow（此前仅 /api/cmd+webhook）
+  - **S6 fail-closed**：permission.c 随机源不可用拒绝（删除 rand() 降级——安全底线违规修复）
+  - **S16 铺开**：token 打印全脱敏（Add/Remove——此前仅 GenToken 一处）
+
+### 其他
+- 版本统一 0.7.0（Makefile + version.c + CI build.yml）
+- 复核：全部改动文件 gcc -fsyntax-only 通过 + Python py_compile 通过（20 文件）
+
+### 批次二增补（同批实施 · 2026-09-24 深夜）
+- **API 日志 + 设备修改日志（P2-B）**：
+  - 新建 `src/lib/api_log.{h,c}`——api.log（server mode 专属尾随查看）+ device_mod.log（审计）
+  - API 日志 **全通道 tap**：HTTP（请求+响应）/ WS / TCP / webhook（随 HTTP）/ socket（daemon）
+    / UDP 发现 / Python（handle_client + _reply 双端）——仅 server mode 可查看（双文件尾随）
+  - 设备修改日志 **7 码两条式**（ADD/MOD/DEL/MOV/REN/COPY/APPEND——请求条+完成条；req_id 关联）
+    隐私：敏感仅记长度（"摘要或长度"）
+  - **"不被清除"落地**：日志目录删除拦截（C syscall + Python 双端——`log_path_protected`）·
+    512MB 归档（rename 保留——非删除）· 防关机（逐行 append+flush）· 防清屏（dev.prevent_clear）
+- **危机链（P2.5 剩余）**：
+  - 新建 `src/python/crisis_delivery.py`——**生命线投递五重保障**：
+    ① 多通道并行（WS/ntfy/本地声音 espeak/HA 声光）② ACK 强制（30s 重推循环）
+    ③ 离线能力（本地 bell+TTS 不依赖网络）④ 断网兜底（重推即兜底）⑤ 延迟指标
+    （crisis_delivery.jsonl——各通道时延 + ACK 延迟）· 5 分钟未确认升级通知联系人（可配）
+  - **B7 危机加速**：危机进行中 LLM **关闭思考链**（llm_unified 双路径——"关闭一切减速项"）
+- **P3 服务端四件**：
+  - 新建 `src/python/memory_pipeline.py`——**自动记忆管线**（对话→事实抽取→去重→分级写入；
+    启发式 + 可选 LLM；受 `ai.auto_memory` 选项控制）
+  - 新建 `src/python/alert_subscription.py`——**预警级别订阅 + AI 简报**（L2+ 过滤推送；
+    简报聚合（LLM 优先/模板降级）+ 冷却 + 最小条数）
+  - 新建 `src/python/weather_link.py`——**天气↔预警联动**（高温/低温/暴雨/大风阈值 →
+    预警事件广播 + 通知；冷却防重复；周期检查线程）
+  - `command_list` 命令（命令面板数据源——ext 82 + 技能 + 核心）
+- **命令面板（三端同构）**：
+  - WebUI 新增"命令面板"页（第 22 页——搜索/渲染/执行/结果）· App 新增命令面板屏
+- **部署三件**：**统一版本源**（VERSION 文件——Makefile/CI 单一事实源）·
+  **venv 瘦身**（bundle.sh——只装 requests/websocket-client/tiktoken/pillow；
+  原 paddle 全套 ~1GB 白装移除——选项 A）· 安装清单对齐
+- **App 侧**：局域网自动发现（UDP——连接 2 步化）· 后台推送（crisis critical 通知 + 预警 L2+）·
+  命令面板屏 · App 版本 0.7.0+32
+
+---
+
 ## [0.6.2] - 2026-09-24（接线批次 + 启动链路完善）
 
 ### 新增（Features）

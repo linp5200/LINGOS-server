@@ -21,6 +21,7 @@
 #include "data_path.h"
 #include "safe_string.h"
 #include "access_control.h"
+#include "../lib/api_log.h"   /* 【0.7.0 P2-B】API 日志 */
 #include "nook.h"
 #include "system_health.h"
 #include "connection_handler.h"
@@ -111,6 +112,9 @@ static const char *http_client_ip(struct MHD_Connection *connection) {
 }
 
 static void send_json_response(struct MHD_Connection *connection, int status_code, const char *json) {
+    /* 【0.7.0 P2-B】API 日志（响应侧——server mode 可查看） */
+    api_log("http", "out", "-", status_code, 0,
+            json ? (long)strlen(json) : 0, NULL);
     struct MHD_Response *response = MHD_create_response_from_buffer(strlen(json), (void*)json, MHD_RESPMEM_PERSISTENT);
     MHD_add_response_header(response, "Content-Type", "application/json");
     MHD_queue_response(connection, status_code, response);
@@ -473,6 +477,9 @@ static enum MHD_Result request_handler(void *cls,
                                        void **con_cls) {
     (void)cls; (void)version;
 
+    /* 【0.7.0 P2-B】API 日志（请求侧——server mode 可查看） */
+    api_log("http", "in", url ? url : "-", 0, 0, 0, method ? method : NULL);
+
     /* 【协议v3】POST 上传分块回调（upload_data 累积） */
     if (*con_cls != NULL) {
         return upload_handler(connection, url, method, upload_data, upload_data_size, con_cls);
@@ -575,6 +582,12 @@ static enum MHD_Result request_handler(void *cls,
 
     /* 文件端点：Bearer token 认证 */
     if (strncmp(url, "/api/files", 10) == 0) {
+        /* 【0.7.0 S18】补限流（此前仅 /api/cmd 与 webhook 有限流） */
+        if (!access_rate_allow(http_client_ip(connection))) {
+            send_json_response(connection, MHD_HTTP_TOO_MANY_REQUESTS,
+                               "{\"status\":\"error\",\"code\":\"rate_limited\"}");
+            return MHD_YES;
+        }
         if (!http_auth_check(connection)) {
             send_json_response(connection, MHD_HTTP_UNAUTHORIZED, "{\"error\":\"unauthorized\"}");
             return MHD_YES;
@@ -616,6 +629,12 @@ static enum MHD_Result request_handler(void *cls,
     } else if (strcmp(url, "/system/health") == 0) {
         return handle_health(connection);
     } else if (strcmp(url, "/nook/ask") == 0) {
+        /* 【0.7.0 S18】补限流 */
+        if (!access_rate_allow(http_client_ip(connection))) {
+            send_json_response(connection, MHD_HTTP_TOO_MANY_REQUESTS,
+                               "{\"status\":\"error\",\"code\":\"rate_limited\"}");
+            return MHD_YES;
+        }
         const char *prompt = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "prompt");
         return handle_nook_ask(connection, prompt);
     } else {

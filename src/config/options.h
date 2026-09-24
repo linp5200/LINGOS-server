@@ -38,6 +38,7 @@ typedef enum {
     OPT_GROUP_AI         = 5,   /* AI/模型 */
     OPT_GROUP_DATA       = 6,   /* 数据/同步 */
     OPT_GROUP_CONN       = 7,   /* 连接 */
+    OPT_GROUP_DEV        = 8,   /* 【0.7.0 P2】开发调试（先生设定） */
     OPT_GROUP__COUNT
 } option_group_t;
 

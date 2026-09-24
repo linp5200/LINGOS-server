@@ -323,6 +323,13 @@ def trigger_crisis(crisis_type: str, source: str = "", detail: str = "",
         _broadcast_crisis(st, "crisis_alert")
         _notify_center(st)
 
+    # ⑤ 【0.7.0 P2.5 B5】生命线投递（多通道并行 + ACK 强制 + 30s 重推 + 指标）
+    try:
+        from crisis_delivery import start_delivery
+        start_delivery(st)
+    except Exception as _de:
+        logger.warning("crisis delivery start failed: %s", _de)
+
     logger.warning("CRISIS TRIGGERED: %s (%s) actions=%d", crisis_type, cid, len(results))
     return {"status": "ok", "data": st}
 
@@ -338,6 +345,12 @@ def resolve_crisis(reason: str = "manual", broadcast: bool = True) -> dict:
     dur = st["resolved_at"] - int(st.get("started_at", st["resolved_at"]))
     _save_state(st)
     _audit({"event": "resolve", "crisis_id": st.get("crisis_id"), "reason": reason, "duration_s": dur})
+    # 【0.7.0 P2.5 B5】停止投递循环（重推结束）
+    try:
+        from crisis_delivery import stop_delivery
+        stop_delivery()
+    except Exception:
+        pass
     if broadcast:
         _broadcast_crisis(st, "crisis_resolved")
         try:

@@ -200,11 +200,18 @@ static int check_bundled_python(void) {
     if (access(pybin, X_OK) != 0) {
         safe_snprintf(pybin, sizeof(pybin), "/LINGOS/python/bin/python3");
         if (access(pybin, X_OK) != 0) {
+            /* 【0.7.0 S2-2 修复】降级为非计数警告：
+             *   捆绑 venv 不完整是打包环境已知现象，且 0.4.4 起 ai_server 用
+             *   系统 python3 —— venv 缺失不影响运行。旧行为计 FAIL + 触发修复
+             *   → "repair failed (未找到匹配策略)" + run_checks failed=1 噪音
+             *   （先生真机 2026-09-24 日志）。 */
+            LOG_WARN_T("CheckItems", "Dependencies", "VenvMissing",
+                       "捆绑 venv 缺失（不影响 AI——ai_server 用系统 python3；此警告不计失败）");
             check_cache_set("dependencies",
-                            tr("Bundled venv missing", "捆绑 venv 缺失"),
-                            CHECK_RESULT_FAIL);
-            deps_trigger_repair("bundled venv missing");
-            return CHECK_RESULT_FAIL;
+                            tr("Bundled venv missing (non-blocking: system python3 in use)",
+                               "捆绑 venv 缺失（不影响运行：使用系统 python3）"),
+                            CHECK_RESULT_WARN);
+            return CHECK_RESULT_WARN;
         }
     }
     char cmd[640];
@@ -225,11 +232,12 @@ static int check_bundled_python(void) {
         LOG_WARN_T("CheckItems", "Dependencies", "VenvBroken",
                    "venv 检查失败: %s | 实际输出: %s | 提示: 若系统 python3 可用则不影响 AI（0.4.4 起 ai_server 用系统 python3）",
                    pybin, err[0] ? err : "(无输出)");
+        /* 【0.7.0 S2-2 修复】降级为非计数警告（不触发修复——见上） */
         check_cache_set("dependencies",
-                        tr("Bundled venv broken (requests missing)", "捆绑 venv 异常（缺 requests）"),
-                        CHECK_RESULT_FAIL);
-        deps_trigger_repair("bundled venv broken");
-        return CHECK_RESULT_FAIL;
+                        tr("Bundled venv broken (non-blocking: system python3 in use)",
+                           "捆绑 venv 异常（不影响运行：使用系统 python3）"),
+                        CHECK_RESULT_WARN);
+        return CHECK_RESULT_WARN;
     }
     return CHECK_RESULT_PASS;
 }

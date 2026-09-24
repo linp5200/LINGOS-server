@@ -168,6 +168,17 @@ static const option_def_t g_options[] = {
 { "conn.allow_plaintext","允许明文连接", "Allow plaintext",
   OPT_GROUP_CONN, OPT_KIND_OFF, 1, 0, "⚠️ 使用 ws:// 而非 wss://（危险）", "⚠️ Use ws:// instead of wss://" },
 
+/* ── 🔵 开发调试（先生设定：0.x 默认开 / 正式版关——四级判定见 main.c） ── */
+{ "dev.debug_log",  "开发调试日志", "Debug logging",
+  OPT_GROUP_DEV, OPT_KIND_ON, 0, 0,
+  "全量调试日志（含生命线）；0.x 默认开、正式版默认关；内部变量可覆盖", "Verbose debug logging (dev builds ON by default)" },
+{ "dev.api_log",    "API 日志", "API logging",
+  OPT_GROUP_DEV, OPT_KIND_ON, 0, 0,
+  "记录 HTTP/WS/TCP/webhook/socket/UDP 请求（仅 server mode 可查看）", "Log API traffic (visible in server mode)" },
+{ "dev.prevent_clear", "防清屏", "Prevent clear",
+  OPT_GROUP_DEV, OPT_KIND_ON, 0, 0,
+  "dev 模式下 ^L 改为保留缓冲重绘（不丢失日志）", "Keep buffer on clear (dev mode)" },
+
 { NULL, NULL, NULL, 0, 0, 0, 0, NULL, NULL }
 };
 

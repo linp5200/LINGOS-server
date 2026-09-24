@@ -226,12 +226,32 @@ def cmd_remove_camera(camera_id="cam0"):
     return {"status": "error", "msg": "camera %s not found" % camera_id}
 
 # ---------- HTTP：预览 MJPEG + 状态 API（供 App/Web/Qt） ----------
+def _cors_origin_ok(origin: str) -> bool:
+    """【0.7.0 S11】监控预览服务 CORS 放行判定：本机 / 局域网私有地址
+    （原写死 `*` —— 任意外站可跨站读取；现仅回显内网来源）"""
+    if not origin:
+        return False
+    try:
+        from urllib.parse import urlparse
+        import ipaddress
+        h = urlparse(origin).hostname or ""
+        if h in ("localhost",):
+            return True
+        ip = ipaddress.ip_address(h)
+        return ip.is_private or ip.is_loopback
+    except Exception:
+        return False
+
 class MonitorHTTP(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _json(self, obj, code=200):
         b = json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code); self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # 【0.7.0 S11 修复】不再写死 Access-Control-Allow-Origin: *（见上）
+        _org = self.headers.get("Origin", "")
+        if _cors_origin_ok(_org):
+            self.send_header("Access-Control-Allow-Origin", _org)
+            self.send_header("Vary", "Origin")
         self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
     def do_GET(self):
         if self.path.startswith("/status"):

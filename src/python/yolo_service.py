@@ -60,6 +60,24 @@ def load_model() -> bool:
     try:
         from ultralytics import YOLO
 
+        # 【0.7.0 S2-4 修复】模型完整性预校验 + 损坏自愈
+        #   先生真机 2026-09-24："PytorchStreamReader failed reading zip archive...
+        #   checkpoint corrupted"——损坏文件直接加载报错且永不自愈。
+        #   策略：①过小（<1MB，正常 ~6MB）视为损坏 → 删除重下
+        #        ②加载异常含损坏特征 → 删除重下一次
+        _MIN_MODEL_BYTES = 1024 * 1024
+        if os.path.exists(MODEL_PATH):
+            try:
+                _sz = os.path.getsize(MODEL_PATH)
+            except Exception:
+                _sz = -1
+            if 0 <= _sz < _MIN_MODEL_BYTES:
+                logger.warning(
+                    f"Model file appears corrupted/truncated ({_sz} bytes < 1MB) — "
+                    f"removing {MODEL_PATH} for re-download")
+                try: os.remove(MODEL_PATH)
+                except Exception: pass
+
         if not os.path.exists(MODEL_PATH):
             logger.warning(f"Model not found at {MODEL_PATH}, attempting to download...")
             # 自动下载
@@ -68,7 +86,16 @@ def load_model() -> bool:
             _model.save(MODEL_PATH)
             logger.info(f"Model downloaded and saved to {MODEL_PATH}")
         else:
-            _model = YOLO(MODEL_PATH)
+            try:
+                _model = YOLO(MODEL_PATH)
+            except Exception as _le:
+                # 【0.7.0 S2-4】损坏 → 删除并重下一次（自愈）
+                logger.warning(f"Load failed: {_le} — treating model as corrupted, re-downloading once")
+                try: os.remove(MODEL_PATH)
+                except Exception: pass
+                _model = YOLO("yolov8n.pt")
+                _model.save(MODEL_PATH)
+                logger.info(f"Model re-downloaded and saved to {MODEL_PATH}")
 
         _model_loaded = True
         logger.info(f"YOLO model loaded successfully")

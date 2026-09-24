@@ -110,17 +110,17 @@ print("==> manifest.json: %d 个库" % len(libs))
 PYEOF
 
 # ---------- 4. venv --copies 打包（Python 层离线） ----------
+# 【0.7.0 统一部署：venv 瘦身】先生裁决（方案4 §5 设计四·选项 A）：
+#   原装全套（paddle ~1GB）但运行用系统 python3 → **白装**。现只装必需：
+#   requests / websocket-client / tiktoken / pillow（图像基础）。
+#   OCR/视觉大依赖（paddle/opencv）改由用户按需 pip 装（check_deps 会提示）。
 PYVER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 if command -v python3 >/dev/null; then
-    echo "==> 构建 venv (python$PYVER --copies)"
+    echo "==> 构建 venv (python$PYVER --copies) [slim]"
     python3 -m venv --copies "$DEST/python"
     "$DEST/python/bin/pip" install --no-cache-dir -q \
-        requests websocket-client tiktoken numpy pillow pytesseract 2>/dev/null || \
-    "$DEST/python/bin/pip" install --no-cache-dir -q requests websocket-client tiktoken pillow pytesseract 2>/dev/null || \
+        requests websocket-client tiktoken pillow 2>/dev/null || \
     "$DEST/python/bin/pip" install --no-cache-dir -q requests websocket-client
-    # 【0.2.2 vision】OCR/视觉可选依赖（体积不敏感裁决——失败不阻塞主包）
-    "$DEST/python/bin/pip" install --no-cache-dir -q paddleocr paddlepaddle 2>/dev/null || true
-    "$DEST/python/bin/pip" install --no-cache-dir -q opencv-python-headless 2>/dev/null || true
     # 服务端脚本复制进 venv（可执行入口）
     mkdir -p "$DEST/python/server"
     cp -a "$ROOT"/src/python/*.py "$DEST/python/server/" 2>/dev/null || true
@@ -128,7 +128,7 @@ if command -v python3 >/dev/null; then
     # 主包缺失 → "No module named 'plugin_loader'"）
     mkdir -p "$DEST/python/server/plugin"
     cp -a "$ROOT"/src/python/plugin/*.py "$DEST/python/server/plugin/" 2>/dev/null || true
-    echo "==> venv 完成（含 requests/websocket-client/OCR/视觉依赖）"
+    echo "==> venv 完成（slim：requests/websocket-client/tiktoken/pillow）"
 else
     echo "!! 无 python3——跳过 venv（Python 层缺失）" >&2
 fi
@@ -219,6 +219,23 @@ cp -a "$DIR/start.sh" "$TARGET/start.sh" 2>/dev/null || true
 [ -f "$DIR/check_deps.sh" ] && cp -a "$DIR/check_deps.sh" "$TARGET/" 2>/dev/null || true
 [ -f "$DIR/lingos.sh" ]     && cp -a "$DIR/lingos.sh"     "$TARGET/" 2>/dev/null || true
 chmod +x "$TARGET/bin/"* "$TARGET/start.sh" "$TARGET/check_deps.sh" "$TARGET/lingos.sh" 2>/dev/null || true
+# 3.5) 【0.7.0 S0-1 修复】部署 Python AI 脚本到 bin/
+#   历史缺陷：install.sh 从不复制 python/server/*.py 到 bin/ →
+#   运行的是很久以前手工拷贝或 main.c 单文件复制的老版 ai_server
+#   （先生真机 2026-09-24：App 命令大面积 Unknown 的取证根因）
+if [ -d "$DIR/python/server" ]; then
+  cp -a "$DIR"/python/server/*.py "$TARGET/bin/" 2>/dev/null || true
+  if [ -d "$DIR/python/server/plugin" ]; then
+    mkdir -p "$TARGET/bin/plugin"
+    cp -a "$DIR"/python/server/plugin/*.py "$TARGET/bin/plugin/" 2>/dev/null || true
+  fi
+  rm -rf "$TARGET/bin/__pycache__"
+  chmod +x "$TARGET/bin/"*.py 2>/dev/null || true
+  echo "==> Python AI 脚本已部署到 bin/（$(ls "$TARGET/bin/"*.py 2>/dev/null | wc -l) 个）"
+fi
+# 3.6) 【0.7.0 S2-3 修复】registry/skills 子目录预建（防 OpenFail 警告）
+mkdir -p "$TARGET"/registry/builtin "$TARGET"/registry/custom "$TARGET"/registry/store \
+         "$TARGET"/skills/builtin "$TARGET"/skills/custom 2>/dev/null || true
 # 4) 若目标已是 /LINGOS 且存在老 config/state——保留（沿用）
 if [ -f "$TARGET/system/config/state.json" ]; then
   echo "==> 检测到已有配置 ($TARGET/system/config)——沿用，不覆盖"

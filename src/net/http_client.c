@@ -16,6 +16,7 @@
  */
 
 #include "http_client.h"
+#include "egress.h"   /* 【0.7.0 S2】出口白名单 */
 #include "../lib/log_extra.h"
 #include "../common/safe_string.h"
 
@@ -209,6 +210,12 @@ int http_request(const char *method, const char *url,
     url_parts_t u;
     if (parse_url(url, &u) != 0) return -1;
 
+    /* 【0.7.0 S2】出口白名单检查 */
+    if (egress_check(u.host) != 0) {
+        LOG_WARN_T("HttpClient", "Request", "EgressBlocked", "blocked: %s", url);
+        return -1;
+    }
+
     /* https → 交给 dlopen curl */
     if (u.is_https) {
         if (http_curl_available() == 0) {
@@ -388,6 +395,12 @@ int http_download(const char *url, const char *out_path, int timeout_s) {
 
     url_parts_t u;
     if (parse_url(url, &u) != 0) return -1;
+
+    /* 【0.7.0 S2】出口白名单检查 */
+    if (egress_check(u.host) != 0) {
+        LOG_WARN_T("HttpClient", "Download", "EgressBlocked", "blocked: %s", url);
+        return -1;
+    }
 
     /* 有 curl → 用 curl（支持 https + 跟随重定向） */
     if (curl_lazy_load()) {

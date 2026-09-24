@@ -28,6 +28,7 @@
 #include <sys/file.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/prctl.h>   /* 【0.7.0 S1-2】PR_SET_PDEATHSIG（父死子收 TERM——防孤儿） */
 
 #include "data_path.h"
 #include "linux_io.h"
@@ -73,6 +74,7 @@
 #include "init_cache.h"
 #include "registry.h"
 #include "security_config.h"
+#include "../config/options.h"   /* 【0.7.0 P2】dev 日志选项（dev.debug_log） */
 #include "defense_mode.h"
 #include "network.h"
 #include "startup_ui.h"
@@ -376,6 +378,37 @@ static int read_line_timeout(int fd, char *buf, size_t buf_size, int timeout_sec
     return pos;
 }
 
+/* 【0.7.0 P2】开发调试日志判定（先生设定：版本号 + 内部变量——内部变量优先）
+ *   判定链：
+ *     ① 内部变量 build_channel（更新包写入 /LINGOS/state/build_channel）
+ *        = "release" → 强制关（正式版）
+ *        = "dev"     → 开
+ *     ② 版本号：0.x → 开；≥1.0 → 关
+ *     ③ 快捷开关：选项 dev.debug_log=0（用户在 App/Web 手动关）→ 关（手动覆盖向下生效）
+ *   落地：log_set_global_level(DEBUG/INFO)；文件全量写入不受影响（"日志不被清除"方向） */
+static void apply_dev_log_policy(void) {
+    int enable;
+    const char *v = version_get();
+    const char *num = (v && strncmp(v, "LN-", 3) == 0) ? v + 3 : (v ? v : "0");
+    enable = (atoi(num) == 0) ? 1 : 0;   /* ② 版本号 */
+
+    FILE *fp = fopen("/LINGOS/state/build_channel", "r");   /* ① 内部变量（优先） */
+    if (fp) {
+        char b[32] = {0};
+        if (fgets(b, sizeof(b), fp)) {
+            if (strncmp(b, "release", 7) == 0) enable = 0;
+            else if (strncmp(b, "dev", 3) == 0) enable = 1;
+        }
+        fclose(fp);
+    }
+
+    if (options_get("dev.debug_log") == 0) enable = 0;      /* ③ 手动关 */
+
+    log_set_global_level(enable ? LOG_LEVEL_DEBUG : LOG_LEVEL_INFO);
+    LOG_INFO_T("Main", "DevLog", "Policy", "debug logging %s (version=%s) — 判定：内部变量>版本>手动关",
+               enable ? "ON" : "OFF", v ? v : "?");
+}
+
 static int is_service_healthy(const char *socket_path) {
     if (!socket_path) return 0;
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -391,7 +424,6 @@ static int is_service_healthy(const char *socket_path) {
         close(fd);
         return 0;
     }
-
     const char *ping_msg = "{\"cmd\":\"ping\"}\n";
     if (write(fd, ping_msg, strlen(ping_msg)) < 0) {
         close(fd);
@@ -405,6 +437,91 @@ static int is_service_healthy(const char *socket_path) {
     }
     close(fd);
     return (strstr(buf, "\"pong\"") != NULL);
+}
+
+/* 【0.7.0 S1-4 修复】等待 registry.sock **可连接**（非仅文件存在）
+ *   旧行为：文件已存在但 lingosd 监听未就绪 → ai_server 连接拒绝 →
+ *   技能表退回内置（先生真机日志："Registry connection refused" 刷屏根因）。
+ *   每 500ms 重试一次；超时返回 -1（不阻断启动，仅告警）。 */
+static int wait_registry_connectable(const char *path, int timeout_sec) {
+    if (!path) return -1;
+    for (int i = 0; i < timeout_sec * 2; i++) {
+        if (access(path, F_OK) == 0) {
+            int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+            if (fd >= 0) {
+                struct sockaddr_un addr;
+                memset(&addr, 0, sizeof(addr));
+                addr.sun_family = AF_UNIX;
+                safe_strncpy(addr.sun_path, path, sizeof(addr.sun_path));
+                addr.sun_path[sizeof(addr.sun_path)-1] = '\0';
+                int ok = (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == 0);
+                close(fd);
+                if (ok) return 0;
+            }
+        }
+        usleep(500000);
+    }
+    return -1;
+}
+
+/* ============================================================
+ * 【0.7.0 S1-2/S1-3 修复】子守护 fork 后统一准备
+ *   ① PR_SET_PDEATHSIG=SIGTERM —— 父进程死亡时内核自动向子进程发 TERM
+ *      （旧行为：主程序退出后 lingosd/alertd/voiced/ai_server 残留 → 端口占用/刷屏，
+ *        先生真机 2026-09-24：Ctrl-C 后 voiced 仍在"🎤 我在"）
+ *   ② stdout/stderr 重定向到 /LINGOS/log/<name>.log
+ *      （旧行为：守护输出继承终端 → [LogExtra] 初始化×N/matplotlib/唤醒词框 污染）
+ *   ③ 防竞态：设置 PDEATHSIG 后复查父进程是否已死（若已死主动退出）
+ * ============================================================ */
+static void child_daemon_prepare(const char *name) {
+    prctl(PR_SET_PDEATHSIG, SIGTERM);
+    if (getppid() == 1) _exit(0);   /* 设置前父已死 → 立即退出 */
+
+    char logpath[512];
+    safe_snprintf(logpath, sizeof(logpath), "%s/log/%s.log",
+                  lingos_data_root(), (name && *name) ? name : "child");
+    int lfd = open(logpath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (lfd >= 0) {
+        dup2(lfd, STDOUT_FILENO);
+        dup2(lfd, STDERR_FILENO);
+        if (lfd > STDERR_FILENO) close(lfd);
+    } else {
+        int dn = open("/dev/null", O_WRONLY);
+        if (dn >= 0) {
+            dup2(dn, STDOUT_FILENO);
+            dup2(dn, STDERR_FILENO);
+            if (dn > STDERR_FILENO) close(dn);
+        }
+    }
+}
+
+/* 【0.7.0 S1-2】主程序退出时收尾子守护（读 pid 文件 → TERM → 800ms → KILL）
+ *   双保险之一（另一保险 = PR_SET_PDEATHSIG 内核级）；防"Ctrl-C 后仍在跑"。 */
+static void terminate_children(void) {
+    static const char *files[] = {
+        LINGOS_RUN_DIR "/lingosd.pid",
+        LINGOS_RUN_DIR "/lingos_alertd.pid",
+        LINGOS_RUN_DIR "/lingos_visiond.pid",
+        LINGOS_RUN_DIR "/lingos_voiced.pid",
+        LINGOS_RUN_DIR "/ai_server.pid",
+    };
+    pid_t pids[8];
+    int n = 0;
+    for (size_t i = 0; i < sizeof(files)/sizeof(files[0]) && n < 8; i++) {
+        FILE *fp = fopen(files[i], "r");
+        if (!fp) continue;
+        int pid = 0;
+        if (fscanf(fp, "%d", &pid) == 1 && pid > 1) pids[n++] = pid;
+        fclose(fp);
+        unlink(files[i]);
+    }
+    if (n == 0) return;
+    for (int i = 0; i < n; i++) kill(pids[i], SIGTERM);
+    usleep(800000);
+    for (int i = 0; i < n; i++) {
+        if (kill(pids[i], 0) == 0) kill(pids[i], SIGKILL);
+    }
+    LOG_INFO_T("Main", "Exit", "ChildrenStopped", "terminated %d child process(es)", n);
 }
 
 static void cleanup_stale_processes(const char *pid_file, const char *socket_path) {
@@ -496,6 +613,7 @@ static void ensure_aux_daemon(const char *name) {
     pid_t pid = fork();
     if (pid == 0) {
         setsid();
+        child_daemon_prepare(name);   /* 【0.7.0 S1-2/S1-3】PDEATHSIG + 输出重定向 */
         execl(path, path, (char*)NULL);
         _exit(1);
     } else if (pid > 0) {
@@ -561,6 +679,7 @@ int ensure_daemon_running(void) {
         pid_t pid = fork();
         if (pid == 0) {
             setsid();
+            child_daemon_prepare("lingosd");   /* 【0.7.0 S1-2/S1-3】PDEATHSIG + 输出重定向 */
             execl(daemon_path, daemon_path, (char*)NULL);
             perror("execl lingosd");
             _exit(1);
@@ -607,16 +726,42 @@ int ensure_ai_server_running(void) {
 
     if (access(script_path, F_OK) != 0) {
         if (access("src/python/ai_server.py", F_OK) == 0) {
-            char cmd[1024];
-            safe_snprintf(cmd, sizeof(cmd), "cp src/python/ai_server.py '%s' && chmod +x '%s'", script_path, script_path);
-            system(cmd);
+            /* 【0.7.0 S0-1 修复】全量复制（此前仅复制 ai_server.py 单文件 →
+             * 其余 37 个模块缺失/过旧 → App 命令 Unknown。先生真机取证根因） */
+            char cmd[1200];
+            safe_snprintf(cmd, sizeof(cmd),
+                "mkdir -p /LINGOS/bin/plugin && cp src/python/*.py /LINGOS/bin/ 2>/dev/null; "
+                "cp src/python/plugin/*.py /LINGOS/bin/plugin/ 2>/dev/null; "
+                "rm -rf /LINGOS/bin/__pycache__; chmod +x /LINGOS/bin/*.py 2>/dev/null; true");
+            int rc = system(cmd);
+            LOG_INFO_T("Main", "EnsureAI", "SyncScripts", "deployed python scripts to /LINGOS/bin (rc=%d)", rc);
         } else {
             LOG_ERROR_T("Main", "EnsureAI", "NoScript", "ai_server.py not found");
             return -1;
         }
+    } else if (access("src/python/ai_server.py", F_OK) == 0) {
+        /* 【0.7.0 S0-1】已存在时：源更新则全量同步（防"装好但跑老版"） */
+        struct stat st_src, st_dst;
+        if (stat("src/python/ai_server.py", &st_src) == 0 && stat(script_path, &st_dst) == 0
+            && st_src.st_mtime > st_dst.st_mtime) {
+            char cmd[1200];
+            safe_snprintf(cmd, sizeof(cmd),
+                "mkdir -p /LINGOS/bin/plugin && cp src/python/*.py /LINGOS/bin/ 2>/dev/null; "
+                "cp src/python/plugin/*.py /LINGOS/bin/plugin/ 2>/dev/null; "
+                "rm -rf /LINGOS/bin/__pycache__; chmod +x /LINGOS/bin/*.py 2>/dev/null; true");
+            int rc = system(cmd);
+            LOG_INFO_T("Main", "EnsureAI", "ResyncScripts", "source newer → resynced python scripts (rc=%d)", rc);
+        }
     }
 
     cleanup_stale_processes(pid_path, socket_path);
+
+    /* 【0.7.0 S1-4】先等 registry.sock 可连接（技能表加载依赖）——最多 10s，超时不阻断 */
+    if (wait_registry_connectable("/LINGOS/run/registry.sock", 10) == 0) {
+        LOG_INFO_T("Main", "EnsureAI", "RegistryReady", "registry.sock connectable");
+    } else {
+        LOG_WARN_T("Main", "EnsureAI", "RegistrySlow", "registry.sock not connectable after 10s (AI will use builtin skill schemas)");
+    }
 
     for (int attempt = 1; attempt <= max_retries; attempt++) {
         if (is_service_healthy(socket_path)) {
@@ -627,6 +772,7 @@ int ensure_ai_server_running(void) {
         pid_t pid = fork();
         if (pid == 0) {
             setsid();
+            child_daemon_prepare("ai_server");   /* 【0.7.0 S1-2/S1-3】PDEATHSIG + 输出重定向 */
             /*
              * 【0.4.4 修复】LD_LIBRARY_PATH 污染 → python SSL 不可用
              * 现象：allbin 包 start.sh 全局 export LD_LIBRARY_PATH=<pkg>/lib，
@@ -650,7 +796,10 @@ int ensure_ai_server_running(void) {
                 fprintf(fp, "%d\n", pid);
                 fclose(fp);
             }
-            int wait_time = 3 << (attempt - 1);
+            /* 【0.7.0 S1-5 修复】首轮等待 3s→8s
+             *   Python 冷启动实测 3~5s+（首次 import 大量模块）——先生真机
+             *   "attempt 1/4 failed" 即差 0.2s 误杀刚起来的实例（后续重试成功）。 */
+            int wait_time = (attempt == 1) ? 8 : (3 << (attempt - 1));
             if (wait_time > 16) wait_time = 16;
             for (int w = 0; w < wait_time; w++) {
                 if (is_service_healthy(socket_path)) {
@@ -788,6 +937,16 @@ static void normal_exit_with_reason(int exit_code, const char *reason) {
     stop_background_initialization();
     stop_heartbeat_writer();
     send_exit_signal_to_supervisor();
+
+    /* 【0.7.0 S1-2】收尾子守护（防残留——Ctrl-C 后 lingosd/alertd/voiced 仍在跑） */
+    terminate_children();
+
+    /* 【0.7.0 S3-1】删除就绪文件（防停止后仍显示"服务=1"过期状态） */
+    {
+        char rpath2[512];
+        safe_snprintf(rpath2, sizeof(rpath2), "%s/run/ready", lingos_data_root());
+        unlink(rpath2);
+    }
 
     LOG_DEBUG_T("Main", "Exit", "Cleanup", "Saving registry with timeout");
     pid_t pid = fork();
@@ -1426,6 +1585,9 @@ after_wizard:
     health_watchdog_start();
 
     config_load_all();
+
+    /* 【0.7.0 P2】开发调试日志判定（版本+内部变量——先生设定） */
+    apply_dev_log_policy();
 
     start_background_initialization();
     if (g_opt_safe) {

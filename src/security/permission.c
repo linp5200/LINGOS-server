@@ -116,16 +116,22 @@ static int generate_random_token(char *out, size_t len) {
     const char *alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     FILE *urandom = fopen("/dev/urandom", "r");
     if (!urandom) {
-        srand(time(NULL));
-        for (size_t i = 0; i < len-1; i++) {
-            out[i] = alphabet[rand() % (sizeof(alphabet)-1)];
-        }
-        out[len-1] = '\0';
-        return 0;
+        /* 【0.7.0 S6 修复】先生裁定：「随机源失败即拒绝，不降级」
+         *   原实现降级 rand()（可预测）——安全违规（S6 / IoT-I1），现 fail-closed。 */
+        LOG_ERROR_T("Permission", "GenToken", "NoEntropy",
+                    "cannot open /dev/urandom — refusing weak token (S6 fail-closed)");
+        if (out && len) out[0] = '\0';
+        return -1;
     }
     unsigned char rand_buf[TOKEN_LEN];
-    fread(rand_buf, 1, TOKEN_LEN, urandom);
+    size_t got = fread(rand_buf, 1, TOKEN_LEN, urandom);
     fclose(urandom);
+    if (got < TOKEN_LEN) {
+        LOG_ERROR_T("Permission", "GenToken", "ShortRead",
+                    "urandom short read (%zu/%d) — refusing weak token", got, TOKEN_LEN);
+        if (out && len) out[0] = '\0';
+        return -1;
+    }
     for (size_t i = 0; i < len-1 && i < TOKEN_LEN; i++) {
         out[i] = alphabet[rand_buf[i] % (sizeof(alphabet)-1)];
     }

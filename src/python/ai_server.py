@@ -154,7 +154,7 @@ def _lingos_version():
                 return _v
     except Exception:
         pass
-    return "LN-0.5.2"
+    return "LN-0.7.0"
 
 
 logger.info("=== AI Server starting (%s) ===", _lingos_version())
@@ -1536,7 +1536,16 @@ def load_skill_schemas():
     logger.debug("load_skill_schemas: Enter")
 
     # 优先从 daemon 获取（外置技能：registry.sock / 旧 index.json）
-    skills = load_skill_schemas_from_daemon()
+    # 【0.7.0 S1-4 修复】重试等待 registry.sock 就绪（最多 ~6s）
+    #   旧行为：一次失败立即回退内置 → "Connection refused" + 技能表缺自定义技能
+    #   （先生真机日志根因）。registry.sock 监听可能略晚于 ai_server 启动。
+    skills = None
+    for _try_i in range(6):
+        skills = load_skill_schemas_from_daemon()
+        if skills:
+            break
+        if _try_i < 5:
+            time.sleep(1.0)
     if not skills:
         # 降级：从文件读取（【修复】空列表 [] 同样降级，此前仅 None 触发）
         logger.warning("Failed to load from daemon or empty, trying file fallback")
@@ -3598,10 +3607,72 @@ def cmd_system_info() -> dict:
             idle = int(parts[3])
             cpu_usage = round((1 - idle / total) * 100, 1) if total else 0
         except Exception: pass
+        # 【0.7.0 修复】上报版本字段——App 关于页/连接信息依赖响应里的 version/internal_version
+        #   此前无此字段 → serverVersion 永远为空（先生报告"服务器版本不更新"根因）。
+        _vfull = _lingos_version()
+        _vnum = _vfull[3:] if _vfull.startswith("LN-") else _vfull
         return {"status": "ok", "data": {
             "uptime": uptime, "total_ram": mem_total, "free_ram": mem_free,
             "cpu_usage": cpu_usage, "disk_usage": disk_usage,
-            "network_rx": 0, "network_tx": 0}}
+            "network_rx": 0, "network_tx": 0,
+            "version": _vnum, "internal_version": _vfull}}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+# ---- 【0.7.0 P2】server mode 命令面（先生设定：只显示日志；停止唯一出口） ----
+_SERVER_MODE_FILE = "/LINGOS/system/config/server_mode.json"
+_SERVER_STOP_REQ = "/LINGOS/run/server_mode_stop_request"
+_CRISIS_STATE_FILE = "/LINGOS/system/config/crisis_state.json"
+
+def _server_mode_read() -> dict:
+    try:
+        with open(_SERVER_MODE_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+def _crisis_active() -> bool:
+    try:
+        with open(_CRISIS_STATE_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+            return bool(d.get("active"))
+    except Exception:
+        return False
+
+def cmd_server_mode_status() -> dict:
+    """server mode 状态（enabled/package/crisis）"""
+    d = _server_mode_read()
+    return {"status": "ok", "data": {
+        "enabled": bool(d.get("enabled")),
+        "package_mode": bool(d.get("package_mode")),
+        "crisis_active": _crisis_active()}}
+
+def cmd_server_mode_stop(cmd: str = "server_mode_stop") -> dict:
+    """停止服务器（唯一出口——先生设定）。
+       危机时严禁退出（铁律：一切行为为人身安全让路）。
+       实现：写停止请求文件 → C 端（server mode 循环 / shell 循环）检测后优雅退出。"""
+    if _crisis_active():
+        return {"status": "error", "code": "crisis_blocked",
+                "msg": "危机进行中——退出已禁用（人身安全让路）"}
+    try:
+        os.makedirs("/LINGOS/run", exist_ok=True)
+        with open(_SERVER_STOP_REQ, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": time.time(), "cmd": cmd}))
+        logger.info("server_mode_stop requested via %s", cmd)
+        return {"status": "ok", "msg": "停止请求已发出（将优雅停止服务器）"}
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
+def cmd_server_mode_on() -> dict:
+    """开启 server mode（持久化——下次启动直接进入）"""
+    try:
+        d = _server_mode_read()
+        d["enabled"] = 1
+        os.makedirs(os.path.dirname(_SERVER_MODE_FILE), exist_ok=True)
+        with open(_SERVER_MODE_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        return {"status": "ok", "msg": "server mode 已开启（持久化；重启后进入）"}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
@@ -3624,20 +3695,79 @@ def cmd_file_read(path: str) -> dict:
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
+_API_LOG_FILE = "/LINGOS/log/api.log"
+_DEVMOD_LOG_FILE = "/LINGOS/log/device_mod.log"
+
+def _api_log_safe(channel: str, direction: str, op: str, status: int = 0,
+                  dur_ms: int = 0, nbytes: int = 0, summary: str = "") -> None:
+    """【0.7.0 P2-B】API 日志（Python 侧——与 C 端同一 api.log；仅 server mode 可查看）"""
+    try:
+        import time as _t
+        ts = _t.strftime("%Y-%m-%d %H:%M:%S")
+        line = f"{ts} [API] {channel:<7} {direction:<3} {op:<24} status={status:<3} {dur_ms}ms {nbytes}B {summary}\n"
+        with open(_API_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+def _devmod_safe(op: str, target: str, req_id: str, phase: int,
+                 size: int = 0, sensitive: bool = False, result: str = "ok") -> None:
+    """【0.7.0 P2-B】设备修改日志（两条式；敏感仅记长度）"""
+    try:
+        import time as _t
+        ts = _t.strftime("%Y-%m-%d %H:%M:%S")
+        tgt = f"(敏感——长度 {size}B)" if sensitive else (target or "-")
+        if phase == 0:
+            line = f"{ts} [DEVMOD] op={op:<6} phase=request req={req_id} target={tgt} size={size}B\n"
+        else:
+            line = f"{ts} [DEVMOD] op={op:<6} phase=done    req={req_id} result={result} size={size}B\n"
+        with open(_DEVMOD_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+def _devmod_new_req() -> str:
+    import time as _t, random as _r
+    return "dm%x%04x" % (int(_t.time()), _r.randint(0, 0xFFFF))
+
+def _log_path_protected(path: str) -> bool:
+    """【0.7.0 P2-B】'不被清除'——日志目录删除拦截（防手动删除）"""
+    try:
+        p = os.path.abspath(path)
+        return p == "/LINGOS/log" or p.startswith("/LINGOS/log/")
+    except Exception:
+        return False
+
 def cmd_file_write(path: str, content: str = "") -> dict:
     try:
+        # 【0.7.0 P2-B】设备修改日志（ADD/MOD 两条式）
+        existed = os.path.exists(path)
+        op7 = "MOD" if existed else "ADD"
+        rid = _devmod_new_req()
+        _devmod_safe(op7, path, rid, 0, size=len(content or ""))
         os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
+        _devmod_safe(op7, path, rid, 1, size=len(content or ""), result="ok")
         return {"status": "ok"}
     except Exception as e:
+        _devmod_safe("MOD", path, _devmod_new_req(), 1, result="fail")
         return {"status": "error", "msg": str(e)}
 
 def cmd_file_delete(path: str) -> dict:
     try:
+        # 【0.7.0 P2-B】"不被清除"——日志目录删除拦截
+        if _log_path_protected(path):
+            logger.warning("file_delete refused (log dir protected): %s", path)
+            _devmod_safe("DEL", path, _devmod_new_req(), 1, result="fail:log-protected")
+            return {"status": "error", "msg": "日志目录受保护（不被清除）——删除被拒绝"}
+        rid = _devmod_new_req()
+        _devmod_safe("DEL", path, rid, 0)
         os.remove(path) if os.path.isfile(path) else os.rmdir(path)
+        _devmod_safe("DEL", path, rid, 1, result="ok")
         return {"status": "ok"}
     except Exception as e:
+        _devmod_safe("DEL", path, _devmod_new_req(), 1, result="fail")
         return {"status": "error", "msg": str(e)}
 
 def cmd_ha_search(query: str = "") -> dict:
@@ -3795,7 +3925,14 @@ def _reply(conn, cmd_name, resp):
         if isinstance(resp, dict):
             resp = dict(resp)
             resp["cmd"] = cmd_name
-        conn.send((json.dumps(resp, ensure_ascii=False) + "\n").encode())
+        _payload = json.dumps(resp, ensure_ascii=False)
+        # 【0.7.0 P2-B】API 日志（Python 响应侧）
+        try:
+            _st = 200 if (isinstance(resp, dict) and resp.get("status") == "ok") else 0
+            _api_log_safe("py", "out", str(cmd_name), _st, 0, len(_payload))
+        except Exception:
+            pass
+        conn.send((_payload + "\n").encode())
     except Exception as e:
         logger.debug("reply send failed cmd=%s: %s", cmd_name, e)
 
@@ -4098,6 +4235,42 @@ def cmd_crisis_ack() -> dict:
         return {"status": "ok", "data": st}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
+
+def cmd_command_list(keyword: str = "") -> dict:
+    """【0.7.0 P3】命令面板数据源——全部可执行命令（ext 82 项 + 技能 + 核心）
+    此前 ~130 命令无任何 UI 入口（"系统不完整感"最大来源）→ 本命令供三端命令面板检索/执行。"""
+    items = []
+    # ① 扩展命令（M1~M22 等——ext_dispatch.EXT_MAP）
+    try:
+        from ext_dispatch import EXT_MAP
+        for name, ent in sorted(EXT_MAP.items()):
+            mod = ent[0] if isinstance(ent, (tuple, list)) and ent else ""
+            items.append({"name": name, "source": "ext", "module": str(mod)})
+    except Exception as _e:
+        logger.debug("command_list ext: %s", _e)
+    # ② 技能（风险级 + 描述）
+    try:
+        from skill_handlers import SKILL_REGISTRY
+        for name, info in sorted(SKILL_REGISTRY.items()):
+            d = info if isinstance(info, dict) else {}
+            items.append({"name": name, "source": "skill",
+                          "risk": d.get("risk", "low"), "desc": str(d.get("desc", ""))[:80]})
+    except Exception as _e:
+        logger.debug("command_list skill: %s", _e)
+    # ③ 核心命令（App 主链——面板同样可见可执行）
+    _core = ["system_info", "alert_query", "alert_summary", "weather_current", "weather_forecast",
+             "notify_list", "notify_mark_read", "memory_search", "memory_write", "memory_index",
+             "options_list", "session_list", "port_list", "crisis_status", "crisis_delivery_status",
+             "server_mode_status", "command_list", "ha_search", "energy_summary"]
+    for name in _core:
+        items.append({"name": name, "source": "core"})
+
+    kw = (keyword or "").strip().lower()
+    if kw:
+        items = [x for x in items
+                 if kw in x["name"].lower() or kw in str(x.get("desc", "")).lower()
+                 or kw in str(x.get("module", "")).lower()]
+    return {"status": "ok", "data": {"commands": items, "total": len(items)}}
 
 def cmd_port_list() -> dict:
     """【0.6.0】服务端口清单（真实探测——不再静态假数据）
@@ -4566,6 +4739,11 @@ def handle_client(conn, addr):
                 req.setdefault(_k, _v)
         cmd = req.get("cmd")
         logger.info(f"Received cmd: {cmd}")
+        # 【0.7.0 P2-B】API 日志（Python 请求侧）
+        try:
+            _api_log_safe("py", "in", str(cmd), 0, 0, len(data))
+        except Exception:
+            pass
 
         # ============================================================
         # 【0.5.0 先生裁决 · 批次2~5】扩展命令统一分发
@@ -4585,6 +4763,13 @@ def handle_client(conn, addr):
         # 【先生决策】App 命令（WS command → Python 直通）
         if cmd == "system_info":
             _reply(conn, "system_info", cmd_system_info()); return
+        # ---- 【0.7.0 P2】server mode 命令面（客户端）----
+        if cmd == "server_mode_status":
+            _reply(conn, "server_mode_status", cmd_server_mode_status()); return
+        if cmd in ("server_mode_stop", "server_mode_off"):
+            _reply(conn, cmd, cmd_server_mode_stop(cmd)); return
+        if cmd == "server_mode_on":
+            _reply(conn, "server_mode_on", cmd_server_mode_on()); return
         if cmd == "file_list":
             _reply(conn, "file_list", cmd_file_list(str(req.get("path", "/")))); return
         if cmd == "file_read":
@@ -4688,6 +4873,8 @@ def handle_client(conn, addr):
             _reply(conn, "skills_reload", cmd_skills_reload()); return
         if cmd == "port_list":
             _reply(conn, "port_list", cmd_port_list()); return
+        if cmd == "command_list":
+            _reply(conn, "command_list", cmd_command_list(str(req.get("keyword", "")))); return
         if cmd == "update_check":
             _reply(conn, "update_check", cmd_update_check()); return
         if cmd == "auth_respond":
@@ -4702,6 +4889,13 @@ def handle_client(conn, addr):
             _reply(conn, "crisis_resolve", cmd_crisis_resolve(str(req.get("reason", "")))); return
         if cmd == "crisis_ack":
             _reply(conn, "crisis_ack", cmd_crisis_ack()); return
+        if cmd == "crisis_delivery_status":
+            try:
+                from crisis_delivery import delivery_status
+                _reply(conn, "crisis_delivery_status", delivery_status())
+            except Exception as _cds:
+                _reply(conn, "crisis_delivery_status", {"status": "error", "msg": str(_cds)})
+            return
         if cmd == "personality_set":
             _reply(conn, "personality_set", cmd_personality_set(str(req.get("name", "")))); return
         if cmd == "personality_get":
@@ -4907,6 +5101,13 @@ def handle_client(conn, addr):
 
             messages.append({"role": "assistant", "content": final_answer})
 
+            # 【0.7.0 P3】自动记忆管线（对话完成 → 事实抽取 → 去重 → 写入；受 ai.auto_memory 开关控制）
+            try:
+                from memory_pipeline import maybe_extract
+                maybe_extract(session_id, prompt, final_answer)
+            except Exception as _mp:
+                logger.debug("memory pipeline skipped: %s", _mp)
+
             if len(messages) > 50:
                 conversations[session_id] = messages[-50:]
 
@@ -5060,6 +5261,13 @@ def handle_client(conn, addr):
                         _session_append_msg(session_id, "assistant", full_answer, device_id=device_id)
             except Exception as e:
                 logger.warning("session persist failed: %s", e)
+
+            # 【0.7.0 P3】自动记忆管线（流式聊天主路径——同上）
+            try:
+                from memory_pipeline import maybe_extract as _mem_pipe
+                _mem_pipe(session_id, prompt, full_answer or "")
+            except Exception as _mp2:
+                logger.debug("memory pipeline skipped: %s", _mp2)
             return
 
         elif cmd == "agent_view":
@@ -5351,6 +5559,12 @@ class _VoiceHTTPHandler(BaseHTTPRequestHandler):
                         logger.warning("alert event triggered CRISIS: %s", c_r.get("data", {}).get("crisis_id", ""))
                 except Exception as _ce:
                     logger.debug("crisis detect skipped: %s", _ce)
+                # 【0.7.0 P3】预警级别订阅 + 通知中心推送 + AI 简报判定
+                try:
+                    from alert_subscription import on_alert_for_notify
+                    on_alert_for_notify(data if isinstance(data, dict) else {})
+                except Exception as _ae:
+                    logger.debug("alert subscription skipped: %s", _ae)
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b'{"status":"ok"}')
@@ -5525,6 +5739,14 @@ def main():
         logger.info("HA event loop started")
     except Exception as e:
         logger.warning("HA event loop init failed: %s", e)
+
+    # 【0.7.0 P3】天气↔预警联动（周期检查——超阈值生成预警并推送）
+    try:
+        from weather_link import start_weather_link
+        start_weather_link()
+        logger.info("weather link started")
+    except Exception as e:
+        logger.warning("weather link init failed: %s", e)
 
 
     # 创建默认 sub_ai.conf

@@ -11,6 +11,7 @@
  */
 
 #include "https_client.h"
+#include "egress.h"   /* 【0.7.0 S2】出口白名单 */
 #include "../lib/log_extra.h"
 #include "../common/safe_string.h"
 
@@ -230,6 +231,12 @@ static char *hs_request(const char *method, const char *url,
     if (!url) return NULL;
     if (max_sz == 0) max_sz = 1024 * 1024;
     if (timeout_s <= 0) timeout_s = 12;
+
+    /* 【0.7.0 S2】出口白名单检查（生命线数据源均在内置清单） */
+    if (egress_check_url(url) != 0) {
+        LOG_WARN_T("Https", "Request", "EgressBlocked", "blocked by egress allowlist: %s", url);
+        return NULL;
+    }
 
     hs_url_t u;
     if (hs_parse_url(url, &u) != 0) {

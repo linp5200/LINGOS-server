@@ -307,7 +307,9 @@ int security_config_save(void) {
     if (!g_loaded) {
         LOG_DEBUG_T("SecurityConfig", "Save", "Unlock", "not loaded, releasing lock");
         pthread_mutex_unlock(&g_config_lock);
-        LOG_ERROR_T("SecurityConfig", "Save", "NotLoaded", "config not loaded");
+        /* 【0.7.0 S3-3 修复】降低级别：启动中（Ctrl-C 早退等场景）配置尚未加载，
+         *   此时保存失败是正常状态而非错误——旧行为 ERROR 告警噪音（先生真机日志）。 */
+        LOG_DEBUG_T("SecurityConfig", "Save", "NotLoaded", "config not loaded (skipped — normal during early exit)");
         return -1;
     }
 

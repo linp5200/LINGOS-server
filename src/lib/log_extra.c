@@ -161,6 +161,22 @@ static void cleanup_old_logs(void) {
     char log_dir[MAX_LOG_PATH];
     safe_snprintf(log_dir, sizeof(log_dir), "%s%s", root, LOG_DIR);
 
+    /* 【0.7.0 P2-B】"不被清除"之保留上限（512MB）：lingos.log 超限 → 归档（rename）
+     *   写入为 fopen-append-close 逐行模式 → rename 轮转安全（下一行按新路径重建）。
+     *   归档文件名 archive_ 前缀 → 不被清理线程删除（不被自动清除）。 */
+    {
+        char active[MAX_LOG_PATH];
+        safe_snprintf(active, sizeof(active), "%s/lingos.log", log_dir);
+        struct stat st;
+        if (stat(active, &st) == 0 && st.st_size > (512L * 1024 * 1024)) {
+            char arch[MAX_LOG_PATH];
+            safe_snprintf(arch, sizeof(arch), "%s/archive_lingos_%ld.log", log_dir, (long)time(NULL));
+            if (rename(active, arch) == 0) {
+                emergency_write_simple("[LogExtra] lingos.log archived (>512MB, kept not deleted)\n");
+            }
+        }
+    }
+
     DIR *d = opendir(log_dir);
     if (!d) {
         emergency_write_simple("[LogExtra] Cannot open log dir for cleanup\n");

@@ -41,6 +41,30 @@ _wait_gone() {
     return 1
 }
 
+# 【0.7.0 S0-1 修复】同步 python/server/*.py → bin/
+#   背景：install.sh 历史版本从不把脚本部署到 bin/ → 跑老版 ai_server →
+#   App 命令大面积 "Unknown command"（先生真机 2026-09-24 取证）。
+#   本函数在每次 start 时对比主文件，源更新则全量同步（幂等，开销 ~毫秒）。
+_sync_python_scripts() {
+    local src="$ROOT/python/server" dst="$ROOT/bin"
+    [ -d "$src" ] || return 0
+    [ -f "$src/ai_server.py" ] || return 0
+    mkdir -p "$dst"
+    if [ ! -f "$dst/ai_server.py" ] || ! cmp -s "$src/ai_server.py" "$dst/ai_server.py" 2>/dev/null; then
+        cp -a "$src"/*.py "$dst/" 2>/dev/null || true
+        if [ -d "$src/plugin" ]; then
+            mkdir -p "$dst/plugin"
+            cp -a "$src/plugin"/*.py "$dst/plugin/" 2>/dev/null || true
+        fi
+        rm -rf "$dst/__pycache__"
+        chmod +x "$dst"/*.py 2>/dev/null || true
+        echo "  ✓ Python 脚本已同步到 bin/（防老版 ai_server）"
+    fi
+    # 【S2-3】registry/skills 子目录预建（缺目录 → OpenFail 警告）
+    mkdir -p "$ROOT/registry/builtin" "$ROOT/registry/custom" "$ROOT/registry/store" \
+             "$ROOT/skills/builtin" "$ROOT/skills/custom" 2>/dev/null || true
+}
+
 # ---------- 子命令 ----------
 case "$CMD" in
   start)
@@ -74,6 +98,9 @@ case "$CMD" in
     fi
 
     if [ "$SKIP_START" = "0" ]; then
+        # 【0.7.0 S0-1】启动前同步 Python 脚本（防跑老版 ai_server——App 命令 Unknown 根因）
+        _sync_python_scripts
+
         # 【2026-09-19】监督者优先：由其拉起主程序（崩溃自动恢复 / 心跳 / 重启限流）
         SUP_BIN=""
         if [ -x "$ROOT/bin/lingos_supervisor" ]; then
@@ -109,14 +136,23 @@ case "$CMD" in
         fi
     fi
     # 1b) 等 lingosd 的 registry.sock 就绪（ai_server 启动时要用它加载技能表）
+    # 【0.7.0 S1-4 修复】不只等"文件存在"——真实 connect 测试到通为止
+    #   （旧行为：文件已在但监听未就绪 → ai_server 连接拒绝 → 技能表退回内置）
     echo "  等待 lingosd/registry.sock ..."
+    _REG_PY="$(_pick_python)"
     for i in $(seq 1 20); do
-        [ -S "$ROOT/run/registry.sock" ] && break
+        if [ -S "$ROOT/run/registry.sock" ]; then
+            if env -u LD_LIBRARY_PATH "$_REG_PY" -c \
+                "import socket,sys; s=socket.socket(socket.AF_UNIX); s.settimeout(1); s.connect(sys.argv[1]); s.close()" \
+                "$ROOT/run/registry.sock" 2>/dev/null; then
+                break
+            fi
+        fi
         sleep 1
     done
-    [ -S "$ROOT/run/registry.sock" ] && echo "  ✓ registry.sock 就绪" \
+    [ -S "$ROOT/run/registry.sock" ] && echo "  ✓ registry.sock 就绪（可连接）" \
                                      || echo "  ⚠ registry.sock 未出现（AI 将退回内置技能表）"
-    sleep 2
+    sleep 1
 
     # 2) 兜底：若 C 端未能拉起 ai_server，则由本脚本以「干净环境 + 系统 python3」拉起
     if ! _pids ai_server.py >/dev/null; then
@@ -164,6 +200,10 @@ case "$CMD" in
     for pat in $_ALL_PROCS; do
         p=$(pgrep -f "$pat" 2>/dev/null) && { kill -9 $p 2>/dev/null && echo "    ✗ 强杀 $pat"; }
     done
+    # 5) 【0.7.0 S3-1 修复】清理就绪文件（防"停止后 status 仍显示服务=1"过期显示）
+    rm -f "$ROOT/run/ready"
+    # 【0.7.0 S3-2】清理过期历史日志（>30 天的 lingos_YYYYMMDD_son*.log 旧部署残留）
+    find "$ROOT/log" -maxdepth 1 -name 'lingos_20*.log' -mtime +30 -delete 2>/dev/null || true
     echo "  已停止"
     ;;
 

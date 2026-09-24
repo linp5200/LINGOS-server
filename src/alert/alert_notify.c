@@ -126,8 +126,11 @@ static void notify_shell(const alert_event_t *event) {
         tr("Rain", "暴雨"),
         tr("High Temp", "高温"),
         tr("Storm", "风暴"),
-        tr("Fire", "火灾")
+        tr("Fire", "火灾"),
+        tr("System Health", "系统健康"),   /* 【0.7.0 S3-4】补全：HEALTH=7（原数组仅 7 元素→越界 NULL） */
+        tr("Security", "安全威胁")         /* 【0.7.0 S3-4】补全：SECURITY=8 */
     };
+    int type_count = (int)(sizeof(type_names) / sizeof(type_names[0]));
 
     const char *color = (event->level >= 0 && event->level <= 5) ? level_colors[event->level] : "\033[37m";
 
@@ -137,7 +140,10 @@ static void notify_shell(const alert_event_t *event) {
     uart_puts("║  ⚠️  ");
     uart_puts(tr("ALERT", "预警"));
     uart_puts(": ");
-    uart_puts(type_names[event->type]);
+    /* 【0.7.0 S3-4】范围检查（越界 → "未知"，不再显示 (null)） */
+    uart_puts((event->type >= 0 && (int)event->type < type_count)
+                  ? type_names[event->type]
+                  : tr("Unknown", "未知"));
     uart_puts(" (");
     uart_puts(tr("Level", "等级"));
     uart_puts(" ");

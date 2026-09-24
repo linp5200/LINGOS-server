@@ -83,19 +83,29 @@ int wakeword_detect(const audio_frame_t *frame) {
     /* 实际应调用 Vosk 进行语音识别 */
     /* 中英文混合模型支持中英文唤醒词 */
 
-    if (g_model_loaded) {
-        static int counter = 0;
-        counter++;
-        if (counter % 80 == 0) {
-            LOG_DEBUG_T("Wakeword", "Detect", "Vosk", "wakeword '%s' detected (simulated, bilingual model)", g_wakeword);
-            return 1;
+    /* 【0.7.0 S1-1 修复】模拟检测默认禁用
+     *   旧实现：每 80（模型加载）/120（回退）次调用假报"检测到"→
+     *   终端「🎤 我在」无限刷屏 + 蜂鸣（先生真机 2026-09-24 取证根因）。
+     *   现：真实 Vosk 识别接线完成前一律返回 0（不误触发）；
+     *   仅当测试环境变量 LINGOS_WAKEWORD_SIM=1 时保留模拟行为。 */
+    {
+        static int sim_mode = -1;
+        if (sim_mode < 0) {
+            const char *e = getenv("LINGOS_WAKEWORD_SIM");
+            sim_mode = (e && e[0] == '1') ? 1 : 0;
+            if (!sim_mode) {
+                LOG_INFO_T("Wakeword", "Detect", "SimDisabled",
+                           "模拟唤醒检测已禁用（真实识别未接线前不触发；测试可设 LINGOS_WAKEWORD_SIM=1）");
+            }
         }
-    } else {
-        static int counter = 0;
-        counter++;
-        if (counter % 120 == 0) {
-            LOG_DEBUG_T("Wakeword", "Detect", "Fallback", "wakeword '%s' detected (fallback)", g_wakeword);
-            return 1;
+        if (sim_mode) {
+            static int counter = 0;
+            counter++;
+            int period = g_model_loaded ? 80 : 120;
+            if (counter % period == 0) {
+                LOG_DEBUG_T("Wakeword", "Detect", "Sim", "wakeword '%s' detected (SIMULATED — test mode)", g_wakeword);
+                return 1;
+            }
         }
     }
 

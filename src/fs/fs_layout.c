@@ -68,8 +68,26 @@ void do_create_layout(void) {
     // 【修复】路径对齐 lingosd/ai_server 读取路径：/LINGOS/registry/skills/index.json
     char reg_skills_dir[512];
     snprintf(reg_skills_dir, sizeof(reg_skills_dir), "%s/registry/skills", root);
-    if (access(reg_skills_dir, F_OK) != 0) {
-        mkdir(reg_skills_dir, 0755);
+    /* 【0.7.0 S2-3 修复】补全 registry 子目录
+     *   registry_skill.c 读取 builtin/custom/store —— 缺目录 → OpenFail 警告×3 +
+     *   技能加载失败（先生真机 2026-09-24 日志）。 */
+    {
+        static const char *rsub[] = { "", "/builtin", "/custom", "/store" };
+        for (size_t ri = 0; ri < sizeof(rsub)/sizeof(rsub[0]); ri++) {
+            char rp[512];
+            snprintf(rp, sizeof(rp), "%s%s", reg_skills_dir, rsub[ri]);
+            mkdir_p(rp, 0755);
+        }
+    }
+    {
+        char reg_root2[512];
+        snprintf(reg_root2, sizeof(reg_root2), "%s/registry", root);
+        static const char *rsub2[] = { "/builtin", "/custom", "/store", "/core" };
+        for (size_t ri = 0; ri < sizeof(rsub2)/sizeof(rsub2[0]); ri++) {
+            char rp[512];
+            snprintf(rp, sizeof(rp), "%s%s", reg_root2, rsub2[ri]);
+            mkdir_p(rp, 0755);
+        }
     }
     char idx_path[512];
     snprintf(idx_path, sizeof(idx_path), "%s/registry/skills/index.json", root);

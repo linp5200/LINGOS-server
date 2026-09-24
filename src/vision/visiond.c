@@ -229,8 +229,16 @@ static void vision_report_results(detection_result_t *results, int count) {
 static void* detect_thread_func(void *arg) {
     (void)arg;
 
-    if (camera_init(&g_config) != 0) {
-        REPORT_ERROR("visiond: camera_init failed");
+    /* 【0.7.0 S2-1 修复】无摄像头 ≠ 崩溃：降级为"视觉待机"+30s 重试
+     *   旧行为：camera_init 失败 → REPORT_ERROR → abort() 崩溃 →
+     *   supervisor/watchdog 反复重启（先生真机 2026-09-24：无摄像头设备崩溃循环）。
+     *   新行为：进程保持存活；摄像头可用后自动恢复（热插拔自愈）。 */
+    int camera_ok = (camera_init(&g_config) == 0);
+    if (!camera_ok) {
+        LOG_WARN_T("Visiond", "Camera", "InitFail",
+                   "camera unavailable — vision STANDBY mode (retry every 30s, process stays alive)");
+    } else {
+        LOG_INFO_T("Visiond", "Camera", "InitOK", "camera initialized");
     }
 
     if (detection_init(&g_config) != 0) {
@@ -241,6 +249,17 @@ static void* detect_thread_func(void *arg) {
     tracker_init();
 
     while (g_running) {
+        /* 【0.7.0 S2-1】待机分支：无摄像头 → 30s 重试（不崩溃） */
+        if (!camera_ok) {
+            for (int i = 0; i < 30 && g_running; i++) sleep(1);
+            if (!g_running) break;
+            if (camera_init(&g_config) == 0) {
+                camera_ok = 1;
+                LOG_INFO_T("Visiond", "Camera", "Recovered", "camera initialized after retry");
+            }
+            continue;
+        }
+
         camera_frame_t frame;
         if (camera_capture(&frame) != 0) {
             LOG_WARN_T("Visiond", "Detect", "CaptureFail", "camera capture failed");
@@ -272,7 +291,7 @@ static void* detect_thread_func(void *arg) {
         usleep(100000);
     }
 
-    camera_cleanup();
+    if (camera_ok) camera_cleanup();   /* 【0.7.0 S2-1】仅初始化过才清理 */
     detection_cleanup();
     spatial_cleanup();
     tracker_cleanup();

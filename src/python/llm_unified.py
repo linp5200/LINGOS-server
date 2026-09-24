@@ -386,17 +386,25 @@ def _openai_stream(provider: LLMProvider, messages: List[Dict], tools: Optional[
     if tools and provider.supports_tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    # 【0.7.0 P2.5 B7】危机加速模式：危机进行中关闭思考链（"关闭一切减速项"——10s 决策启动）
+    _thinking_on = provider.thinking_enabled
+    try:
+        from crisis import crisis_active as _crisis_on
+        if _crisis_on():
+            _thinking_on = False
+    except Exception:
+        pass
     if provider.supports_reasoning:
         # 【0.2.2】思考模式开关 + 强度（DeepSeek 官方文档）
         # 强度映射：low→low, medium→high, high→high, xhigh→high, max→max
         # 思考关闭时（disabled）不传 effort——DeepSeek 文档：none 表示关闭思考模式
         effort = provider.reasoning_effort or reasoning_effort or "high"
-        if provider.thinking_enabled:
+        if _thinking_on:
             mapped = "low" if effort == "low" else ("max" if effort == "max" else "high")
             payload["reasoning_effort"] = mapped
         # thinking 是 DeepSeek 特有扩展——其他提供商不认识会 400，仅 DeepSeek 系发送
         if "deepseek" in provider.base_url or "deepseek" in provider.model.lower():
-            payload["thinking"] = {"type": "enabled" if provider.thinking_enabled else "disabled"}
+            payload["thinking"] = {"type": "enabled" if _thinking_on else "disabled"}
     elif reasoning_effort and provider.supports_reasoning:
         payload["reasoning_effort"] = reasoning_effort
 
@@ -515,17 +523,25 @@ def _openai_nonstream(provider: LLMProvider, messages: List[Dict], tools: Option
     if tools and provider.supports_tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    # 【0.7.0 P2.5 B7】危机加速模式：危机进行中关闭思考链（"关闭一切减速项"——10s 决策启动）
+    _thinking_on = provider.thinking_enabled
+    try:
+        from crisis import crisis_active as _crisis_on
+        if _crisis_on():
+            _thinking_on = False
+    except Exception:
+        pass
     if provider.supports_reasoning:
         # 【0.2.2】思考模式开关 + 强度（DeepSeek 官方文档）
         # 强度映射：low→low, medium→high, high→high, xhigh→high, max→max
         # 思考关闭时（disabled）不传 effort——DeepSeek 文档：none 表示关闭思考模式
         effort = provider.reasoning_effort or reasoning_effort or "high"
-        if provider.thinking_enabled:
+        if _thinking_on:
             mapped = "low" if effort == "low" else ("max" if effort == "max" else "high")
             payload["reasoning_effort"] = mapped
         # thinking 是 DeepSeek 特有扩展——其他提供商不认识会 400，仅 DeepSeek 系发送
         if "deepseek" in provider.base_url or "deepseek" in provider.model.lower():
-            payload["thinking"] = {"type": "enabled" if provider.thinking_enabled else "disabled"}
+            payload["thinking"] = {"type": "enabled" if _thinking_on else "disabled"}
     elif reasoning_effort and provider.supports_reasoning:
         payload["reasoning_effort"] = reasoning_effort
 

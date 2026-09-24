@@ -17,6 +17,7 @@
 #include "../ai/ai_privilege.h"
 #include "../config/config_core.h"
 #include "../core/version.h"
+#include "../security/access_control.h"   /* 【0.7.0 S11】CORS 校验（替换写死的 *） */
 #include <microhttpd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +33,13 @@
 static void send_json_response(struct MHD_Connection *conn, int code, const char *json) {
     struct MHD_Response *resp = MHD_create_response_from_buffer(strlen(json), (void*)json, MHD_RESPMEM_PERSISTENT);
     MHD_add_response_header(resp, "Content-Type", "application/json");
-    MHD_add_response_header(resp, "Access-Control-Allow-Origin", "*");
+    /* 【0.7.0 S11 修复】CORS 不再写死 `*` —— 校验 Origin
+     *   （允许同源/本机来源；外部站点被浏览器拦截。开关 sec.cors_strict 可放宽——默认开） */
+    {
+        const char *origin = MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Origin");
+        const char *hosthdr = MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Host");
+        access_cors_add_headers(resp, origin, hosthdr);
+    }
     MHD_queue_response(conn, code, resp);
     MHD_destroy_response(resp);
 }

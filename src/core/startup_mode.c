@@ -85,6 +85,10 @@ startup_mode_t startup_mode_get(void) {
             } else if (strcmp(mode_val, "shell") == 0) {
                 mode = STARTUP_MODE_SHELL;
                 LOG_DEBUG_T("StartupMode", "Get", "Shell", "mode = shell");
+            } else if (strcmp(mode_val, "server") == 0) {
+                /* 【0.7.0 P2】server mode（只显示日志——先生设定） */
+                mode = STARTUP_MODE_SERVER;
+                LOG_DEBUG_T("StartupMode", "Get", "Server", "mode = server");
             } else {
                 LOG_WARN_T("StartupMode", "Get", "Unknown", "unknown mode '%s', using default: shell", mode_val);
                 mode = DEFAULT_MODE;
@@ -111,7 +115,7 @@ startup_mode_t startup_mode_get(void) {
 int startup_mode_set(startup_mode_t mode) {
     LOG_INFO_T("StartupMode", "Set", "Enter", "mode=%d (%s)", mode, startup_mode_name(mode));
 
-    if (mode != STARTUP_MODE_SHELL && mode != STARTUP_MODE_TUI) {
+    if (mode != STARTUP_MODE_SHELL && mode != STARTUP_MODE_TUI && mode != STARTUP_MODE_SERVER) {
         LOG_ERROR_T("StartupMode", "Set", "Invalid", "unknown mode: %d", mode);
         return -1;
     }
@@ -171,6 +175,8 @@ const char* startup_mode_name(startup_mode_t mode) {
             return "shell";
         case STARTUP_MODE_TUI:
             return "tui";
+        case STARTUP_MODE_SERVER:
+            return "server";
         default:
             return "unknown";
     }

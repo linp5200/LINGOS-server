@@ -10,6 +10,7 @@
 
 #include "discovery_server.h"
 #include "../lib/log_extra.h"
+#include "../lib/api_log.h"   /* 【0.7.0 P2-B】API 日志 */
 #include "../common/safe_string.h"
 #include "../lib/cJSON/cJSON.h"
 #include "../core/version.h"
@@ -105,6 +106,8 @@ static void *discovery_loop(void *arg) {
         if (strncmp(buf, DISCOVERY_MAGIC, strlen(DISCOVERY_MAGIC)) != 0) continue;
         LOG_INFO_T("Discovery", "Loop", "Discover", "discovery request from %s:%d",
                    inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        /* 【0.7.0 P2-B】API 日志（UDP 通道） */
+        api_log("udp", "in", "discovery", 0, 0, (long)n, inet_ntoa(client_addr.sin_addr));
         discovery_respond(&client_addr, addr_len);
     }
     return NULL;

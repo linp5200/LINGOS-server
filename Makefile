@@ -90,7 +90,7 @@ MINIMAL_LDFLAGS = $(BASE_LDFLAGS) $(if $(filter 1,$(ENABLE_SYSTEM_MHD)),-lmicroh
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-VERSION = "LN-0.6.2"
+VERSION = "LN-$(shell cat VERSION 2>/dev/null || echo 0.7.0)"
 CFLAGS += -DLINGOS_VERSION="\"$(VERSION)\""
 
 SRC_DIR = src
@@ -127,6 +127,7 @@ PLATFORM_SRCS = $(SRC_DIR)/drivers/linux_io.c \
 NET_SRCS = $(SRC_DIR)/net/tcp_client.c \
            $(SRC_DIR)/net/http_client.c \
            $(SRC_DIR)/net/https_client.c \
+           $(SRC_DIR)/net/egress.c \
            $(MHD_COMPAT_SRCS) \
            $(SRC_DIR)/net/mqtt/mqtt_client.c \
            $(SRC_DIR)/net/mqtt/mqtt_ha.c \
@@ -154,6 +155,7 @@ LIB_SRCS = $(SRC_DIR)/lib/deb_parser.c \
            $(SRC_DIR)/lib/lapt_parser.c \
            $(SRC_DIR)/lib/libling.c \
            $(SRC_DIR)/lib/log_extra.c \
+           $(SRC_DIR)/lib/api_log.c \
            $(SRC_DIR)/lib/path_utils.c \
            $(SRC_DIR)/lib/pkg_deps.c \
            $(SRC_DIR)/lib/port_config.c \
@@ -176,6 +178,7 @@ CORE_SRCS = $(SRC_DIR)/core/app_runner.c \
             $(SRC_DIR)/core/env_bootstrap.c \
             $(SRC_DIR)/core/install.c \
             $(SRC_DIR)/core/startup_mode.c \
+            $(SRC_DIR)/core/server_mode.c \
             $(SRC_DIR)/core/state.c \
             $(SRC_DIR)/core/version.c \
             $(SRC_DIR)/core/plugin/plugin.c \
@@ -481,7 +484,7 @@ lingosd: $(CORE_DAEMON_FULL) $(DAEMON_MAIN_SRCS) $(HTTP_SRCS)
 
 # 监督者：仅基础核心
 # 【0.5.0】supervisor 也需 http_client（install_model.c 下载用到）
-lingos_supervisor: $(SUPERVISOR_SRCS) $(CORE_BASE) $(SRC_DIR)/net/http_client.c
+lingos_supervisor: $(SUPERVISOR_SRCS) $(CORE_BASE) $(SRC_DIR)/net/http_client.c $(SRC_DIR)/net/egress.c
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread
 
 # ================================================================

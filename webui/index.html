@@ -179,6 +179,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
   </div>
   <div class="sec">系统</div>
   <div class="nav">
+    <div class="ni" data-p="cmd"><span class="ic">▸</span>命令面板</div>
     <div class="ni" data-p="files"><span class="ic">▤</span>文件</div>
     <div class="ni" data-p="log"><span class="ic">≡</span>日志</div>
     <div class="ni" data-p="ports"><span class="ic">⇄</span>端口与网络</div>
@@ -187,7 +188,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
   </div>
   <div class="sec">配置</div>
   <div class="nav"><div class="ni" data-p="setting"><span class="ic">⚙</span>设置与高级</div></div>
-  <div class="foot"><div style="display:flex;gap:5px;align-items:center;color:var(--d)"><span style="width:5px;height:5px;border-radius:50%;background:var(--green)"></span>lingosd · alertd · visiond</div>LING OS 0.5.1 · 21 页</div>
+  <div class="foot"><div style="display:flex;gap:5px;align-items:center;color:var(--d)"><span style="width:5px;height:5px;border-radius:50%;background:var(--green)"></span>lingosd · alertd · visiond</div>LING OS 0.7.0 · 22 页</div>
 </div>
 <div class="main">
 
@@ -490,6 +491,17 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     <input id="kbQuery" placeholder="输入问题…" style="margin-left:8px;width:220px;background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--w);font-size:10px;padding:3px 6px;border-radius:3px">
     <button class="btn" onclick="wfKbAsk()" style="margin-left:4px">提问</button></div>
     <div class="evlog" id="kbResult"></div></div>
+</div>
+
+<!-- 命令面板（0.7.0 P3——~130 命令入口总出口） -->
+<div class="page" id="p-cmd">
+  <div class="phead"><div class="l"><div class="k">▍COMMAND PALETTE</div><h1>命令面板</h1></div>
+    <div class="r" id="cmdHead">加载中…</div></div>
+  <div class="card">
+    <div class="ct"><span>全部命令</span><b id="cmdCount">--</b>
+      <input id="cmdFilter" placeholder="名称/描述…" oninput="filterCmdList()" style="margin-left:8px;width:220px;background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--w);font-size:10px;padding:3px 6px;border-radius:3px">
+      <button class="btn" onclick="bindCmdPanel()" style="margin-left:4px">刷新</button></div>
+    <div class="evlog" id="cmdList" style="max-height:520px;overflow:auto"></div></div>
 </div>
 
 <!-- 可选项（0.5.0） -->
@@ -1175,6 +1187,48 @@ async function bindData(){
   bindHome(); bindTimeline(); bindNotify(); bindDashboard(); bindMedia(); bindKb(); bindOptions();
   /* 【0.6.0】端口/更新（真实数据——清除静态假数据） */
   bindPorts(); bindUpdate();
+  /* 【0.7.0 P3】命令面板（~130 命令入口总出口） */
+  bindCmdPanel();
+}
+
+/* ===== 【0.7.0 P3】命令面板 ===== */
+var _cmdAll = [];
+async function bindCmdPanel(){
+  var r = await apiCmd('command_list');
+  var items = [];
+  if(r && r.status==='ok'){ var d = r.data || {}; items = d.commands || []; }
+  _cmdAll = items;
+  setTxt('#cmdHead', items.length + ' 条命令 · ext/skill/core<br>command_list');
+  setTxt('#cmdCount', items.length + ' 项');
+  renderCmdList(items);
+}
+function filterCmdList(){
+  var el = document.getElementById('cmdFilter');
+  var k = (el ? el.value : '').trim().toLowerCase();
+  var list = _cmdAll.filter(function(c){
+    if(!k) return true;
+    return ((''+(c.name||'')).toLowerCase().indexOf(k) >= 0) ||
+           ((''+(c.desc||'')).toLowerCase().indexOf(k) >= 0) ||
+           ((''+(c.module||'')).toLowerCase().indexOf(k) >= 0);
+  });
+  renderCmdList(list);
+}
+function renderCmdList(list){
+  var el = document.getElementById('cmdList');
+  if(!el) return;
+  if(!list.length){ el.innerHTML = '<div class="e"><span class="tx" style="color:var(--d)">无匹配命令（或未连接主机）</span></div>'; return; }
+  el.innerHTML = list.map(function(c){
+    var meta = [c.source, c.module||'', (c.risk && c.risk!=='low') ? ('风险:'+c.risk) : '', c.desc||''].filter(Boolean).join(' · ');
+    return '<div class="e" style="cursor:pointer" onclick="runCmdFromPanel(\'' + c.name + '\')"><span class="tx"><b>' + c.name + '</b> <span style="color:var(--d)">' + meta + '</span></span></div>';
+  }).join('');
+}
+async function runCmdFromPanel(name){
+  var ps = prompt('参数 JSON（可留空 {}）:', '{}');
+  if(ps === null) return;
+  var params = {};
+  try{ params = JSON.parse(ps || '{}'); }catch(e){ alert('参数不是有效 JSON'); return; }
+  var r = await apiCmd(name, params);
+  alert(name + ' 结果:\n' + JSON.stringify(r, null, 2).slice(0, 4000));
 }
 
 /* ===== 【0.6.0】端口与更新（真实数据） ===== */

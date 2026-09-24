@@ -8,6 +8,7 @@
 
 #include "connection_handler.h"
 #include "../lib/log_extra.h"
+#include "../lib/api_log.h"   /* 【0.7.0 P2-B】API 日志 */
 #include "../common/data_path.h"
 #include "../common/lang.h"
 #include "../common/safe_string.h"
@@ -982,6 +983,9 @@ static void handle_connection_code(connection_session_t *sess, const uint8_t *pa
 static int tcp_forward_to_ai(connection_session_t *sess, const char *cmd_json) {
     if (!sess || !cmd_json) return -1;
 
+    /* 【0.7.0 P2-B】API 日志（TCP 通道——server mode 可查看） */
+    api_log("tcp", "in", "cmd", 0, 0, (long)strlen(cmd_json), NULL);
+
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
 
@@ -1762,7 +1766,8 @@ int connection_token_add(const char *token_arg, const char *ip, const char *uid,
         for (int i = 0; i < 16; i++) snprintf(token + i * 2, 3, "%02x", rnd[i]);
     }
     connection_store_token(token, ttl_seconds > 0 ? ttl_seconds : 2592000);
-    LOG_WARN_T("Token", "Add", "OK", "token=%s ip=%s uid=%s ttl=%ld", token, ip ? ip : "-", uid ? uid : "-", (long)ttl_seconds);
+    /* 【0.7.0 S16】token 脱敏（只打前 8 位——安全底线"凭据不入日志"） */
+    LOG_WARN_T("Token", "Add", "OK", "token=%.8s… ip=%s uid=%s ttl=%ld", token, ip ? ip : "-", uid ? uid : "-", (long)ttl_seconds);
     return 0;
 }
 
@@ -1770,6 +1775,7 @@ int connection_token_add(const char *token_arg, const char *ip, const char *uid,
 int connection_token_remove(const char *token) {
     if (!token || !token[0]) return -1;
     connection_revoke_token_store(token);
-    LOG_WARN_T("Token", "Remove", "OK", "token=%s", token);
+    /* 【0.7.0 S16】脱敏 */
+    LOG_WARN_T("Token", "Remove", "OK", "token=%.8s…", token);
     return 0;
 }
