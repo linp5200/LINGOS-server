@@ -25,6 +25,25 @@
 - WS 接收主日志（type + **cmd 名**）· TCP 命令主日志
 - API 日志 op 从常数 `-` 改为**真实命令名**
 
+### API 日志 7 列新格式（先生 2026-09-25 定稿 · 方案 B 语义映射）
+```
+时间 | 方法 | 通道:设备 | 状态 | 类别 | req{大小} "摘要" | resp{大小} "摘要"
+2026-09-25 09:34:55 | POST   | HTTP:192.168.1.5 | 200 | ServerMode | req{84B} "server_mode_stop" | resp{71B} "status:ok"
+2026-09-25 09:34:56 | GET    | PY               | 200 | Telemetry  | req{15B} "system_info"      | resp{212B} "cpu_usage=…"
+2026-09-25 09:35:02 | DELETE | WS:dev:22f3ba5b  | 200 | FileOp     | req{40B} "file_delete /tmp/x" | resp{15B} "ok"
+```
+- **方法映射**（方案 B）：HTTP 通道=真实方法；WS/TCP 等按命令语义：
+  删除类（delete/remove/kill…）→ DELETE · 查询类（list/status/info/query…）→ GET · 其余 → POST
+- **类别映射**：AIChat / ServerMode / Telemetry / FileOp / Memory / Session / Alert / Weather /
+  Notify / Auth / Crypto / Skill / Options / Update / Vision / Home / Crisis / Voice / Command / UI / Misc
+- **摘要**：前 120 字符 + 大小（84B/2.1KB/1.2MB）；**token/password/key 等自动打码**（保留前 4 位）
+- C/Python 双端一致（同一映射表）；WS/TCP 为一行式（req+resp 齐）
+
+### 日志等级调整（先生定稿）
+- **服务器模式进入 → 自动切换日志等级为 INFO**（原继承构建判定；INFO=重要节点，防刷屏）
+- **开发者模式（0.x 构建）自动级别：DEBUG → INFO**（真机实测 DEBUG 刷屏严重）
+- 需要全量调试：终端 `log level debug` 或环境变量 `LINGOS_LOG_LEVEL=debug`（保留通道）
+
 ---
 
 ## [0.7.1] - 2026-09-25（hotfix 批次：全量静态扫描 + 安全隐私加固 + App 链路接续）

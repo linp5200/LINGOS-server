@@ -106,8 +106,9 @@ static void *discovery_loop(void *arg) {
         if (strncmp(buf, DISCOVERY_MAGIC, strlen(DISCOVERY_MAGIC)) != 0) continue;
         LOG_INFO_T("Discovery", "Loop", "Discover", "discovery request from %s:%d",
                    inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-        /* 【0.7.0 P2-B】API 日志（UDP 通道） */
-        api_log("udp", "in", "discovery", 0, 0, (long)n, inet_ntoa(client_addr.sin_addr));
+        /* 【0.7.2 API 日志】UDP 发现（查询语义——GET） */
+        api_log("GET", "UDP", inet_ntoa(client_addr.sin_addr), 200, "discovery_scan",
+                buf, (size_t)n, "{\"type\":\"lingos\"}", 0);
         discovery_respond(&client_addr, addr_len);
     }
     return NULL;

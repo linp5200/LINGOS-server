@@ -411,9 +411,10 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
     LOG_DEBUG_T("Syscall", "Handle", "Enter", "operation='%s', args_json='%s'",
                 operation ? operation : "(null)", args_json ? args_json : "(null)");
 
-    /* 【0.7.0 P2-B】API 日志（socket 通道——daemon.sock 请求） */
-    api_log("socket", "in", operation ? operation : "-", 0, 0,
-            args_json ? (long)strlen(args_json) : 0, NULL);
+    /* 【0.7.2 API 日志】daemon.sock 请求（响应由各分支返回、统一出口外记录成本高——
+     *   此处记录请求侧；op=操作名驱动方法/类别映射） */
+    api_log(NULL, "SOCKET", "-", 0, operation ? operation : "-",
+            args_json, args_json ? (size_t)strlen(args_json) : 0, "-", 0);
 
     if (!operation || !args_json || !out) {
         safe_snprintf(out, out_len, "{\"status\":\"error\",\"error_type\":\"invalid_args\",\"message\":\"Invalid parameters\"}");

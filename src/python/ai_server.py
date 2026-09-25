@@ -3759,17 +3759,136 @@ def cmd_file_read(path: str) -> dict:
 _API_LOG_FILE = "/LINGOS/log/api.log"
 _DEVMOD_LOG_FILE = "/LINGOS/log/device_mod.log"
 
-def _api_log_safe(channel: str, direction: str, op: str, status: int = 0,
-                  dur_ms: int = 0, nbytes: int = 0, summary: str = "") -> None:
-    """【0.7.0 P2-B】API 日志（Python 侧——与 C 端同一 api.log；仅 server mode 可查看）"""
+# ════════════════════════════════════════════════════════════════
+# 【0.7.2】API 日志（新 7 列格式 · 方案 B 语义映射）
+#   格式：时间 | 方法 | 通道:设备 | 状态 | 类别 | req{大小} "摘要" | resp{大小} "摘要"
+# ════════════════════════════════════════════════════════════════
+_api_tls = threading.local()   # 当前请求上下文（handle_client 线程内）
+
+_LOG_DEL_WORDS = ("delete", "remove", "uninstall", "kill", "drop", "revoke", "clear")
+_LOG_GET_WORDS = ("list", "query", "status", "info", "search", "read", "current",
+                  "forecast", "summary", "overview", "find", "show", "check",
+                  "scan", "get", "ping")
+_LOG_CATS = (
+    ("chat", "AIChat"), ("nook", "AIChat"), ("agent", "AIChat"), ("sub_ai", "AIChat"),
+    ("summarize", "AIChat"), ("react", "AIChat"),
+    ("server_mode", "ServerMode"),
+    ("system_info", "Telemetry"), ("system_", "Telemetry"), ("net_status", "Telemetry"),
+    ("net_ping", "Telemetry"), ("net_dns", "Telemetry"), ("net_curl", "Telemetry"),
+    ("port_list", "Telemetry"), ("command_list", "Telemetry"),
+    ("process_", "Telemetry"), ("service_", "Telemetry"),
+    ("file_", "FileOp"), ("script_", "FileOp"),
+    ("memory_", "Memory"), ("session_", "Session"),
+    ("alert_", "Alert"), ("weather_", "Weather"), ("typhoon", "Alert"),
+    ("notify", "Notify"),
+    ("auth_", "Auth"), ("permission_", "Auth"),
+    ("crypto_", "Crypto"), ("privacy_", "Crypto"),
+    ("skill", "Skill"), ("options_", "Options"), ("update", "Update"),
+    ("monitor", "Vision"), ("vision", "Vision"), ("yolo", "Vision"), ("ocr", "Vision"),
+    ("nvr_", "Vision"), ("timeline", "Vision"), ("storage_", "Vision"),
+    ("media_", "Vision"), ("rtsp", "Vision"), ("camera_", "Vision"),
+    ("ha_", "Home"), ("entity_", "Home"), ("scene_", "Home"), ("area_", "Home"),
+    ("label_", "Home"), ("zone_", "Home"), ("presence_", "Home"), ("energy_", "Home"),
+    ("webhook", "Home"), ("blueprint_", "Home"), ("discovery_", "Home"), ("mqtt", "Home"),
+    ("crisis", "Crisis"),
+    ("voice_", "Voice"), ("tts", "Voice"), ("stt", "Voice"),
+    ("auth", "Auth"),
+    # HTTP 路径
+    ("/api/cmd", "Command"), ("/api/files", "FileOp"), ("/api/webhook", "Home"),
+    ("/api/audio", "Voice"), ("/system/", "Telemetry"), ("/nook/ask", "AIChat"),
+    ("/ui", "UI"), ("/console", "UI"),
+)
+_LOG_REDACT_KEYS = ("token", "password", "passwd", "api_key", "apikey", "api-key",
+                    "secret", "authorization", "credential", "private_key")
+
+
+def _log_fmt_size(n: int) -> str:
+    if n < 1024:
+        return f"{n}B"
+    if n < 1024 * 1024:
+        return f"{n/1024.0:.1f}KB"
+    return f"{n/(1024.0*1024.0):.1f}MB"
+
+
+def _log_redact(s: str) -> str:
+    """敏感值打码（token/password/key… 保留前 4 位）
+    注：summary 已把双引号转换为单引号——字符类需同时接受两种引号。"""
+    for k in _LOG_REDACT_KEYS:
+        pat = re.compile(r'(?i)(' + re.escape(k) + r"""['"\s]*[:=]['"\s]*['"]?)([^'",}\s&]{8,})""")
+        s = pat.sub(lambda m: m.group(1) + m.group(2)[:4] + "***", s)
+    return s
+
+
+def _log_summary(raw, max_len: int = 120) -> str:
+    if raw is None:
+        return "-"
+    if isinstance(raw, (dict, list)):
+        try:
+            raw = json.dumps(raw, ensure_ascii=False)
+        except Exception:
+            raw = str(raw)
+    s = str(raw).replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    s = s.replace('"', "'")
+    if len(s) > max_len:
+        s = s[:max_len] + ".."
+    return _log_redact(s)
+
+
+def _log_method(op: str, http_method: str = "") -> str:
+    if http_method:
+        return http_method
+    if not op:
+        return "POST"
+    low = op.lower()
+    if any(w in low for w in _LOG_DEL_WORDS):
+        return "DELETE"
+    if any(w in low for w in _LOG_GET_WORDS):
+        return "GET"
+    return "POST"
+
+
+def _log_classify(op: str) -> str:
+    if not op:
+        return "Misc"
+    low = op.lower()
+    for pref, cat in _LOG_CATS:
+        if low.startswith(pref):
+            return cat
+    return "Misc"
+
+
+def _api_log(method: str, channel: str, device: str, status: int, op: str,
+             req=None, req_len: int = 0, resp=None, resp_len: int = 0,
+             dur_ms: int = 0) -> None:
+    """【0.7.2】API 日志（新 7 列格式——C/Python 双端一致）"""
     try:
         import time as _t
         ts = _t.strftime("%Y-%m-%d %H:%M:%S")
-        line = f"{ts} [API] {channel:<7} {direction:<3} {op:<24} status={status:<3} {dur_ms}ms {nbytes}B {summary}\n"
+        m = _log_method(op, method or "")
+        cat = _log_classify(op)
+        chdev = f"{channel}:{device}" if device and device != "-" else channel
+        rl = req_len or (len(str(req)) if req else 0)
+        pl = resp_len or (len(str(resp)) if resp else 0)
+        rs = _log_summary(req)
+        ps = _log_summary(resp)
+        st = str(status) if status > 0 else "-"
+        line = (f"{ts} | {m:<6} | {chdev:<16} | {st:<4} | {cat:<10} | "
+                f"req{{{_log_fmt_size(rl)}}} \"{rs}\" | resp{{{_log_fmt_size(pl)}}} \"{ps}\"")
         with open(_API_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(line)
+            f.write(line + "\n")
     except Exception:
         pass
+
+
+# 兼容旧调用名（保留至下版本清除）
+def _api_log_safe(channel: str = "PY", direction: str = "", op: str = "", status: int = 0,
+                  dur_ms: int = 0, nbytes: int = 0, summary: str = "") -> None:
+    """旧签名适配 → _api_log（direction in/out 映射为 req/resp）"""
+    if direction == "out":
+        _api_log("", channel.upper(), "-", status, op, None, 0, summary, nbytes, dur_ms)
+    else:
+        _api_log("", channel.upper(), "-", status, op, summary, nbytes, None, 0, dur_ms)
+
 
 def _devmod_safe(op: str, target: str, req_id: str, phase: int,
                  size: int = 0, sensitive: bool = False, result: str = "ok") -> None:
@@ -4033,10 +4152,20 @@ def _reply(conn, cmd_name, resp):
             resp = dict(resp)
             resp["cmd"] = cmd_name
         _payload = json.dumps(resp, ensure_ascii=False)
-        # 【0.7.0 P2-B】API 日志（Python 响应侧）
+        # 【0.7.2】API 日志一行式（req 从 handle_client 线程上下文取——req+resp 齐）
         try:
-            _st = 200 if (isinstance(resp, dict) and resp.get("status") == "ok") else 0
-            _api_log_safe("py", "out", str(cmd_name), _st, 0, len(_payload))
+            _st = 200 if (isinstance(resp, dict) and resp.get("status") == "ok") else 500
+            _ctx = getattr(_api_tls, "current", None)
+            _dur = 0
+            if _ctx:
+                _dur = int((time.time() - _ctx.get("t0", time.time())) * 1000)
+                _api_log(_ctx.get("method", ""), "PY", _ctx.get("device", "-"), _st,
+                         _ctx.get("cmd", cmd_name) or cmd_name,
+                         _ctx.get("raw", ""), _ctx.get("raw_len", 0),
+                         _payload, len(_payload), _dur)
+                _api_tls.current = None   # 一请求一记录
+            else:
+                _api_log("", "PY", "-", _st, str(cmd_name), None, 0, _payload, len(_payload))
         except Exception:
             pass
         conn.send((_payload + "\n").encode())
@@ -4858,9 +4987,13 @@ def handle_client(conn, addr):
                 req.setdefault(_k, _v)
         cmd = req.get("cmd")
         logger.info(f"Received cmd: {cmd}")
-        # 【0.7.0 P2-B】API 日志（Python 请求侧）
+        # 【0.7.2】请求上下文暂存（_reply 一行式记录用——含 device_id 与原始请求）
         try:
-            _api_log_safe("py", "in", str(cmd), 0, 0, len(data))
+            _api_tls.current = {
+                "cmd": str(cmd), "raw": data.decode("utf-8", "ignore"),
+                "raw_len": len(data), "t0": time.time(),
+                "device": str(req.get("device_id", "") or "-"),
+            }
         except Exception:
             pass
 

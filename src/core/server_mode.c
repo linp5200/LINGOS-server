@@ -273,6 +273,20 @@ void server_mode_run(void) {
                "server mode session started (stdin_tty=%d, stdout_tty=%d)",
                stdin_tty, stdout_tty);
 
+    /* 【0.7.2】服务器模式：自动切换日志等级 → INFO（先生定稿）
+     *   服务器模式长期显示日志——INFO 显示重要节点，避免 DEBUG 细节刷屏。
+     *   需要 DEBUG 调试：终端敲 'log level debug' 或设 LINGOS_LOG_LEVEL=debug。 */
+    {
+        static int s_prev_level = -1;
+        if (s_prev_level < 0) {
+            s_prev_level = log_get_global_level();
+        }
+        log_set_global_level(LOG_LEVEL_INFO);
+        LOG_INFO_T("ServerMode", "LogLevel", "Auto",
+                   "log level auto-switched to INFO (was %d) — set 'log level debug' for verbose",
+                   s_prev_level);
+    }
+
     /* ---- 终端：raw-ish（捕获 Ctrl-Q，逐字符；关闭 ISIG——控制键唯一，危机不可被 Ctrl-C 绕过） ---- */
     struct termios oldt, newt;
     int tty_ok = (stdin_tty && tcgetattr(STDIN_FILENO, &oldt) == 0);

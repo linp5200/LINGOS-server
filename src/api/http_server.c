@@ -111,10 +111,16 @@ static const char *http_client_ip(struct MHD_Connection *connection) {
     return ipbuf;
 }
 
+/* 【0.7.2】HTTP 请求上下文（thread-local——MHD 每连接线程；request→response 同线程） */
+static __thread char t_req_method[8] = {0};
+static __thread char t_req_url[512] = {0};
+
 static void send_json_response(struct MHD_Connection *connection, int status_code, const char *json) {
-    /* 【0.7.0 P2-B】API 日志（响应侧——server mode 可查看） */
-    api_log("http", "out", "-", status_code, 0,
-            json ? (long)strlen(json) : 0, NULL);
+    /* 【0.7.2 API 日志】一行式记录：时间|方法|HTTP:设备|状态|类别|req|resp */
+    api_log(t_req_method[0] ? t_req_method : NULL, "HTTP", http_client_ip(connection),
+            status_code, t_req_url[0] ? t_req_url : "/",
+            t_req_url[0] ? t_req_url : NULL, 0,
+            json, json ? (size_t)strlen(json) : 0);
     struct MHD_Response *response = MHD_create_response_from_buffer(strlen(json), (void*)json, MHD_RESPMEM_PERSISTENT);
     MHD_add_response_header(response, "Content-Type", "application/json");
     MHD_queue_response(connection, status_code, response);
@@ -500,8 +506,9 @@ static enum MHD_Result request_handler(void *cls,
                                        void **con_cls) {
     (void)cls; (void)version;
 
-    /* 【0.7.0 P2-B】API 日志（请求侧——server mode 可查看） */
-    api_log("http", "in", url ? url : "-", 0, 0, 0, method ? method : NULL);
+    /* 【0.7.2】暂存请求上下文（thread-local）——响应完成时统一记录一行 */
+    safe_strncpy(t_req_method, method ? method : "-", sizeof(t_req_method));
+    safe_strncpy(t_req_url, url ? url : "/", sizeof(t_req_url));
 
     /* 【协议v3】POST 上传分块回调（upload_data 累积） */
     if (*con_cls != NULL) {

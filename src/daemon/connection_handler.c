@@ -983,10 +983,9 @@ static void handle_connection_code(connection_session_t *sess, const uint8_t *pa
 static int tcp_forward_to_ai(connection_session_t *sess, const char *cmd_json) {
     if (!sess || !cmd_json) return -1;
 
-    /* 【0.7.0 P2-B】API 日志（TCP 通道——server mode 可查看）
-     * 【0.7.1-hf3】加主日志——先生可追踪 TCP 通道命令（此前主日志无记录） */
+    /* 【0.7.0 P2-B / 0.7.1-hf3】主日志（先生可追踪 TCP 通道命令）
+     * 【0.7.2】API 日志改为完成时一行式（下方响应段） */
     LOG_INFO_T("Connection", "Cmd", "Recv", "tcp cmd: %.120s", cmd_json);
-    api_log("tcp", "in", "cmd", 0, 0, (long)strlen(cmd_json), cmd_json);
 
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
@@ -1037,6 +1036,13 @@ static int tcp_forward_to_ai(connection_session_t *sess, const char *cmd_json) {
     resp[total] = '\0';
 
     LOG_INFO_T("Connection", "FwdAI", "OK", "cmd forwarded, resp_len=%zd", total);
+    /* 【0.7.2 API 日志】TCP 命令一行式（req+resp 齐） */
+    {
+        char sessdev[32];
+        safe_snprintf(sessdev, sizeof(sessdev), "sess:%u", sess->session_id);
+        api_log(NULL, "TCP", sessdev, 200, cmd_json,
+                cmd_json, 0, resp, (size_t)total);
+    }
     return connection_send_message(sess->session_id, MSG_COMMAND_RESPONSE,
                                    (const uint8_t *)resp, (uint32_t)total);
 }

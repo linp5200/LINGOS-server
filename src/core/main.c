@@ -404,9 +404,25 @@ static void apply_dev_log_policy(void) {
 
     if (options_get("dev.debug_log") == 0) enable = 0;      /* ③ 手动关 */
 
-    log_set_global_level(enable ? LOG_LEVEL_DEBUG : LOG_LEVEL_INFO);
-    LOG_INFO_T("Main", "DevLog", "Policy", "debug logging %s (version=%s) — 判定：内部变量>版本>手动关",
-               enable ? "ON" : "OFF", v ? v : "?");
+    /* 【0.7.2 先生定稿】自动切换日志等级：统一 → INFO
+     *   （0.x 构建原自动开 DEBUG——真机实测刷屏严重（registry lock/unlock 级细节）。
+     *    INFO=重要节点可读；需全量调试：'log level debug' 命令或 LINGOS_LOG_LEVEL=debug。） */
+    {
+        const char *env_lv = getenv("LINGOS_LOG_LEVEL");
+        int lv = LOG_LEVEL_INFO;
+        if (env_lv && *env_lv) {
+            int parsed = log_level_from_string(env_lv);
+            if (parsed > 0) {
+                lv = parsed;
+                LOG_INFO_T("Main", "DevLog", "EnvOverride",
+                           "LINGOS_LOG_LEVEL=%s overrides auto policy", env_lv);
+            }
+        }
+        log_set_global_level(lv);
+        LOG_INFO_T("Main", "DevLog", "Policy",
+                   "auto log level = INFO (version=%s, dev=%d) — 调试用 'log level debug'",
+                   v ? v : "?", enable);
+    }
 }
 
 static int is_service_healthy(const char *socket_path) {

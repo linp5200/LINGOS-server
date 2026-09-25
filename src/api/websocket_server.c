@@ -467,7 +467,7 @@ done:
 /* ============================================================
  * 【先生决策】App 命令转发：command → ai.sock（Python）→ 响应回推
  * ============================================================ */
-static void ws_forward_command(ws_client_t *client, const char *cmd_json) {
+static void ws_forward_command(ws_client_t *client, const char *cmd_json, const char *cmdname) {
     if (!client || !cmd_json) return;
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return;
@@ -494,12 +494,22 @@ static void ws_forward_command(ws_client_t *client, const char *cmd_json) {
                 char out[16500];
                 safe_snprintf(out, sizeof(out), "{\"type\":\"command_response\",\"data\":%s}", buf);
                 send_ws_frame(client->fd, out);
+                /* 【0.7.2 API 日志】WS 命令一行式（req+resp 齐——先生可追踪 App 指令） */
+                api_log(NULL, "WS", client->id, 200, cmdname ? cmdname : "command",
+                        cmd_json, 0, buf, (size_t)r);
             } else {
                 send_ws_frame(client->fd, "{\"type\":\"command_response\",\"data\":{\"status\":\"error\",\"msg\":\"no response\"}}");
+                api_log(NULL, "WS", client->id, 504, cmdname ? cmdname : "command",
+                        cmd_json, 0, "no response", 0);
             }
+        } else {
+            api_log(NULL, "WS", client->id, 500, cmdname ? cmdname : "command",
+                    cmd_json, 0, "write failed", 0);
         }
     } else {
         send_ws_frame(client->fd, "{\"type\":\"command_response\",\"data\":{\"status\":\"error\",\"msg\":\"ai server unavailable\"}}");
+        api_log(NULL, "WS", client->id, 503, cmdname ? cmdname : "command",
+                cmd_json, 0, "ai server unavailable", 0);
     }
     close(fd);
 }
@@ -567,10 +577,14 @@ static void process_client_message(ws_client_t *client, const char *msg) {
 
     /* 【0.7.1-hf3】WS 接收日志：主日志 + API 日志（op=真实 type——此前为 "-"，
      *   先生无法从日志得知 App 发来的操作。command 类型在下方分支记录 cmd 名。） */
-    if (strcmp(type, "command") != 0) {
+    if (strcmp(type, "command") != 0 && strcmp(type, "auth") != 0 &&
+        strcmp(type, "ping") != 0) {
         LOG_DEBUG_T("WebSocket", "Recv", "Msg", "type=%s client=%s len=%d",
                     type, client->id, (int)strlen(msg));
-        api_log("ws", "in", type[0] ? type : "-", 0, 0, (long)strlen(msg), NULL);
+        /* 【0.7.2 新格式】非命令消息（chat/interrupt/auth_resp/subscribe…）——
+         *   auth/ping 等心跳不记（高频噪音）；响应式消息（command）由 forward 记录。 */
+        api_log(NULL, "WS", client->id, 200, type[0] ? type : "-",
+                msg, (size_t)strlen(msg), "-", 0);
     }
 
     /* 【先生设计】受限模式（免验证连接——危险操作拒绝） */
@@ -829,9 +843,9 @@ static void process_client_message(ws_client_t *client, const char *msg) {
 
     /* 【先生决策】App 命令 → Python 直通 */
     if (strcmp(type, "command") == 0 && client->authenticated) {
-        /* 【0.7.1-hf3】命令详情日志（cmd 名——先生可追踪 App 发来的每个操作） */
+        /* 【0.7.1-hf3/0.7.2】命令详情（cmd 名——追踪 + API 日志一行式）；作用域=整个分支 */
+        char cmdname[64] = {0};
         {
-            char cmdname[64] = {0};
             char *cp = strstr(msg, "\"cmd\"");
             if (cp) {
                 char *c2 = strchr(cp, ':');
@@ -854,9 +868,9 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                 LOG_INFO_T("WebSocket", "Cmd", "Recv", "cmd=%s client=%s len=%d",
                            cmdname[0] ? cmdname : "?", client->id, (int)strlen(msg));
             }
-            api_log("ws", "in", cmdname[0] ? cmdname : "command", 0, 0, (long)strlen(msg), NULL);
+            /* API 日志移到 ws_forward_command（req+resp 一行式——防双记） */
         }
-        ws_forward_command(client, msg);
+        ws_forward_command(client, msg, cmdname);
         return;
     }
 
