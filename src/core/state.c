@@ -1,6 +1,6 @@
 /**
  * @file    state.c
- * @brief   组件状态管理（基于 /LINGOS/state/components/*.json），并同步注册表
+ * @brief   组件状态管理（基于 /LINGOS/state/components 下的 json 文件），并同步注册表
  * @version LN-B-5.0.0.0
  * @changes 新增注册表同步；安全字符串替换
  */

@@ -69,7 +69,7 @@ int access_config_set_bool(const char *key, int v) {
 int access_config_set_int(const char *key, int v) {
     if (!key) return -1;
     if (!strcmp(key, "rate_limit_per_min")) { g_cfg.rate_limit_per_min = (v > 0 ? v : 1); return 0; }
-    if (!strcmp(key, "auth_code_per_min"))  { g_cfg.auth_code_per_min  = (v > 0 ? v : 1); return 1 - 1; }
+    if (!strcmp(key, "auth_code_per_min"))  { g_cfg.auth_code_per_min  = (v > 0 ? v : 1); return 0; }   /* 【0.7.0-hf2】原 "1 - 1" 写法修正 */
     return -1;
 }
 

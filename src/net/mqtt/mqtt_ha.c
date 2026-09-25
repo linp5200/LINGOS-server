@@ -141,10 +141,27 @@ static void on_ha_command(const mqtt_message_t *msg, void *user_data) {
         const char *prompt = args && cJSON_IsString(args) ? args->valuestring : "";
         const char *sid = session && cJSON_IsString(session) ? session->valuestring : "ha";
         LOG_INFO_T("MQTTHA", "Command", "NookAsk", "prompt='%s', session='%s'", prompt, sid);
+        /* 【0.7.0-hf2 安全】prompt 来自 MQTT（网络输入，不可信）——
+         *   过滤 shell 元字符（此前可经 " 或 ' 逃逸单双引号 → 远程命令注入 RCE！） */
+        char safe_prompt[400];
+        size_t pi = 0;
+        for (const char *p = prompt; p && *p && pi < sizeof(safe_prompt) - 1; p++) {
+            char c = *p;
+            if (c == '"' || c == '\'' || c == '`' || c == '$' || c == '\\' ||
+                c == ';' || c == '|' || c == '&' || c == '<' || c == '>' ||
+                c == '\n' || c == '\r' || c == '(' || c == ')')
+                continue;   /* 跳过危险字符（防注入） */
+            safe_prompt[pi++] = c;
+        }
+        safe_prompt[pi] = '\0';
+        if (pi == 0) {
+            LOG_WARN_T("MQTTHA", "Command", "NookAskEmpty", "prompt empty after sanitize — skipped");
+            return;
+        }
         char sys_cmd[512];
         safe_snprintf(sys_cmd, sizeof(sys_cmd),
                       "lingos_linux -c 'nook ask \"%s\"' > /tmp/ha_response.log 2>&1 &",
-                      prompt);
+                      safe_prompt);
         system(sys_cmd);
     } else if (strcmp(cmd->valuestring, "system_status") == 0) {
         char status[256];

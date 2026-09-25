@@ -406,7 +406,7 @@ int memory_vector_search(const char *query, int top_k, vector_result_t *results,
         float distance;
     } temp_result_t;
 
-    temp_result_t temp[MAX_VECTOR_RESULTS];
+    temp_result_t temp[MAX_VECTOR_RESULTS] = {0};   /* 【0.7.0-hf2】零初始化（消 cppcheck uninitvar + 防御） */
     int count = 0;
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {

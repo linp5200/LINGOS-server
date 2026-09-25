@@ -502,9 +502,16 @@ void log_output(int level, const char *module, const char *submodule,
 
     char full_msg[MAX_LOG_MSG + 256];
     /* 【2026-08-22 定稿】终端时间改 [时间] 括号 */
+    /* 【0.7.0-hf2 · 颜色修复】先生报告："每个日志之前没有刷新颜色，颜色会延续到下一行"
+     *   两个根因：
+     *     ① 格式串 %s 数（8）少于参数数（9）→ 末尾 COLOR_RESET 被静默丢弃
+     *        （行尾无重置 → 下一行在残留色上开始）
+     *     ② 行首无重置 → 若上行以 CRIT/自定义色结尾，本行 color（如 DIM）仅是属性
+     *        叠加而非清除 → 颜色污染
+     *   修法：行首 + 行尾都追加 RESET；color 在干净基础上设置。 */
     int len = safe_snprintf(full_msg, sizeof(full_msg),
-                           "%s[%s][%s][%s][%s][%s] %s%s\n",
-                           color, time_buf, lvl_str,
+                           "%s%s[%s][%s][%s][%s][%s] %s%s%s\n",
+                           COLOR_RESET, color, time_buf, lvl_str,
                            module ? module : "?",
                            submodule ? submodule : "?",
                            step ? step : "?",
@@ -747,7 +754,9 @@ void log_draw_status_bar(const char *version, int ai_status, const char *mode, i
 /* ============================================================
  * 增强版进度条（支持速度/大小/耗时）
  * ============================================================ */
-static const char PROGRESS_CHARS[] = {' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
+/* 【0.7.0-hf2 修正】原为单字节 char 数组——'▏' 等是 3 字节 UTF-8 多字符常量
+ *   → 被截断为最后一个字节（乱码）。改为字符串数组 + %s 输出。 */
+static const char *PROGRESS_CHARS[] = {" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"};
 static const int PROGRESS_LEVELS = 8;
 static int g_progress_width = 30;
 
@@ -806,7 +815,7 @@ void log_draw_progress_full(int percent, double speed, double downloaded,
         pos += safe_snprintf(line + pos, sizeof(line) - pos, "█");
     }
     if (full_blocks < width) {
-        pos += safe_snprintf(line + pos, sizeof(line) - pos, "%c", PROGRESS_CHARS[partial]);
+        pos += safe_snprintf(line + pos, sizeof(line) - pos, "%s", PROGRESS_CHARS[partial]);
         for (int i = full_blocks + 1; i < width; i++) {
             pos += safe_snprintf(line + pos, sizeof(line) - pos, " ");
         }
@@ -843,7 +852,10 @@ void log_draw_progress_full(int percent, double speed, double downloaded,
     }
 
     uart_puts("\r\033[K");
+    /* 【0.7.0-hf2】应用状态色（原 color 计算后未使用——进度条无色运行） */
+    uart_puts(color);
     uart_puts(line);
+    uart_puts(COLOR_RESET);
     fflush(stdout);
 }
 

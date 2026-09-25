@@ -350,6 +350,63 @@ static double syscall_read_disk_usage(void) {
     return (double)(total - free_b) / (double)total * 100.0;
 }
 
+/* ============================================================
+ * 【0.7.0-hf2 · 安全】shell 输入校验（防命令注入——OWASP LLM06 §3）
+ *   背景：net_ping / net_curl 直接拼 shell 命令；host/url 来自 AI/用户
+ *   → 例：host="1.1.1.1; rm -rf /" 或 url 含单引号逃逸 → 注入执行。
+ *   策略：严格字符白名单（宁拒绝不放行）。
+ * ============================================================ */
+static int is_safe_host_input(const char *s) {
+    if (!s || !*s || strlen(s) > 100) return 0;
+    for (const char *p = s; *p; p++) {
+        char c = *p;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+            || c == '.' || c == '-' || c == ':' || c == '_' || c == '[' || c == ']')
+            continue;   /* 合法：域名/IP/IPv6 字符集 */
+        return 0;
+    }
+    return 1;
+}
+
+static int is_safe_url_input(const char *s) {
+    if (!s || !*s || strlen(s) > 2000) return 0;
+    if (strncmp(s, "http://", 7) != 0 && strncmp(s, "https://", 8) != 0) return 0;
+    for (const char *p = s; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        /* 拒绝一切可逃逸/注入/控制字符（单引号包裹场景的最小集 + 保守集） */
+        if (c == '\'' || c == '`' || c == '\\' || c == '"' ||
+            c == '|' || c == ';' || c == '<' || c == '>' ||
+            c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0x7f)
+            return 0;
+        if (c >= 0x80) return 0;                       /* 非 ASCII（防编码绕过） */
+        if (c < 0x20) return 0;                        /* 控制字符 */
+    }
+    return 1;
+}
+
+/* 【0.7.0-hf2 · 安全】写/删保护路径（敏感系统区域——纵深防御兜底）
+ *   背景：完整 19×5 权限矩阵铺设前，对"明显不该被 AI/App 命令面触碰"的
+ *   系统区域做兜底拦截（即使上游权限层被绕过，C 端仍拒绝）。
+ *   注：安装/更新链不走本通道（shell 脚本直接操作）→ 不受影响。 */
+static int is_write_protected_path(const char *path) {
+    if (!path || !*path) return 1;
+    static const char *prot[] = {
+        "/etc/", "/boot/", "/sys/", "/proc/", "/usr/", "/bin/", "/sbin/",
+        "/lib/", "/lib64/", "/var/lib/dpkg", "/var/lib/pacman",
+        "/root/.ssh", "/root/.git-credentials", "/root/.gnupg",
+        "/LINGOS/Ensystem",        /* 加密私密区 */
+        "/LINGOS/bin/",            /* 核心程序目录（防破坏） */
+        "/LINGOS/python/",
+        NULL
+    };
+    for (int i = 0; prot[i]; i++) {
+        if (strncmp(path, prot[i], strlen(prot[i])) == 0) return 1;
+    }
+    /* 相对路径中带 .. 的穿越（防绕过前缀匹配）——保守拒绝写删 */
+    if (strstr(path, "/../") || strstr(path, "/..")) return 1;
+    return 0;
+}
+
 int handle_syscall(const char *operation, const char *args_json, char *out, uint32_t out_len) {
     LOG_DEBUG_T("Syscall", "Handle", "Enter", "operation='%s', args_json='%s'",
                 operation ? operation : "(null)", args_json ? args_json : "(null)");
@@ -409,6 +466,14 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "error_type", "missing_param");
             cJSON_AddStringToObject(result, "message", "Missing 'path' or 'content'");
             ret = -1;
+        } else if (is_write_protected_path(path_item->valuestring)) {
+            /* 【0.7.0-hf2 安全】敏感路径写保护（纵深防御） */
+            LOG_WARN_T("Syscall", "FileWrite", "Protected", "write refused (protected path): %s",
+                       path_item->valuestring);
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "protected_path");
+            cJSON_AddStringToObject(result, "message", "受保护路径——写入被拒绝（系统区域）");
+            ret = -1;
         } else {
             /* 【0.7.0 P2-B】设备修改日志：file_write → ADD（新文件）/ MOD（已存在）——两条式 */
             int existed = (access(path_item->valuestring, F_OK) == 0);
@@ -437,6 +502,14 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "status", "error");
             cJSON_AddStringToObject(result, "error_type", "missing_param");
             cJSON_AddStringToObject(result, "message", "Missing 'path'");
+            ret = -1;
+        } else if (is_write_protected_path(path_item->valuestring)) {
+            /* 【0.7.0-hf2 安全】敏感路径删保护（纵深防御） */
+            LOG_WARN_T("Syscall", "FileDelete", "Protected", "delete refused (protected path): %s",
+                       path_item->valuestring);
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "protected_path");
+            cJSON_AddStringToObject(result, "message", "受保护路径——删除被拒绝（系统区域）");
             ret = -1;
         } else if (log_path_protected(path_item->valuestring)) {
             /* 【0.7.0 P2-B】"不被清除"——日志目录删除拦截（先生设定：防手动删除） */
@@ -689,6 +762,13 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
         cJSON *count_item = cJSON_GetObjectItem(args, "count");
         const char *host = (host_item && cJSON_IsString(host_item)) ? host_item->valuestring : "8.8.8.8";
         int count = (count_item && cJSON_IsNumber(count_item)) ? count_item->valueint : 1;
+        /* 【0.7.0-hf2 安全】命令注入防护（host 白名单校验） */
+        if (!is_safe_host_input(host)) {
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "invalid_host");
+            cJSON_AddStringToObject(result, "message", "非法主机名（仅允许域名/IP 字符）");
+            ret = -1;
+        } else {
         char cmd[128];
         safe_snprintf(cmd, sizeof(cmd), "ping -c %d %s 2>&1", count, host);
         FILE *fp = popen(cmd, "r");
@@ -706,6 +786,7 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "message", "popen failed");
             ret = -1;
         }
+        }   /* 【0.7.0-hf2】is_safe_host_input else 块闭合 */
     }
     else if (strcmp(operation, "net_curl") == 0) {
         LOG_DEBUG_T("Syscall", "Handle", "NetCurl", "HTTP request");
@@ -714,6 +795,12 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "status", "error");
             cJSON_AddStringToObject(result, "error_type", "missing_param");
             cJSON_AddStringToObject(result, "message", "Missing 'url'");
+            ret = -1;
+        } else if (!is_safe_url_input(url_item->valuestring)) {
+            /* 【0.7.0-hf2 安全】URL 白名单校验（拒单引号逃逸/控制字符——命令注入防护） */
+            cJSON_AddStringToObject(result, "status", "error");
+            cJSON_AddStringToObject(result, "error_type", "invalid_url");
+            cJSON_AddStringToObject(result, "message", "非法 URL（仅允许 http/https 且不含特殊字符）");
             ret = -1;
         } else {
             char cmd[256];

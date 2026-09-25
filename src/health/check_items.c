@@ -140,6 +140,7 @@ static int check_bundled_libs(void) {
                         tr("Bundle manifest invalid", "捆绑清单格式无效"),
                         CHECK_RESULT_FAIL);
         deps_trigger_repair("bundle manifest invalid");
+        free(buf);   /* 【0.7.0-hf2】补 free（此前泄漏——cppcheck memleak） */
         return CHECK_RESULT_FAIL;
     }
     int missing = 0;

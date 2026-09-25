@@ -117,6 +117,7 @@ def main():
     args = ap.parse_args()
 
     log.info("启动 RTSP 拉流: %s", args.url)
+    global _running  # 【0.7.0-hf2】修复 UnboundLocalError（main 内赋值使 _running 变局部→while 读取崩溃）
     threading.Thread(target=ffmpeg_pull, args=(args.url,), daemon=True).start()
     threading.Thread(target=frame_server, args=(args.frame_port,), daemon=True).start()
     threading.Thread(target=http_mjpeg, args=(args.http_port,), daemon=True).start()

@@ -128,6 +128,17 @@ def cmd_notify_push(title: str = "", body: str = "", level: str = "info",
         except Exception as e:
             logger.debug("system notify failed: %s", e)
 
+    # 【0.7.0-hf2】WS 实时广播（此前缺失——App 只能轮询，无法实时收通知！
+    #   现在：前台立即呈现 + 后台由 App 通知桥转本地通知）
+    if not item["silenced"]:
+        try:
+            from ai_server import _broadcast_alert_event
+            _broadcast_alert_event({"type": "notify_event", "data": {
+                "id": item["id"], "title": item["title"], "body": item["body"],
+                "level": lv, "source": item["source"], "ts": item["ts"]}})
+        except Exception as e:
+            logger.debug("notify ws broadcast failed: %s", e)
+
     logger.info("notify push [%s] %s (silenced=%s)", lv, item["title"], item["silenced"])
     return {"status": "ok", "data": item}
 

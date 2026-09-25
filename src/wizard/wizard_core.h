@@ -30,6 +30,9 @@ typedef struct wizard_context {
     char language[8];                /* "zh" / "en" */
 } wizard_context_t;
 
+/* 【0.7.0-hf2】兼容别名：tui_wizard.c/h 历史引用 wizard_state_t（未定义→ENABLE_TUI=1 编译失败） */
+typedef wizard_context_t wizard_state_t;
+
 #ifdef __cplusplus
 }
 #endif

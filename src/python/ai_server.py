@@ -46,10 +46,10 @@ for _skill_dir in ("/LINGOS/skills/enabled",):
 # LINGOS_DEEPSEEK_API_KEY: DeepSeek API Key
 # LINGOS_OLLAMA_URL: Ollama URL
 
-if os.environ.get("LINGOS_AI_BACKEND") == "deepseek":
-    logger.info("Environment variable LINGOS_AI_BACKEND=deepseek detected")
-if os.environ.get("LINGOS_DEEPSEEK_API_KEY"):
-    logger.info("Environment variable LINGOS_DEEPSEEK_API_KEY detected (value hidden)")
+# 【0.7.0-hf2】logger 尚未定义（134 行）——先暂存标记，定义后补日志
+#   （此前直接调用 logger.info → 若环境变量存在则模块导入即 NameError 崩溃！）
+_early_env_backend = (os.environ.get("LINGOS_AI_BACKEND") == "deepseek")
+_early_env_has_key = bool(os.environ.get("LINGOS_DEEPSEEK_API_KEY"))
     
 # ========== 多语言支持（与C端tr()保持一致） ==========
 _current_lang = "en"
@@ -132,9 +132,23 @@ file_handler = logging.FileHandler(log_file, encoding="utf-8")
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(LingosJsonFormatter())
 logger = logging.getLogger("AIServer")
+# 【0.7.0-hf2】syscall_client 导入（options_list/options_set/privacy_mode 三命令的运行时依赖——
+#   此前缺失 → "name 'call_syscall' is not defined"，先生 2026-09-25 真机取证）
+try:
+    from syscall_client import call_syscall
+except Exception as _sc_e:
+    _sc_err = str(_sc_e)  # 【0.7.0-hf2】先固化文本（except 后 _sc_e 被删除——闭包引用会 NameError）
+    def call_syscall(*_a, **_k):  # 防御性存根（daemon 不可用时优雅报错）
+        return False, "syscall client unavailable: %s" % _sc_err
 logger.setLevel(logging.DEBUG)  # 初始级别，启动后从配置文件读取
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
+
+# 【0.7.0-hf2】早期环境变量检测日志（延迟到 logger 定义后）
+if globals().get("_early_env_backend"):
+    logger.info("Environment variable LINGOS_AI_BACKEND=deepseek detected")
+if globals().get("_early_env_has_key"):
+    logger.info("Environment variable LINGOS_DEEPSEEK_API_KEY detected (value hidden)")
 
 # 文件保存开关：默认开；set_log_file 0 → 仅 WARN+（level<=WARN 语义）
 def set_log_file_enabled(enabled: bool):
@@ -596,9 +610,52 @@ def auth_service_monitor():
             start_auth_service()
 
 # ========== 授权请求客户端 ==========
+# 【0.7.0-hf2】审批三态记忆：'始终允许'表（先生设定——对标 Android + sudo）
+#   存储：/LINGOS/system/config/auth_always.json {"tools": ["tool_a", ...]}
+_AUTH_ALWAYS_FILE = "/LINGOS/system/config/auth_always.json"
+_AUTH_ALWAYS_LOCK = threading.Lock()
+
+def _auth_always_load() -> set:
+    try:
+        if os.path.exists(_AUTH_ALWAYS_FILE):
+            with open(_AUTH_ALWAYS_FILE, encoding="utf-8") as f:
+                d = json.load(f) or {}
+            return set(str(x) for x in d.get("tools", []))
+    except Exception as e:
+        logger.debug("auth_always load: %s", e)
+    return set()
+
+def _auth_always_add(tool: str) -> bool:
+    try:
+        with _AUTH_ALWAYS_LOCK:
+            cur = _auth_always_load()
+            cur.add(tool)
+            os.makedirs(os.path.dirname(_AUTH_ALWAYS_FILE), exist_ok=True)
+            with open(_AUTH_ALWAYS_FILE, "w", encoding="utf-8") as f:
+                json.dump({"tools": sorted(cur)}, f, ensure_ascii=False, indent=2)
+        logger.warning("auth always-allow added: %s", tool)
+        return True
+    except Exception as e:
+        logger.warning("auth_always save failed: %s", e)
+        return False
+
 def request_authorization(skill_name: str, args: dict, session_id: str, timeout: int = 60, conn=None) -> str:
-    """发送授权请求并等待用户决策（【协议v3】有 conn 时推 auth_request 事件——App 审批弹窗）"""
+    """发送授权请求并等待用户决策（【协议v3】有 conn 时推 auth_request 事件——App 审批弹窗）
+    【0.7.0-hf2】三态记忆：始终允许的工具直接放行（一次授权永久生效——设备级记忆）。"""
     logger.debug(f"request_authorization: skill={skill_name}, session={session_id}, timeout={timeout}")
+    # 始终允许表命中 → 直接批准（记录审计）
+    try:
+        if skill_name in _auth_always_load():
+            logger.info("auth auto-approved (always-allow): %s", skill_name)
+            if conn is not None:
+                try:
+                    _send_evt(conn, {"type": "auth_auto", "tool": skill_name,
+                                     "reason": t("Previously always-allowed", "此前已设为始终允许")})
+                except Exception:
+                    pass
+            return "approved"
+    except Exception:
+        pass
     max_retries = 2
     for attempt in range(max_retries):
         try:
@@ -1481,7 +1538,7 @@ def load_plugin_layer() -> dict:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugin"))
         from plugin_loader import get_loader
         loader = get_loader()
-        n = loader.load_all(language=_current_language() if "_current_language" in globals() else "zh")
+        n = loader.load_all(language=_current_lang if _current_lang in ("zh", "en") else "zh")
         pskills = getattr(loader, "_skills", {}) or {}
         pcmds = getattr(loader, "_commands", {}) or {}
         logger.info("plugin layer loaded: %d plugins, %d skills, %d commands", n, len(pskills), len(pcmds))
@@ -2056,8 +2113,8 @@ def execute_tool_calls(tool_calls: List[Dict], session_id: str = "default", conn
                 logger.warning("CRISIS MODE: skill '%s' allowed (audit-only)", name)
             else:
                 try:
-                    from permission_gateway import check_skill_permission, get_skill_risk, is_shadow_skill
-                    _allowed, _reason = check_skill_permission(name, get_skill_risk(name), args)
+                    from permission_gateway import check_skill_permission, get_skill_risk as _pg_skill_risk, is_shadow_skill
+                    _allowed, _reason = check_skill_permission(name, _pg_skill_risk(name), args)
                     if not _allowed:
                         logger.warning("skill '%s' blocked: %s", name, _reason)
                         success = False
@@ -2066,7 +2123,7 @@ def execute_tool_calls(tool_calls: List[Dict], session_id: str = "default", conn
                     else:
                         # 【0.6.0】影子模式（三态）：执行被拦截 → 返回结构正确的空数据
                         try:
-                            if is_shadow_skill(name, get_skill_risk(name)):
+                            if is_shadow_skill(name, _pg_skill_risk(name)):
                                 _shadow_mode = True
                         except Exception:
                             pass
@@ -2324,11 +2381,11 @@ def _stream_final_reply(conn, messages, fallback_content):
             if btype == "error":
                 err_text = block.get("text", "") or "模型返回错误"
                 err_type = block.get("error_type", "")
-                logger.error("react_stream: LLM error type=%s text=%s session=%s",
-                             err_type, err_text[:200], session_id)
+                logger.error("react_stream: LLM error type=%s text=%s",
+                             err_type, err_text[:200])
                 _send_evt(conn, {"type": "content",
                                  "delta": t("(AI 错误: %s)", "（AI错误：%s）") % err_text[:300]})
-                return "", usage_info
+                return "", {}
             text = block.get("text", "")
             if not text:
                 continue
@@ -3514,7 +3571,7 @@ def cmd_sync_delta(last_sync: float = 0, device_id: str = "", local_hash: str = 
     sessions.sort(key=lambda x: x.get("updated", 0), reverse=True)
     # B 哈希：列表全量传 + 整体哈希（App 对比发现增删/改名）
     import hashlib
-    list_hash = hashlib.md5(json.dumps(sessions, sort_keys=True).encode()).hexdigest()
+    list_hash = hashlib.sha256(json.dumps(sessions, sort_keys=True).encode()).hexdigest()   # 【0.7.0-hf2】md5→sha256（bandit B324）
     # A 时间戳：增量消息（updated > last_sync 的会话，取其新增消息）
     # 【修复】会话 updated 可能滞后于消息 ts——按消息 ts 独立判断（不依赖会话 updated）
     delta_messages = {}
@@ -3690,6 +3747,10 @@ def cmd_file_list(path: str = "/") -> dict:
 
 def cmd_file_read(path: str) -> dict:
     try:
+        # 【0.7.0-hf2 安全】敏感文件读取拒绝（凭据/密钥/密码哈希）
+        if _secret_read_denied(path):
+            logger.warning("file_read refused (secret path): %s", path)
+            return {"status": "error", "msg": "敏感文件——读取被拒绝"}
         with open(path, encoding='utf-8', errors='replace') as f:
             return {"status": "ok", "data": f.read(65536)}
     except Exception as e:
@@ -3727,8 +3788,9 @@ def _devmod_safe(op: str, target: str, req_id: str, phase: int,
         pass
 
 def _devmod_new_req() -> str:
-    import time as _t, random as _r
-    return "dm%x%04x" % (int(_t.time()), _r.randint(0, 0xFFFF))
+    # 【0.7.0-hf2】random→secrets（bandit B311——日志关联 ID 也统一 CSPRNG）
+    import time as _t, secrets as _s
+    return "dm%x%04x" % (int(_t.time()), _s.randbelow(0x10000))
 
 def _log_path_protected(path: str) -> bool:
     """【0.7.0 P2-B】'不被清除'——日志目录删除拦截（防手动删除）"""
@@ -3738,8 +3800,49 @@ def _log_path_protected(path: str) -> bool:
     except Exception:
         return False
 
+# 【0.7.0-hf2 安全】系统保护区（写/删兜底——防 App 命令面绕过 C 端检查）
+_PROTECTED_PREFIXES = (
+    "/etc/", "/boot/", "/sys/", "/proc/", "/usr/", "/bin/", "/sbin/",
+    "/lib/", "/lib64/", "/var/lib/dpkg", "/var/lib/pacman",
+    "/root/.ssh", "/root/.git-credentials", "/root/.gnupg",
+    "/LINGOS/Ensystem", "/LINGOS/bin/", "/LINGOS/python/",
+)
+def _sys_path_protected(path: str) -> bool:
+    try:
+        p = os.path.abspath(path)
+        if "/../" in path or path.strip().endswith("/.."):
+            return True   # 穿越写法——保守拒绝
+        for pref in _PROTECTED_PREFIXES:
+            if p == pref.rstrip("/") or p.startswith(pref):
+                return True
+        return False
+    except Exception:
+        return True
+
+# 【0.7.0-hf2 安全】敏感文件读取拒绝（凭据/密钥/密码哈希——防信息泄露）
+_SECRET_SUFFIXES = (
+    "/.ssh/", "/.gnupg/", "/.git-credentials", "/shadow", "/shadow-",
+    "/gshadow", "/provider.json", "/providers.json", "/device.key",
+    "/.env", "/id_rsa", "/id_ed25519", "/tokens.json",
+)
+def _secret_read_denied(path: str) -> bool:
+    try:
+        p = os.path.abspath(path)
+        for suf in _SECRET_SUFFIXES:
+            if suf in p:
+                return True
+        if p.startswith("/etc/shadow") or p.startswith("/root/.ssh") or p.startswith("/root/.gnupg"):
+            return True
+        return False
+    except Exception:
+        return True
+
 def cmd_file_write(path: str, content: str = "") -> dict:
     try:
+        # 【0.7.0-hf2 安全】系统保护区写拦截
+        if _sys_path_protected(path):
+            logger.warning("file_write refused (protected path): %s", path)
+            return {"status": "error", "msg": "受保护路径——写入被拒绝（系统区域）"}
         # 【0.7.0 P2-B】设备修改日志（ADD/MOD 两条式）
         existed = os.path.exists(path)
         op7 = "MOD" if existed else "ADD"
@@ -3756,6 +3859,10 @@ def cmd_file_write(path: str, content: str = "") -> dict:
 
 def cmd_file_delete(path: str) -> dict:
     try:
+        # 【0.7.0-hf2 安全】系统保护区删拦截
+        if _sys_path_protected(path):
+            logger.warning("file_delete refused (protected path): %s", path)
+            return {"status": "error", "msg": "受保护路径——删除被拒绝（系统区域）"}
         # 【0.7.0 P2-B】"不被清除"——日志目录删除拦截
         if _log_path_protected(path):
             logger.warning("file_delete refused (log dir protected): %s", path)
@@ -4151,13 +4258,22 @@ def cmd_skill_market() -> dict:
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
-def cmd_auth_respond(req_id: str = "", decision: str = "") -> dict:
-    """【0.6.0 修复】App 审批回执 → 写入 auth.sock（审批链断裂修复：
-    App 收到 auth_request 但从不回传 → 高风险操作必 60s 超时）"""
+def cmd_auth_respond(req_id: str = "", decision: str = "", tool: str = "") -> dict:
+    """【0.6.0 修复】App 审批回执 → 写入 auth.sock（审批链断裂修复）。
+    【0.7.0-hf2】三态记忆：decision=always + tool 参数 → 写入「始终允许」表 + 批准本次。"""
     try:
         if not req_id:
             return {"status": "error", "msg": "missing req_id"}
-        _cmd = "approve" if str(decision).lower() in ("approve", "approved", "yes", "ok", "allow") else "reject"
+        _dec = str(decision).lower()
+        # 三态：approve（一次）/ always（始终允许）/ reject
+        if _dec in ("always", "always_allow", "remember"):
+            _cmd = "approve"
+            if tool:
+                _auth_always_add(tool)
+            else:
+                logger.warning("auth_respond always 但缺 tool 参数——仅批准本次")
+        else:
+            _cmd = "approve" if _dec in ("approve", "approved", "yes", "ok", "allow") else "reject"
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(5)
         sock.connect(AUTH_SOCKET_PATH)
@@ -4169,8 +4285,11 @@ def cmd_auth_respond(req_id: str = "", decision: str = "") -> dict:
         except Exception:
             resp = {}
         ok = resp.get("status") == "ok"
-        logger.info("auth_respond: %s -> %s (%s)", req_id, _cmd, "ok" if ok else resp.get("message", "?"))
+        logger.info("auth_respond: %s -> %s (always=%s, %s)", req_id, _cmd,
+                    tool if _dec in ("always", "always_allow", "remember") else "-",
+                    "ok" if ok else resp.get("message", "?"))
         return {"status": "ok" if ok else "error", "decision": _cmd,
+                "always": tool if _cmd == "approve" and _dec.startswith("always") else "",
                 "req_id": req_id, "msg": resp.get("message", "")}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
@@ -4878,7 +4997,7 @@ def handle_client(conn, addr):
         if cmd == "update_check":
             _reply(conn, "update_check", cmd_update_check()); return
         if cmd == "auth_respond":
-            _reply(conn, "auth_respond", cmd_auth_respond(str(req.get("req_id", "")), str(req.get("decision", "")))); return
+            _reply(conn, "auth_respond", cmd_auth_respond(str(req.get("req_id", "")), str(req.get("decision", "")), str(req.get("tool", "")))); return
         if cmd == "auth_pending":
             _reply(conn, "auth_pending", cmd_auth_pending()); return
         if cmd == "crisis_trigger":
@@ -5138,7 +5257,7 @@ def handle_client(conn, addr):
             # 【R5b】手动摘要命令（summarize / /summarize）
             if prompt.strip().lower() in ("summarize", "/summarize", "总结对话"):
                 if session_id in conversations and conversations[session_id]:
-                    summary = generate_summary(conversations[session_id])
+                    summary = _generate_summary(conversations[session_id])
                     if summary:
                         conv_msgs = conversations[session_id]
                         conv_msgs[:] = [{"role": "system", "content": "Earlier conversation summary: " + summary}]
@@ -5284,7 +5403,7 @@ def handle_client(conn, addr):
                 resp = {
                     "status": "ok",
                     "agent": s.role,
-                    "status": s.status,
+                    "agent_status": s.status,   # 【0.7.0-hf2】原与 "status":"ok" 键重复覆盖——App 解析错误根因
                     "round": s.round,
                     "max_rounds": s.max_rounds,
                     "result": (s.result or "")[:2000],
@@ -5673,7 +5792,7 @@ def start_unix_socket_server():
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(AI_SOCKET_PATH)
     server.listen(5)
-    os.chmod(AI_SOCKET_PATH, 0o666)
+    os.chmod(AI_SOCKET_PATH, 0o600)  # 【0.7.0-hf2 安全】0666→0600（命令通道私有——防本机越权）
     logger.info(f"AI Server listening on {AI_SOCKET_PATH}")
     while True:
         try:

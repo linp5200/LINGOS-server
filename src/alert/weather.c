@@ -6,6 +6,7 @@
 
 #include "weather.h"
 #include "../common/data_path.h"
+#include "../common/safe_string.h"   /* 【0.7.0-hf2】safe_snprintf */
 #include "log_extra.h"
 #include "../net/tcp_client.h"
 #include <stdio.h>
@@ -80,7 +81,8 @@ char *weather_get_alert(void) {
     /* 去除末尾换行 */
     char *nl = strchr(body, '\n');
     if (nl) *nl = '\0';
-    char *result = malloc(strlen(body) + 64);
-    sprintf(result, "Weather in %s: %s", current_city, body);
+    char *result = malloc(strlen(body) + strlen(current_city) + 64);   /* 【0.7.0-hf2】原 +64 未计 city 长度——城市名超长会溢出 */
+    if (!result) return strdup("No memory.");
+    safe_snprintf(result, strlen(body) + strlen(current_city) + 64, "Weather in %s: %s", current_city, body);
     return result;
 }

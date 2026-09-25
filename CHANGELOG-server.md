@@ -5,6 +5,51 @@
 
 ---
 
+## [0.7.1] - 2026-09-25（hotfix 批次：全量静态扫描 + 安全隐私加固 + App 链路接续）
+
+> 本版 = v0.7.0 部署后的两个 hotfix 批次合并。**重点：全量静态扫描（先生指令）+ 安全与隐私 + App 链路完善**。
+
+### 安全修复（先生重点）
+- **命令注入 ×4**：MQTT nook_ask（**远程 RCE**——prompt 元字符过滤）· net_ping/net_curl（AI 可调——
+  输入白名单）· camera RTSP / skill 参数过滤
+- **文件系统保护**：HTTP /api/files 四端点白名单（仅 /LINGOS+/tmp——原认证后任意系统文件读写删）·
+  syscall write/delete 保护路径 · Python 命令面同套保护 · 敏感文件读取拒绝（凭据/密钥/哈希）
+- **socket 权限**：ai.sock/auth.sock/embed.sock chmod 0666→0600（防本机越权命令通道）
+- **S12 更新验签接入**（system_update_install 前置门：有签名强制/无签名警告）
+- **crypto_sign 越界读修复**（32 字节私钥误当 64 字节读）
+- **rollback 防数据丢失**（repair_engine——结构校验/原子改名/失败回退）
+- 哈希升级 sha1/md5→sha256 ×4 · random→secrets
+
+### 崩溃修复（全量扫描产出）
+- **Python 9 炸弹**：get_skill_risk 遮蔽（UnboundLocalError——先生真机复现）· call_syscall 未导入
+  （options_list 全挂）· generate_summary 误名 · logger 前移 · session_id/usage_info ·
+  skill_loader 闭包 · plugin_loader json · rtsp _running global
+- **C 端**：input_filter realloc 内存 ×2 · check_items 泄漏 · active_repair 空指针顺序 ·
+  rules_parser 边界 · memory_vector 未初始化 · weather 缓冲溢出
+- **日志颜色**（先生报告）：格式串 %s 数不匹配→行尾 RESET 丢失（颜色延续根因）
+- **TUI/markdown UTF-8**：多字节字符截断 ×3 · 进度条颜色未应用 ×2
+
+### 诚信化（先生红线）
+- **detection_engine**：模拟假检测（假人/猫/火焰）→ **真实 yolo.sock 接线** + 诚实降级
+- **audio_input**：rand 假音频 → 真实 arecord 捕获 + 诚实降级；voiced 降级不 abort
+- repair_engine.execute_repair 假成功 → 诚实标注
+
+### 功能（批次一）
+- **server mode**（新功能）+ **日志系统扩展**（api.log 全通道/device_mod 7 码/不被清除）
+- **危机链**：B5 投递五重保障+ACK · B7 危机加速（关思考链）· B3/B4 审批例外+权限全权
+- **P3 服务端**：自动记忆管线 · 预警订阅+AI 简报 · 天气联动 · command_list
+- **命令面板**（WebUI 第 22 页）· 出口白名单（egress）· dev 日志组
+
+### App
+- 命令面板 · 局域网自动发现（连接 2 步化）· 后台推送（危机 critical + 通知桥）
+- 服务器模式控制屏 · 天气城市管理 · 危机投递状态 · 首启引导 · 主控台双态（连接后真数据）
+- 审批三态（始终允许）· 语音连续对话 · 通知开关接线
+
+### 工具链
+- pyflakes/bandit/cppcheck 全量扫描通过 · gcc -Wall 全模块零警告 · 40 Python 模块 import 冒烟
+
+---
+
 ## [0.7.0] - 2026-09-24（真机修复包 + server mode + 安全接线 + 危机链核心）
 
 > 本版 = 统一开发计划批次合并：P1（S 系列真机修复）+ P1.5（安全接线）+ P2（server mode 核心）

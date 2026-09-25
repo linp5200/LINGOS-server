@@ -159,6 +159,19 @@ int server_mode_request_stop(const char *source) {
 /* ============================================================
  * 主循环：日志尾随显示 + 输入门控
  * ============================================================ */
+
+/* 【0.7.0-hf】终端状态恢复：Ctrl-Q → raise(SIGTERM) → exit() 时
+ *   不会走函数尾部还原——用 atexit 兜底（否则退出后终端残留 raw 模式：
+ *   无回显/无行编辑——用户需手动 `reset` 才能恢复）。 */
+static struct termios g_saved_term;
+static int g_tty_saved = 0;
+static void server_mode_restore_term(void) {
+    if (g_tty_saved) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_term);
+        g_tty_saved = 0;
+    }
+}
+
 static void tail_open(FILE **fp, long *pos) {
     char logpath[512];
     safe_snprintf(logpath, sizeof(logpath), "%s/log/lingos.log", lingos_data_root());
@@ -238,58 +251,81 @@ static void tail_pump(FILE *fp, long *pos) {
 }
 
 void server_mode_run(void) {
-    /* ---- 头部 ---- */
-    uart_puts("\033[2J\033[H");
-    uart_puts("\033[1;36m");
-    uart_puts("┌────────────────────────────────────────────────────────────┐\n");
-    uart_puts("│  LING OS · SERVER MODE                                     │\n");
-    uart_puts("│  只显示日志 · 控制键：Ctrl-Q / Q（停止服务器）              │\n");
-    uart_puts("└────────────────────────────────────────────────────────────┘\n");
-    uart_puts("\033[0m\n");
-    fflush(stdout);
+    /* 【0.7.0-hf】终端能力探测：
+     *   · stdin 非 tty（后台/nohup/dev/null）→ 不轮询按键（防 /dev/null 空转 100% CPU）
+     *   · stdout 非 tty（输出进文件）→ 不尾随显示（日志已在文件里；防重复写入） */
+    int stdin_tty  = isatty(STDIN_FILENO);
+    int stdout_tty = isatty(STDOUT_FILENO);
 
-    LOG_INFO_T("ServerMode", "Run", "Enter", "server mode session started");
+    /* ---- 头部（有终端才显示） ---- */
+    if (stdout_tty) {
+        uart_puts("\033[2J\033[H");
+        uart_puts("\033[1;36m");
+        uart_puts("┌────────────────────────────────────────────────────────────┐\n");
+        uart_puts("│  LING OS · SERVER MODE                                     │\n");
+        uart_puts("│  只显示日志 · 控制键：Ctrl-Q / Q（停止服务器）              │\n");
+        uart_puts("└────────────────────────────────────────────────────────────┘\n");
+        uart_puts("\033[0m\n");
+        fflush(stdout);
+    }
 
-    /* ---- 终端：raw-ish（捕获 Ctrl-Q，逐字符） ---- */
+    LOG_INFO_T("ServerMode", "Run", "Enter",
+               "server mode session started (stdin_tty=%d, stdout_tty=%d)",
+               stdin_tty, stdout_tty);
+
+    /* ---- 终端：raw-ish（捕获 Ctrl-Q，逐字符；关闭 ISIG——控制键唯一，危机不可被 Ctrl-C 绕过） ---- */
     struct termios oldt, newt;
-    int tty_ok = (tcgetattr(STDIN_FILENO, &oldt) == 0);
+    int tty_ok = (stdin_tty && tcgetattr(STDIN_FILENO, &oldt) == 0);
     if (tty_ok) {
+        g_saved_term = oldt;
+        g_tty_saved = 1;
+        atexit(server_mode_restore_term);   /* 兜底：信号退出路径也恢复 */
         newt = oldt;
-        newt.c_lflag &= ~(tcflag_t)(ICANON | ECHO);
+        newt.c_lflag &= ~(tcflag_t)(ICANON | ECHO | ISIG);
         newt.c_iflag &= ~(tcflag_t)(IXON | IXOFF);
         newt.c_cc[VMIN] = 0;
         newt.c_cc[VTIME] = 0;
         tcsetattr(STDIN_FILENO, TCSANOW, &newt);
     }
 
-    /* ---- 日志尾随初始 ---- */
+    /* ---- 日志尾随初始（仅终端显示模式） ---- */
     FILE *fp = NULL;
     long pos = 0;
-    tail_open(&fp, &pos);
     FILE *afp = NULL;
     long apos = 0;
-    tail_open_named("api.log", &afp, &apos);
+    if (stdout_tty) {
+        tail_open(&fp, &pos);
+        tail_open_named("api.log", &afp, &apos);
+    }
 
     /* ---- 循环 ---- */
     while (server_mode_is_active()) {
-        struct pollfd pfd;
-        pfd.fd = STDIN_FILENO;
-        pfd.events = POLLIN;
-        pfd.revents = 0;
+        if (stdin_tty) {
+            struct pollfd pfd;
+            pfd.fd = STDIN_FILENO;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
 
-        int pr = poll(&pfd, 1, 500);
-        if (pr > 0 && (pfd.revents & POLLIN)) {
-            char c = 0;
-            if (read(STDIN_FILENO, &c, 1) == 1) {
-                if (c == 0x11 || c == 'q' || c == 'Q') {
-                    /* 控制键：停止服务器（危机时拒绝） */
-                    if (server_mode_request_stop("ctrl-q/local") == 0) {
-                        break;   /* 已被 raise(SIGTERM)——若信号未即时退出则循环结束 */
+            int pr = poll(&pfd, 1, 500);
+            if (pr > 0 && (pfd.revents & POLLIN)) {
+                char c = 0;
+                ssize_t rn = read(STDIN_FILENO, &c, 1);
+                if (rn == 1) {
+                    if (c == 0x11 || c == 'q' || c == 'Q') {
+                        /* 控制键：停止服务器（危机时拒绝） */
+                        if (server_mode_request_stop("ctrl-q/local") == 0) {
+                            break;   /* 已被 raise(SIGTERM)——若信号未即时退出则循环结束 */
+                        }
+                        /* 危机被拒 → 继续显示日志 */
                     }
-                    /* 危机被拒 → 继续显示日志 */
+                    /* 其余按键：忽略（先生设定：控制键唯一） */
+                } else if (rn == 0) {
+                    usleep(300000);   /* 终端半闭（EOF 就绪）——防空转 */
                 }
-                /* 其余按键：忽略（先生设定：控制键唯一） */
             }
+        } else {
+            /* 后台/无终端：无按键通道——1s 节拍（防 /dev/null 空转） */
+            sleep(1);
         }
 
         /* 外部停止请求（客户端 server mode stop → 标志文件） */
@@ -302,13 +338,15 @@ void server_mode_run(void) {
             }
         }
 
-        tail_pump(fp, &pos);
-        tail_pump_named(afp, &apos);
+        if (stdout_tty) {
+            tail_pump(fp, &pos);
+            tail_pump_named(afp, &apos);
+        }
     }
 
     if (fp) fclose(fp);
     if (afp) fclose(afp);
-    if (tty_ok) tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    if (g_tty_saved) server_mode_restore_term();   /* 正常路径直接恢复（atexit 兜底二次调用安全） */
     LOG_INFO_T("ServerMode", "Run", "Exit", "server mode session ended");
 }
 
@@ -331,13 +369,14 @@ int server_mode_command(const char *args) {
 
     if (strcmp(args, "on") == 0) {
         if (g_enabled) {
-            uart_puts(tr("server mode already ON\n", "server mode 已处于开启状态\n"));
-            return 1;
+            uart_puts(tr("server mode is already ON — re-entering log-only session\n",
+                         "server mode 已处于开启状态——重新进入只显示日志会话\n"));
+        } else {
+            server_mode_set_enabled(1);
+            uart_puts(tr("server mode ON — entering log-only mode (Ctrl-Q / Q to stop)\n",
+                         "server mode 已开启——进入只显示日志模式（Ctrl-Q / Q 停止）\n"));
         }
-        server_mode_set_enabled(1);
-        uart_puts(tr("server mode ON — entering log-only mode (Ctrl-Q / Q to stop)\n",
-                     "server mode 已开启——进入只显示日志模式（Ctrl-Q / Q 停止）\n"));
-        /* 立即进入 server mode 会话 */
+        /* 进入 server mode 会话（无论如何——保证可进入） */
         server_mode_run();
         return 1;
     }

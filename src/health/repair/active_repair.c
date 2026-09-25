@@ -311,12 +311,12 @@ static int match_error_pattern(const char *error_msg, const char *pattern) {
  * ============================================================ */
 
 static int execute_action(const repair_action_t *action, char *out_msg, size_t out_len) {
-    LOG_INFO_T("ActiveRepair", "Execute", "Enter", "action=%d", action->type);
-
+    /* 【0.7.0-hf2】先判空再解引用（原 LOG 在 NULL 检查前读了 action->type——空指针崩溃） */
     if (!action || !out_msg) {
         if (out_msg) safe_strncpy(out_msg, tr("Invalid action", "无效操作"), out_len);
         return -1;
     }
+    LOG_INFO_T("ActiveRepair", "Execute", "Enter", "action=%d", action->type);
 
     safe_strncpy(out_msg, tr("OK", "成功"), out_len);
 

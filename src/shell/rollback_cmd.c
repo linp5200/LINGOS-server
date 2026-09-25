@@ -36,7 +36,7 @@ static int is_valid_backup_path(const char *path) {
         LOG_WARN_T("RollbackCmd", "CheckPath", "NotDir", "%s is not a directory", path);
         return 0;
     }
-    /* 检查是否包含必要的二进制文件 
+    [检查是否包含必要的二进制文件]
     char test_path[512];
     safe_snprintf(test_path, sizeof(test_path), "%s/lingos_linux", path);
     if (access(test_path, F_OK) != 0) {

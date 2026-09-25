@@ -151,8 +151,10 @@ class SkillExecutor:
                 f"技能实现未找到：{handler_path}（请检查技能包完整性）"))
 
         except Exception as e:
+            # 【0.7.0-hf2】except 块结束后 e 被删除——lambda 延迟调用会 NameError
+            _err_text = str(e)
             logger.error(f"Failed to create Python executor: {e}")
-            return lambda args: (False, str(e))
+            return lambda args: (False, _err_text)
 
     @staticmethod
     def _eval_python_code(code: str, args_json: str) -> Tuple[bool, str]:

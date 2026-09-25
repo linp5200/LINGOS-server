@@ -13,6 +13,7 @@
 #include "audit.h"
 #include "web_update.h"
 #include "manifest.h"
+#include "update_verify.h"   /* 【0.7.0-hf2 S12】更新包签名校验 */
 #include "backup.h"
 #include "safe_string.h"
 #include "lang.h"
@@ -489,6 +490,26 @@ int system_update_install(const char *pkg_path) {
     if (access(pkg_path, F_OK) != 0) {
         LOG_ERROR_T("Update", "Install", "NoPkg", "package not found: %s (errno=%d)", pkg_path, errno);
         return -1;
+    }
+
+    /* 【0.7.0-hf2 S12 接入】更新包签名校验（先生裁决"更新包校验"）：
+     *   · 包旁存在 <pkg>.sig → Ed25519 必须验证通过（防篡改——强链）
+     *   · 无签名文件 → 警告放行（兼容当前发布链；发布侧加签名后自动强制）
+     *   注：仅验此一处（下载源头），解包后不再重复。 */
+    {
+        char sig_path2[1100];
+        safe_snprintf(sig_path2, sizeof(sig_path2), "%s.sig", pkg_path);
+        if (access(sig_path2, F_OK) == 0) {
+            if (update_verify_file(pkg_path, sig_path2, NULL) != 0) {
+                LOG_ERROR_T("Update", "Install", "BadSignature",
+                            "Ed25519 signature INVALID — refusing update: %s", pkg_path);
+                return -1;
+            }
+            LOG_INFO_T("Update", "Install", "SignatureOK", "Ed25519 signature verified: %s", pkg_path);
+        } else {
+            LOG_WARN_T("Update", "Install", "Unsigned",
+                       "package has no signature (%s missing) — proceeding with warning", sig_path2);
+        }
     }
 
     const char *ext = strrchr(pkg_path, '.');

@@ -274,7 +274,9 @@ static void render_separator(tui_control_t *ctl, struct ncplane *plane) {
     ncplane_set_fg_rgb(plane, 0x333333);
     ncplane_cursor_move_yx(plane, ctl->y, ctl->x);
     for (int i = 0; i < ctl->width && i < 80; i++) {
-        ncplane_putchar(plane, 0x2500);
+        /* 【0.7.0-hf2 修正】0x2500（'─'）传给 ncplane_putchar 被截断为 0（不渲染）→
+         *   改用 ncplane_putstr（UTF-8 多字节安全） */
+        ncplane_putstr(plane, "─");
     }
 }
 

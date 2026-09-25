@@ -5,7 +5,9 @@
  * @fix     移除 gethostname/getdomainname，替换 seccomp_strerror
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <seccomp.h>
 #include <unistd.h>
 #include <sys/syscall.h>

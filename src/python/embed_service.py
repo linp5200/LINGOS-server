@@ -166,7 +166,7 @@ def start_server():
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(SOCKET_PATH)
-    os.chmod(SOCKET_PATH, 0o666)
+    os.chmod(SOCKET_PATH, 0o600)  # 【0.7.0-hf2 安全】0666→0600（嵌入通道私有）
     server.listen(5)
 
     logger.info(f"Embedding service listening on {SOCKET_PATH}")

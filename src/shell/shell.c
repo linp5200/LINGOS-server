@@ -2214,14 +2214,34 @@ static int handle_builtin_command(const char *cmd) {
         } else if (strcmp(sub, "list") == 0 || *sub == '\0') {
             skill_store_list(NULL);
         } else if (strncmp(sub, "create ", 7) == 0) {
+            /* 【0.7.0-hf2 安全】参数过滤（防 shell 注入——仅允许技能名安全字符集） */
+            char safe_arg[256];
+            size_t ai = 0;
+            for (const char *p = sub + 7; *p && ai < sizeof(safe_arg) - 1; p++) {
+                char c = *p;
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                    || c == '_' || c == '-' || c == '.' || c == ' ')
+                    safe_arg[ai++] = c;
+            }
+            safe_arg[ai] = '\0';
             char cmdline[512];
             safe_snprintf(cmdline, sizeof(cmdline), "python3 %s/skill_dev.py create %s",
-                          lingos_data_root(), sub + 7);
+                          lingos_data_root(), safe_arg);
             (void)system(cmdline);
         } else if (strncmp(sub, "test ", 5) == 0) {
+            /* 【0.7.0-hf2 安全】同上过滤 */
+            char safe_arg[256];
+            size_t ai = 0;
+            for (const char *p = sub + 5; *p && ai < sizeof(safe_arg) - 1; p++) {
+                char c = *p;
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                    || c == '_' || c == '-' || c == '.' || c == ' ')
+                    safe_arg[ai++] = c;
+            }
+            safe_arg[ai] = '\0';
             char cmdline[640];
             safe_snprintf(cmdline, sizeof(cmdline), "python3 %s/skill_dev.py test %s",
-                          lingos_data_root(), sub + 5);
+                          lingos_data_root(), safe_arg);
             (void)system(cmdline);
         } else {
             uart_puts(tr("skill: install <name> | enable <name> | disable <name> | uninstall <name> | list | search <kw>\n",

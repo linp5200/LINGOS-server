@@ -177,7 +177,7 @@ static int run_checks(int quick_only, check_summary_t *summary) {
 
     clear_summary(&g_last_summary);
 
-    int has_failure = 0;
+    /* 【0.7.0-hf2】删除冗余 has_failure（返回值由 aggregate 汇总判断） */
     for (int i = 0; i < g_item_count; i++) {
         check_item_t *item = g_items[i];
         if (!item) continue;
@@ -191,9 +191,7 @@ static int run_checks(int quick_only, check_summary_t *summary) {
             continue;
         }
         check_result_t result;
-        if (run_item(item, &result) != 0 && result == CHECK_RESULT_FAIL) {
-            has_failure = 1;
-        }
+        (void)run_item(item, &result);   /* 结果已写入 item->last_result 与汇总 */
     }
 
     aggregate_results(&g_last_summary);

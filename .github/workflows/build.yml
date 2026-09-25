@@ -19,7 +19,7 @@ permissions:
 
 env:
   # 【0.7.0】统一版本源：VERSION 文件（单一事实源——防多处漂移）
-  VERSION: 0.7.0
+  VERSION: 0.7.1
 
 jobs:
   build:

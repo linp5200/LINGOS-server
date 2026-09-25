@@ -362,7 +362,7 @@ def start_server() -> None:
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         server.bind(SOCKET_PATH)
-        os.chmod(SOCKET_PATH, 0o666)
+        os.chmod(SOCKET_PATH, 0o600)  # 【0.7.0-hf2 安全】0666→0600（审批通道私有）
         server.listen(5)
         logger.info(f"Authorization service listening on {SOCKET_PATH}")
     except Exception as e:

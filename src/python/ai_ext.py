@@ -180,7 +180,7 @@ def cmd_kb_upload(path: str = "", name: str = "", tags: str = "") -> dict:
     if not text.strip():
         return {"status": "error", "msg": _t("No extractable text", "无可提取文本")}
 
-    doc_id = hashlib.sha1((path + str(time.time())).encode()).hexdigest()[:12]
+    doc_id = hashlib.sha256((path + str(time.time())).encode()).hexdigest()[:12]   # 【0.7.0-hf2】sha1→sha256（bandit B324）
     chunks = _chunk_text(text)
     vectors = _embed_texts(chunks)
 

@@ -44,7 +44,10 @@ void ui_show_install_progress(const char *pkg_name, int percent, progress_status
         default:               color = COLOR_DIM; break;
     }
 
+    /* 【0.7.0-hf2】应用状态色（原 color 未使用） */
+    uart_puts(color);
     log_draw_progress(percent, pkg_name, status);
+    uart_puts(COLOR_RESET);
 }
 
 void ui_show_network_error(const char *reason) {

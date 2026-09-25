@@ -134,8 +134,23 @@ static int http_auth_check(struct MHD_Connection *connection) {
     return connection_verify_token(token);
 }
 
+/* 【0.7.0-hf2 安全】HTTP 文件端点访问边界：仅允许 /LINGOS 与 /tmp
+ *   背景：四个 files 端点（list/download/delete/upload）此前对 path 无任何
+ *   限制——持 token 客户端可读 /etc/shadow、/root/.git-credentials（token！），
+ *   可删任意系统文件。现在统一白名单（应用区 + 临时区）。 */
+static int http_fs_path_allowed(const char *path) {
+    if (!path || !*path) return 0;
+    if (strstr(path, "/../") || strcmp(path, "..") == 0) return 0;
+    return (strncmp(path, "/LINGOS/", 8) == 0 || strcmp(path, "/LINGOS") == 0 ||
+            strncmp(path, "/tmp/", 5) == 0);
+}
+
 static int handle_files_list(struct MHD_Connection *connection, const char *path) {
-    if (!path || path[0] == '\0') path = "/";
+    if (!path || path[0] == '\0' || strcmp(path, "/") == 0) path = "/LINGOS";
+    if (!http_fs_path_allowed(path)) {
+        send_json_response(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"path not allowed\"}");
+        return MHD_YES;
+    }
     DIR *d = opendir(path);
     if (!d) {
         char buf[256];
@@ -179,6 +194,10 @@ static int handle_files_download(struct MHD_Connection *connection, const char *
         send_json_response(connection, MHD_HTTP_BAD_REQUEST, "{\"error\":\"missing path\"}");
         return MHD_YES;
     }
+    if (!http_fs_path_allowed(path)) {
+        send_json_response(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"path not allowed\"}");
+        return MHD_YES;
+    }
     FILE *fp = fopen(path, "rb");
     if (!fp) {
         send_json_response(connection, MHD_HTTP_NOT_FOUND, "{\"error\":\"file not found\"}");
@@ -202,6 +221,10 @@ static int handle_files_download(struct MHD_Connection *connection, const char *
 static int handle_files_delete(struct MHD_Connection *connection, const char *path) {
     if (!path || path[0] == '\0') {
         send_json_response(connection, MHD_HTTP_BAD_REQUEST, "{\"error\":\"missing path\"}");
+        return MHD_YES;
+    }
+    if (!http_fs_path_allowed(path)) {
+        send_json_response(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"path not allowed\"}");
         return MHD_YES;
     }
     if (unlink(path) == 0) {
@@ -606,7 +629,7 @@ static enum MHD_Result request_handler(void *cls,
             /* 首包：创建上传上下文 */
             struct upload_ctx *ctx = calloc(1, sizeof(struct upload_ctx));
             if (!ctx) return MHD_NO;
-            if (path && path[0]) {
+            if (path && path[0] && http_fs_path_allowed(path)) {
                 safe_strncpy(ctx->path, path, sizeof(ctx->path));
                 ctx->fp = fopen(ctx->path, "wb");
                 if (!ctx->fp) ctx->failed = 1;

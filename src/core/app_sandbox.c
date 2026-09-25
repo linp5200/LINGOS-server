@@ -5,7 +5,9 @@
  * @changes 集成防御模式（绝对保护强制 strict）；安全字符串替换
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>

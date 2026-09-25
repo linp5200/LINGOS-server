@@ -265,7 +265,7 @@ class RepairEngine:
         message = error_event.get('message', '')
         source = error_event.get('source', 'unknown')
         error_type = error_event.get('type', 'unknown')
-        fingerprint = hashlib.md5(f"{source}:{message}".encode()).hexdigest()[:16]
+        fingerprint = hashlib.sha256(f"{source}:{message}".encode()).hexdigest()[:16]   # 【0.7.0-hf2】md5→sha256（bandit B324）
 
         return {
             "source": source,
@@ -370,29 +370,69 @@ class RepairEngine:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def execute_repair(self, pack_path: str) -> Tuple[bool, str]:
-        try:
-            logger.info(f"Executing repair: {pack_path}")
-            # 调用 system_update_install 命令
-            cmd = f"system update {pack_path}"
-            return True, t("Repair pack applied successfully", "修复包应用成功")
-        except Exception as e:
-            logger.error(f"Execute repair failed: {e}")
-            return False, str(e)
+        """【0.7.0-hf2 诚实化】原为假成功（构造 cmd 后从未执行）——
+        修复包实际应用经 C 端 system_update_install（shell 命令 'system update <path>'）。
+        本模块不再伪造状态；如需应用修复包，请调用该命令（权限与签名校验由 C 端执行）。"""
+        logger.info(f"execute_repair called with: {pack_path}")
+        return False, t(
+            "Repair pack application is handled by the system updater "
+            "(run 'system update <path>' on the host; verification by C-side updater)",
+            "修复包应用由系统更新器处理（在主机执行 'system update <路径>'；校验由 C 端完成）")
 
     def verify_repair(self, error_fingerprint: str) -> bool:
         logger.info(f"Verifying repair for fingerprint: {error_fingerprint}")
         return True
 
     def rollback(self, backup_path: str) -> bool:
+        """【0.7.0-hf2 加固】原实现无备份有效性校验直接 rmtree(/LINGOS)——
+        空/残缺备份 = 全损风险。现：① 结构校验（必须含关键路径）② 先原子改名再拷贝
+        （失败可回退）③ 失败保底恢复改名。"""
         if not os.path.exists(backup_path):
             logger.error(f"Backup path not found: {backup_path}")
             return False
+        # ① 备份结构校验（防止空目录/错误路径导致 /LINGOS 被清空）
+        must_have = ["bin", "system", "share"]
+        missing = [d for d in must_have
+                   if not os.path.exists(os.path.join(backup_path, d))]
+        if missing:
+            logger.error(f"Backup invalid (missing {missing}): {backup_path} — rollback aborted")
+            return False
+        # 基准路径安全（防把 LINGOS_ROOT 本身/其父级当备份）
+        real_bak = os.path.realpath(backup_path)
+        real_root = os.path.realpath(LINGOS_ROOT)
+        if real_bak == real_root or real_bak.startswith(real_root + "/") or \
+           real_root.startswith(real_bak + "/"):
+            logger.error(f"Backup path overlaps LINGOS_ROOT — rollback aborted")
+            return False
+
+        import shlex
+        staging = f"{LINGOS_ROOT}.pre_rollback"
         try:
             os.system("pkill lingosd || true")
             os.system("pkill -f ai_server.py || true")
-            shutil.rmtree(LINGOS_ROOT, ignore_errors=True)
-            shutil.copytree(backup_path, LINGOS_ROOT, symlinks=True, dirs_exist_ok=True)
-            os.system(f"cd {LINGOS_ROOT}/.. && ./lingos_linux &")
+            # ② 先改名（原子）+ 拷贝；失败可回退
+            shutil.rmtree(staging, ignore_errors=True)
+            if os.path.exists(LINGOS_ROOT):
+                os.rename(LINGOS_ROOT, staging)
+            try:
+                shutil.copytree(backup_path, LINGOS_ROOT, symlinks=True, dirs_exist_ok=True)
+            except Exception as ce:
+                # 拷贝失败 → 恢复原目录（防残缺状态）
+                logger.error(f"copytree failed ({ce}) — restoring previous root")
+                shutil.rmtree(LINGOS_ROOT, ignore_errors=True)
+                if os.path.exists(staging):
+                    os.rename(staging, LINGOS_ROOT)
+                return False
+            shutil.rmtree(staging, ignore_errors=True)
+            # 【0.7.0-hf2 安全】list 形式重启（无 shell——bandit B605）
+            import subprocess
+            _parent = os.path.dirname(os.path.realpath(LINGOS_ROOT))
+            try:
+                subprocess.Popen(["./lingos_linux"], cwd=_parent,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            except Exception as pe:
+                logger.warning("relaunch after rollback failed: %s", pe)
             logger.info(f"Rollback completed from {backup_path}")
             return True
         except Exception as e:

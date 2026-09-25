@@ -59,7 +59,8 @@ logging.basicConfig(
     handlers=[_file_h, _console_h]
 )
 try:
-    with open(CONFIG_PATH if 'CONFIG_PATH' in dir() else "/LINGOS/system/config/ai_config.json", encoding="utf-8") as _cf:
+    # 【0.7.0-hf2】清理 CONFIG_PATH 名称探测（dir() 写法难维护）——直接使用配置路径
+    with open("/LINGOS/system/config/ai_config.json", encoding="utf-8") as _cf:
         _lvl = json.load(_cf).get("log_level", "warning")
 except Exception:
     _lvl = "warning"

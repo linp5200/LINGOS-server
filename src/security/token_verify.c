@@ -92,7 +92,7 @@ int token_generate(void) {
         return -1;
     }
 
-    char rand_buf[TOKEN_LENGTH];
+    unsigned char rand_buf[TOKEN_LENGTH];
     crypto_random_bytes(rand_buf, TOKEN_LENGTH);
 
     char token[TOKEN_LENGTH + 1];

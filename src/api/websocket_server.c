@@ -895,6 +895,13 @@ typedef struct ws_thread_arg {
     char ip[INET_ADDRSTRLEN];
 } ws_thread_arg_t;
 
+/* 【0.7.0-hf2】pthread 包装（消除 -Wcast-function-type——原直接 cast 函数指针） */
+static void handle_client(void *argp);   /* 前向声明（包装先于定义引用） */
+static void *handle_client_thread(void *argp) {
+    handle_client(argp);
+    return NULL;
+}
+
 static void handle_client(void *argp) {
     ws_thread_arg_t *arg = (ws_thread_arg_t *)argp;
     int client_fd = arg ? arg->fd : -1;
@@ -1111,7 +1118,7 @@ static void* ws_loop(void *arg) {
             arg->fd = client_fd;
             safe_strncpy(arg->ip, ip, sizeof(arg->ip));
             pthread_t client_thread;
-            pthread_create(&client_thread, NULL, (void* (*)(void*))handle_client, arg);
+            pthread_create(&client_thread, NULL, handle_client_thread, arg);
             pthread_detach(client_thread);
         } else {
             close(client_fd);

@@ -59,9 +59,22 @@ int camera_init(const vision_config_t *config) {
         char cmd[512];
         const char *py = "/LINGOS/python/bin/python3";
         if (access(py, X_OK) != 0) py = "python3";
-        safe_snprintf(cmd, sizeof(cmd),
-                      "%s /LINGOS/bin/rtsp_streamer.py --url \"%s\" --frame-port %d --http-port %d >/dev/null 2>&1 &",
-                      py, g_rtsp_url, g_rtsp_frame_port, g_rtsp_http_port);
+        /* 【0.7.0-hf2 安全】URL 过滤：拒引号/命令替换（配置可控→防注入） */
+        {
+            char safe_url[256];
+            size_t ui = 0;
+            for (const char *up = g_rtsp_url; *up && ui < sizeof(safe_url) - 1; up++) {
+                char uc = *up;
+                if (uc == '"' || uc == '\'' || uc == '`' || uc == '$' || uc == '\\' ||
+                    uc == ';' || uc == '|' || uc == '&' || uc == '<' || uc == '>')
+                    continue;
+                safe_url[ui++] = uc;
+            }
+            safe_url[ui] = '\0';
+            safe_snprintf(cmd, sizeof(cmd),
+                          "%s /LINGOS/bin/rtsp_streamer.py --url \"%s\" --frame-port %d --http-port %d >/dev/null 2>&1 &",
+                          py, safe_url, g_rtsp_frame_port, g_rtsp_http_port);
+        }
         system(cmd);
         LOG_INFO_T("Camera", "Init", "RTSPStart", "rtsp_streamer started: %s", g_rtsp_url);
         /* 等待流服务就绪后连接帧通道 */

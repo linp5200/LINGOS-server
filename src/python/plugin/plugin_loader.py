@@ -8,6 +8,7 @@ LING OS Plugin Loader
 
 import os
 import sys
+import json  # 【0.7.0-hf2】execute_skill 返回 dict 时 json.dumps 依赖（此前缺失→NameError）
 import importlib
 import logging
 import threading

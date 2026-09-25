@@ -123,7 +123,11 @@ int alert_history_query(const char *location, const char *type_str, int time_ran
             char line[256];
             while (fgets(line, sizeof(line), fp)) {
                 if (strstr(line, "\"type\"")) {
-                    sscanf(line, "  \"type\": %d,", &ev.type);
+                    /* 【0.7.0-hf2】%d 需 int* —— 经临时变量中转（enum 指针存在类型告警） */
+                    int _t = 0;
+                    if (sscanf(line, "  \"type\": %d,", &_t) == 1) {
+                        ev.type = (alert_type_t)_t;
+                    }
                 } else if (strstr(line, "\"level\"")) {
                     sscanf(line, "  \"level\": %d,", &ev.level);
                 } else if (strstr(line, "\"source\"")) {

@@ -71,12 +71,14 @@ static void* heartbeat_thread_func(void *arg) {
 static void* voice_loop_thread(void *arg) {
     (void)arg;
 
+    /* 【0.7.0-hf2】降级式初始化（原 REPORT_ERROR → abort 崩溃循环——
+     *   audio/wakeword 初始化失败时进程自杀被 watchdog 反复重启）。 */
     if (audio_init(&g_config) != 0) {
-        REPORT_ERROR("voiced: audio_init failed");
+        LOG_WARN_T("Voiced", "VoiceLoop", "AudioInitFail", "audio_init failed (continuing in standby)");
     }
 
     if (wakeword_init(&g_config) != 0) {
-        REPORT_ERROR("voiced: wakeword_init failed");
+        LOG_WARN_T("Voiced", "VoiceLoop", "WakewordInitFail", "wakeword_init failed (continuing in standby)");
     }
 
     LOG_INFO_T("Voiced", "VoiceLoop", "Start", "voice monitoring started, wakeword='%s'",
@@ -85,8 +87,8 @@ static void* voice_loop_thread(void *arg) {
     while (g_running) {
         audio_frame_t frame;
         if (audio_capture(&frame) != 0) {
-            LOG_WARN_T("Voiced", "VoiceLoop", "CaptureFail", "audio capture failed");
-            sleep(1);
+            /* 无麦克风 → 待机（audio_input 内部 60s 限频日志；此处 5s 节拍） */
+            for (int i = 0; i < 5 && g_running; i++) sleep(1);
             continue;
         }
 

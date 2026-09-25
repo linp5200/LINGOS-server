@@ -56,10 +56,23 @@ static int load_patterns_from_file(const char *path) {
         if (line[0] == '#' || line[0] == '\n') continue;
         char *nl = strchr(line, '\n');
         if (nl) *nl = '\0';
-        tmp = realloc(tmp, (count+1) * sizeof(char*));
-        if (!tmp) { fclose(fp); return -1; }
+        /* 【0.7.0-hf2 修复】realloc 直接赋值失败会泄漏原数组——用临时变量；
+         *   失败路径补齐已分配元素释放。 */
+        char **ntmp = realloc(tmp, (count+1) * sizeof(char*));
+        if (!ntmp) {
+            for (int i = 0; i < count; i++) free(tmp[i]);
+            free(tmp);
+            fclose(fp);
+            return -1;
+        }
+        tmp = ntmp;
         tmp[count] = strdup(line);
-        if (!tmp[count]) { fclose(fp); return -1; }
+        if (!tmp[count]) {
+            for (int i = 0; i < count; i++) free(tmp[i]);
+            free(tmp);
+            fclose(fp);
+            return -1;
+        }
         count++;
     }
     fclose(fp);
@@ -73,11 +86,14 @@ static int load_patterns_from_file(const char *path) {
 static void load_default_patterns(void) {
     free_patterns();
     for (int i = 0; default_patterns[i]; i++) {
-        patterns = realloc(patterns, (pattern_count+1) * sizeof(char*));
-        if (patterns) {
-            patterns[pattern_count] = strdup(default_patterns[i]);
-            pattern_count++;
-        }
+        /* 【0.7.0-hf2 修复】原 realloc 失败将 patterns 置 NULL（原数组泄漏 +
+         *   后续 free_patterns 遍历 NULL 段错误）——临时变量 + 失败即停。 */
+        char **np = realloc(patterns, (pattern_count+1) * sizeof(char*));
+        if (!np) break;
+        patterns = np;
+        patterns[pattern_count] = strdup(default_patterns[i]);
+        if (!patterns[pattern_count]) break;
+        pattern_count++;
     }
     LOG_INFO_T("InputFilter", "Load", "Default", "loaded %d default patterns", pattern_count);
 }

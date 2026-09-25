@@ -139,14 +139,19 @@ void crypto_sign_keypair(uint8_t *public_key, uint8_t *private_key) {
 void crypto_sign(uint8_t *signature, const uint8_t *message, size_t message_len,
                  const uint8_t *private_key) {
     if (!signature || !private_key) return;
-    /* 由私钥重建 64 字节 secret_key（seed || public） */
+    /* 【0.7.0-hf2 修正】private_key 为 32 字节 seed（crypto_sign_keypair 存的是
+     *   secret_key[64] 的前 32 字节 = seed）——必须先重建 64 字节 secret_key（seed||public）
+     *   才能签名。直接传 32 字节给 crypto_eddsa_sign 会越界读 64 字节（危险）。
+     *   注：monocypher key_pair 的 seed 参数非 const → 局部拷贝后调用。 */
     uint8_t secret_key[64];
     uint8_t public_key[32];
-    memcpy(secret_key, private_key, 32);
-    crypto_eddsa_key_pair(secret_key, public_key, private_key);  /* 填出 public */
-    memcpy(secret_key + 32, public_key, 32);
+    uint8_t seed[32];
+    memcpy(seed, private_key, 32);
+    crypto_eddsa_key_pair(secret_key, public_key, seed);   /* seed → 完整 keypair */
     crypto_eddsa_sign(signature, secret_key, message, message_len);
     crypto_wipe(secret_key, sizeof(secret_key));
+    crypto_wipe(public_key, sizeof(public_key));
+    crypto_wipe(seed, sizeof(seed));
 }
 
 int crypto_verify(const uint8_t *signature, const uint8_t *message, size_t message_len,

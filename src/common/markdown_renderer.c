@@ -127,15 +127,16 @@ void md_render_line(const char *line) {
     /* 表格行（青色/紫色边框样式） */
     if (md_is_table_row(line)) {
         uart_puts(MD_TABLE);
-        /* 替换 | 为 │（视觉分隔） */
-        char buf[512];
-        size_t n = strlen(line);
-        if (n > sizeof(buf) - 1) n = sizeof(buf) - 1;
-        for (size_t i = 0; i < n; i++) {
-            buf[i] = (line[i] == '|') ? '│' : line[i];
+        /* 替换 | 为 │（视觉分隔）
+         * 【0.7.0-hf2 修正】'│' 为 3 字节 UTF-8——原单字节 char 赋值被截断（乱码）；
+         *   改用逐段输出（安全，无缓冲边界风险）。 */
+        for (const char *p = line; *p; p++) {
+            if (*p == '|') {
+                uart_puts("│");
+            } else {
+                uart_putc(*p);
+            }
         }
-        buf[n] = '\0';
-        uart_puts(buf);
         uart_puts(MD_RESET);
         uart_puts("\n");
         return;

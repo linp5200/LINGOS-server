@@ -231,9 +231,37 @@ case "$CMD" in
     done
     ;;
 
-  log)   tail -n "${2:-30}" "$LOG/${3:-ai_server}.log" 2>/dev/null || echo "无日志" ;;
+  log)   # 【0.7.0-hf】默认看主日志 lingos.log（原默认 ai_server.log——先生反馈"看不到日志"）
+         M="${3:-lingos}"; n="${2:-50}"
+         if [ "$M" = "list" ]; then
+             ls -la "$LOG"/ 2>/dev/null
+         else
+             tail -n "$n" "$LOG/$M.log" 2>/dev/null || echo "无日志（用法: bash lingos.sh log [行数] [lingos|ai_server|supervisor|api]）"
+         fi ;;
   ai)    PY="$(_pick_python)"; env -u LD_LIBRARY_PATH "$PY" "$ROOT/bin/ai_server.py" ;;
   ui)    echo "Web UI: http://localhost:8080/ui  (局域网: http://<本机IP>:8080/ui)" ;;
+
+  fg|foreground)
+    # 【0.7.0-hf】前台运行（先生工作流：实时日志 + shell 交互；Ctrl-C 优雅退出）
+    #   与 start 的区别：start 走后台+监督者（崩溃自动恢复但看不到日志）；
+    #   fg 直接前台跑主程序（日志全显示）——退出时 v0.7.0 会自动收尾全部子进程。
+    if _pids lingos_linux >/dev/null || _pids lingos_supervisor >/dev/null; then
+        echo "  检测到后台模式运行中——先停止（避免双实例冲突）..."
+        bash "$0" stop
+        sleep 2
+    fi
+    cd "$ROOT" || exit 1
+    _sync_python_scripts
+    echo "==> 前台运行 LING OS（实时日志 + 交互界面）"
+    echo "    Ctrl-C / Ctrl-Q 退出（子进程自动收尾）"
+    echo ""
+    bash "$ROOT/start.sh"
+    _rc=$?
+    # 退出后恢复终端（server mode / TUI 可能留下 raw 模式——无回显时靠这行救回）
+    if [ -t 0 ]; then stty sane 2>/dev/null || true; fi
+    echo "==> 已退出（终端已恢复）"
+    exit $_rc
+    ;;
 
   doctor)
     echo "==> 环境诊断"
@@ -250,12 +278,13 @@ case "$CMD" in
 
   *)
     cat <<EOF
-用法: bash lingos.sh {start|stop|restart|status|log|ui|doctor}
-  start    启动（主程序 + ai_server，自动避坑）
+用法: bash lingos.sh {start|stop|restart|fg|status|log|ui|doctor}
+  start    启动（后台模式：监督者+崩溃自动恢复；日志进文件）
+  fg       前台运行（实时日志 + shell 交互；Ctrl-C 退出）
   stop     停止全部
   restart  重启
   status   运行状态 + 端口检查
-  log [n] [mod]  查看日志（默认 ai_server 30 行）
+  log [n] [mod]  查看日志（默认 lingos 50 行；mod=lingos|ai_server|supervisor|api|list）
   ui       显示 Web UI 地址
   doctor   环境诊断（python/SSL/缺库）
 EOF

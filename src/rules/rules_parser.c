@@ -140,9 +140,12 @@ int rules_parser_evaluate(const char *condition, int *result) {
  * ============================================================ */
 
 const char** rules_parser_get_condition_templates(void) {
-    static const char *names[16];
+    /* 【0.7.0-hf2 修复】原条件顺序相反（先解引用后查界）且边界 15 > 数组实际尺寸——
+     *   改：先查界（sizeof 实长）再解引用；names 与源数组同长。 */
+    enum { _MAXT = (int)(sizeof(g_condition_templates) / sizeof(g_condition_templates[0])) };
+    static const char *names[_MAXT + 1];
     int i = 0;
-    while (g_condition_templates[i].name && i < 15) {
+    while (i < _MAXT && g_condition_templates[i].name) {
         names[i] = g_condition_templates[i].name;
         i++;
     }

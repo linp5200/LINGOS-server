@@ -14,8 +14,8 @@
  * 
  * 收集内容：
  *   - 系统信息（CPU、内存、磁盘、进程列表、网络状态）
- *   - 日志文件（/LINGOS/Debug/*.log）
- *   - 配置文件（/LINGOS/system/config/*）
+ *   - 日志文件（/LINGOS/Debug 下 log 文件）
+ *   - 配置文件（/LINGOS/system/config 下全部）
  *   - 根据错误类型判断是否包含用户数据
  *   - 打包为 /LINGOS/Dump/crash_<timestamp>.tar.gz
  */
