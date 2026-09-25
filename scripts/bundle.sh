@@ -211,7 +211,20 @@ for _daemon in lingos_alertd lingos_visiond lingos_voiced; do
   [ -f "$DIR/$_daemon" ] && cp -a "$DIR/$_daemon" "$TARGET/bin/" 2>/dev/null || true
 done
 cp -a "$DIR"/lib/* "$TARGET/lib/" 2>/dev/null || true
-[ -d "$DIR/python" ] && cp -a "$DIR/python" "$TARGET/python" 2>/dev/null || true
+# 【0.7.1-hf3 修复】python 目录整体替换（防 cp 嵌套）
+#   原写法 cp -a "$DIR/python" "$TARGET/python"（目标已存在时）会产生
+#   $TARGET/python/python/ 嵌套——而 $TARGET/python/server 保持旧版！
+#   后果：server 脚本永不更新（先生真机 2026-09-25 取证：get_skill_risk 错误反复出现）。
+if [ -d "$DIR/python" ]; then
+  rm -rf "$TARGET/python.new"
+  cp -a "$DIR/python" "$TARGET/python.new" 2>/dev/null || true
+  if [ -d "$TARGET/python.new" ]; then
+    rm -rf "$TARGET/python.old"
+    [ -d "$TARGET/python" ] && mv "$TARGET/python" "$TARGET/python.old" 2>/dev/null || true
+    mv "$TARGET/python.new" "$TARGET/python" 2>/dev/null || true
+    rm -rf "$TARGET/python.old"
+  fi
+fi
 [ -d "$DIR/share/webui" ] && cp -a "$DIR"/share/webui/* "$TARGET/share/webui/" 2>/dev/null || true
 # 3) 放启动脚本
 cp -a "$DIR/start.sh" "$TARGET/start.sh" 2>/dev/null || true

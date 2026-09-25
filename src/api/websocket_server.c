@@ -543,9 +543,6 @@ static void ws_forward_auth_resp(ws_client_t *client, const char *req_id, int ap
 static void process_client_message(ws_client_t *client, const char *msg) {
     if (!client || !msg) return;
 
-    /* 【0.7.0 P2-B】API 日志（WS 通道——server mode 可查看） */
-    api_log("ws", "in", "-", 0, 0, (long)strlen(msg), NULL);
-
     /* 简单解析：{"type":"subscribe","topic":"/system/status"} */
     char *p = strstr(msg, "\"type\"");
     if (!p) return;
@@ -566,6 +563,14 @@ static void process_client_message(ws_client_t *client, const char *msg) {
                 }
             }
         }
+    }
+
+    /* 【0.7.1-hf3】WS 接收日志：主日志 + API 日志（op=真实 type——此前为 "-"，
+     *   先生无法从日志得知 App 发来的操作。command 类型在下方分支记录 cmd 名。） */
+    if (strcmp(type, "command") != 0) {
+        LOG_DEBUG_T("WebSocket", "Recv", "Msg", "type=%s client=%s len=%d",
+                    type, client->id, (int)strlen(msg));
+        api_log("ws", "in", type[0] ? type : "-", 0, 0, (long)strlen(msg), NULL);
     }
 
     /* 【先生设计】受限模式（免验证连接——危险操作拒绝） */
@@ -824,6 +829,33 @@ static void process_client_message(ws_client_t *client, const char *msg) {
 
     /* 【先生决策】App 命令 → Python 直通 */
     if (strcmp(type, "command") == 0 && client->authenticated) {
+        /* 【0.7.1-hf3】命令详情日志（cmd 名——先生可追踪 App 发来的每个操作） */
+        {
+            char cmdname[64] = {0};
+            char *cp = strstr(msg, "\"cmd\"");
+            if (cp) {
+                char *c2 = strchr(cp, ':');
+                if (c2) {
+                    c2++;
+                    while (*c2 == ' ' || *c2 == '\t') c2++;
+                    if (*c2 == '"') {
+                        c2++;
+                        char *e2 = json_scan_str_end(c2);
+                        if (e2 && e2 - c2 < (int)sizeof(cmdname) - 1) {
+                            memcpy(cmdname, c2, e2 - c2);
+                            cmdname[e2 - c2] = '\0';
+                        }
+                    }
+                }
+            }
+            if (strcmp(cmdname, "ping") == 0) {
+                LOG_DEBUG_T("WebSocket", "Cmd", "Recv", "cmd=ping client=%s", client->id);
+            } else {
+                LOG_INFO_T("WebSocket", "Cmd", "Recv", "cmd=%s client=%s len=%d",
+                           cmdname[0] ? cmdname : "?", client->id, (int)strlen(msg));
+            }
+            api_log("ws", "in", cmdname[0] ? cmdname : "command", 0, 0, (long)strlen(msg), NULL);
+        }
         ws_forward_command(client, msg);
         return;
     }

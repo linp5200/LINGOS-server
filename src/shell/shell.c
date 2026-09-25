@@ -2286,6 +2286,19 @@ static int handle_builtin_command(const char *cmd) {
 /* ============================================================
  * FTF[Shell 主循环（含增强提示符）]
  * ============================================================ */
+/* 【0.7.1-hf3】外部停止请求检查（App server_mode_stop / Web 命令 → 标志文件）
+ *   主循环空档 + 输入等待超时都会调用——保证随时可被停止（≤1s 响应）。
+ *   先生真机 2026-09-25：命令行版 shell 空闲阻塞在 getchar，App 停止请求 20s+ 不生效。 */
+static void shell_check_external_stop(void) {
+    char reqp[512];
+    safe_snprintf(reqp, sizeof(reqp), "%s/run/server_mode_stop_request", lingos_data_root());
+    if (access(reqp, F_OK) == 0) {
+        unlink(reqp);
+        LOG_WARN_T("Shell", "StopReq", "Recv", "external stop request (server mode stop) — stopping");
+        server_mode_request_stop("client");
+    }
+}
+
 void shell_run(void) {
     /* 【0.7.0 P2】server mode 入口检测（先生设定：只显示日志、不接受输入）
      *   · server_mode.json enabled=1 → 直接进入（持久化生效）
@@ -2338,15 +2351,8 @@ void shell_run(void) {
         loop_count++;
 
         if (loop_count % 10 == 0 || last_status_bar_update == 0) {
-            /* 【0.7.0 P2】检查客户端停止请求（server mode stop 外部通道——危机时拒绝） */
-            {
-                char reqp[512];
-                safe_snprintf(reqp, sizeof(reqp), "%s/run/server_mode_stop_request", lingos_data_root());
-                if (access(reqp, F_OK) == 0) {
-                    unlink(reqp);
-                    server_mode_request_stop("client");
-                }
-            }
+            /* 【0.7.0 P2 / 0.7.1-hf3】检查客户端停止请求（函数化——主循环与输入等待共用） */
+            shell_check_external_stop();
             int ai_ok = ai_status_query();
             int task_cnt = get_background_task_count();
             const char *mode = startup_mode_name(startup_mode_get());
@@ -2437,7 +2443,26 @@ void shell_run(void) {
         /* ---- 读取用户输入 ---- */
         idx = 0;
         while (1) {
+            /* 【0.7.1-hf3】可打断输入等待：select 1s 超时轮询——空闲时也能响应
+             *   外部停止请求（App/Web 远程停止）。原实现阻塞在 getchar——用户不在
+             *   终端打字时外部停止永远不生效（先生真机取证 2026-09-25）。 */
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(STDIN_FILENO, &rfds);
+            struct timeval tv_in;
+            tv_in.tv_sec = 1;
+            tv_in.tv_usec = 0;
+            int sel = select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv_in);
+            if (sel <= 0) {
+                shell_check_external_stop();   /* 超时/中断 → 检查停止请求 */
+                if (sel < 0 && errno != EINTR) usleep(200000);
+                continue;
+            }
             char c = uart_getc();
+            if (c == '\0') {           /* EOF（非交互 stdin）——短暂让出防忙转 */
+                usleep(300000);
+                continue;
+            }
             if (c == '\r' || c == '\n') {
                 uart_puts("\r\n");
                 cmd[idx] = '\0';

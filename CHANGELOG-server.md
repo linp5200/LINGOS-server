@@ -5,6 +5,28 @@
 
 ---
 
+## [0.7.2] - 2026-09-25（hotfix：部署链方向根因 + 输入可打断 + 日志补全）
+
+> 先生真机取证：AI 工具调用错误反复 / App 停止服务器不生效 / 日志无法追踪 App 指令。
+
+### 修复（Fixes）
+- **部署链根因（最关键）**：
+  - install.sh 模板：python 复制防嵌套——原 `cp -a src dst`（目标已存在）产生
+    `python/python/` 嵌套，`python/server` 脚本**永不更新**（真机取证）
+  - lingos.sh `_sync_python_scripts`：方向修正——原 cmp 不同即覆盖，**旧 python/server
+    会反向降级新版 bin**（先生环境因此把 v0.7.0/0.7.1 的全部 Python 修复覆盖回 9月4日版本，
+    即 get_skill_risk 错误反复出现的根因）
+- **shell.c 输入可打断**：select 1s 超时轮询——空闲时也能响应外部停止
+  （原阻塞 getchar，App `server_mode_stop` 在用户不打字时永不生效）
+- **server_mode.c**：命令前重读状态文件（App/终端互操作防内存漂移）
+- **main.c**：AI 冷启动窗口 8→12s（真机仍见 attempt 1/4、2/4 failed）
+
+### 新增（日志可观测性——先生诉求"发指令无法知晓"）
+- WS 接收主日志（type + **cmd 名**）· TCP 命令主日志
+- API 日志 op 从常数 `-` 改为**真实命令名**
+
+---
+
 ## [0.7.1] - 2026-09-25（hotfix 批次：全量静态扫描 + 安全隐私加固 + App 链路接续）
 
 > 本版 = v0.7.0 部署后的两个 hotfix 批次合并。**重点：全量静态扫描（先生指令）+ 安全与隐私 + App 链路完善**。

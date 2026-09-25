@@ -356,6 +356,10 @@ void server_mode_run(void) {
 int server_mode_command(const char *args) {
     if (!g_inited) server_mode_init();
 
+    /* 【0.7.1-hf3】每次命令前重读状态文件——App/Web 的 server_mode_on/off 直接改文件，
+     *   C 进程内存须对齐（先生真机 2026-09-25：App 已 on，终端敲 on 仍走"首次开启"路径）。 */
+    state_load();
+
     if (!args || !*args || strcmp(args, "status") == 0) {
         char line[256];
         safe_snprintf(line, sizeof(line),

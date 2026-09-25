@@ -796,11 +796,11 @@ int ensure_ai_server_running(void) {
                 fprintf(fp, "%d\n", pid);
                 fclose(fp);
             }
-            /* 【0.7.0 S1-5 修复】首轮等待 3s→8s
-             *   Python 冷启动实测 3~5s+（首次 import 大量模块）——先生真机
-             *   "attempt 1/4 failed" 即差 0.2s 误杀刚起来的实例（后续重试成功）。 */
-            int wait_time = (attempt == 1) ? 8 : (3 << (attempt - 1));
-            if (wait_time > 16) wait_time = 16;
+            /* 【0.7.0 S1-5 / 0.7.1-hf3】冷启动等待窗口
+             *   v0.7.0: 3s→8s；v0.7.1-hf3: →12s（先生真机 2026-09-25 仍见 attempt 1/4、
+             *   2/4 failed——Python 重依赖 import + registry 等待可超 8s；宁多等不误杀）。 */
+            int wait_time = (attempt == 1) ? 12 : (6 << (attempt - 1));
+            if (wait_time > 24) wait_time = 24;
             for (int w = 0; w < wait_time; w++) {
                 if (is_service_healthy(socket_path)) {
                     LOG_INFO_T("Main", "EnsureAI", "Started", "PID=%d", pid);

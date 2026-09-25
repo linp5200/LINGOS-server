@@ -50,7 +50,17 @@ _sync_python_scripts() {
     [ -d "$src" ] || return 0
     [ -f "$src/ai_server.py" ] || return 0
     mkdir -p "$dst"
-    if [ ! -f "$dst/ai_server.py" ] || ! cmp -s "$src/ai_server.py" "$dst/ai_server.py" 2>/dev/null; then
+    # 【0.7.1-hf3 修复】方向修正：仅当源**比目标更新**时才同步。
+    #   原实现 cmp 不同即覆盖——当 python/server 老旧（安装链历史缺陷致其未更新）
+    #   而 bin 已是新版时，会**反向降级** bin！（先生真机 2026-09-25 取证：
+    #   v0.7.0/v0.7.1 安装后 bin 被老脚本覆盖 → get_skill_risk 等修复失效。）
+    local need=0
+    if [ ! -f "$dst/ai_server.py" ]; then
+        need=1                          # 目标缺失 → 必须同步
+    elif [ "$src/ai_server.py" -nt "$dst/ai_server.py" ]; then
+        need=1                          # 源更新 → 同步
+    fi
+    if [ "$need" = "1" ]; then
         cp -a "$src"/*.py "$dst/" 2>/dev/null || true
         if [ -d "$src/plugin" ]; then
             mkdir -p "$dst/plugin"
@@ -58,7 +68,7 @@ _sync_python_scripts() {
         fi
         rm -rf "$dst/__pycache__"
         chmod +x "$dst"/*.py 2>/dev/null || true
-        echo "  ✓ Python 脚本已同步到 bin/（防老版 ai_server）"
+        echo "  ✓ Python 脚本已同步到 bin/（源更新）"
     fi
     # 【S2-3】registry/skills 子目录预建（缺目录 → OpenFail 警告）
     mkdir -p "$ROOT/registry/builtin" "$ROOT/registry/custom" "$ROOT/registry/store" \
