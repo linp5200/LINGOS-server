@@ -161,7 +161,10 @@ static int token_file_save_all(const char *json_buf) {
 
 void connection_store_token(const char *token, time_t ttl_seconds) {
     if (!token || !token[0]) return;
-    /* 读现有 → 追加/更新 → 写回 */
+
+    /* 【2026-10-02 修复】原手写字符串拼接产生非法 JSON（"缺 { + 尾逗号"），
+     * 第 2 次签发即损坏文件（Python json.load 崩溃 → 401）。
+     * 改为 cJSON 正确组装——格式永远合法，且可读取/修复历史损坏文件。 */
     char file_buf[16384];
     file_buf[0] = '\0';
     FILE *rf = fopen(TOKEN_FILE_PATH, "r");
@@ -170,30 +173,55 @@ void connection_store_token(const char *token, time_t ttl_seconds) {
         file_buf[n] = '\0';
         fclose(rf);
     }
-    /* 检查已存在 → 更新 expires */
+
+    cJSON *arr = NULL;
     if (file_buf[0]) {
-        char *pos = strstr(file_buf, token);
-        if (pos) {
-            /* 已存在——更新 revoked=0（简单重建） */
+        arr = cJSON_Parse(file_buf);
+        if (!arr || !cJSON_IsArray(arr)) {
+            if (arr) cJSON_Delete(arr);
+            arr = cJSON_CreateArray();   /* 旧文件损坏（历史 bug 产物）→ 重建 */
+            LOG_WARN_T("Connection", "StoreToken", "Salvage",
+                       "old tokens.json corrupted, rebuilt as empty array");
+        }
+    } else {
+        arr = cJSON_CreateArray();
+    }
+    if (!arr) return;
+
+    /* 已存在 → 更新（expires + revoked=0）；否则追加 */
+    int found = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, arr) {
+        cJSON *tk = cJSON_GetObjectItem(item, "token");
+        if (tk && cJSON_IsString(tk) && strcmp(tk->valuestring, token) == 0) {
+            cJSON *ex = cJSON_GetObjectItem(item, "expires_at");
+            if (ex) cJSON_SetNumberValue(ex, (double)(time(NULL) + ttl_seconds));
+            else cJSON_AddNumberToObject(item, "expires_at", (double)(time(NULL) + ttl_seconds));
+            cJSON *rv = cJSON_GetObjectItem(item, "revoked");
+            if (rv) cJSON_SetNumberValue(rv, 0);
+            else cJSON_AddNumberToObject(item, "revoked", 0);
+            found = 1;
+            break;
         }
     }
-    char new_entry[512];
-    safe_snprintf(new_entry, sizeof(new_entry),
-        "%s{\"token\":\"%s\",\"expires_at\":%ld,\"revoked\":0},",
-        file_buf[0] ? "" : "[", token, (long)(time(NULL) + ttl_seconds));
-    /* 组装：去掉旧内容尾部，追加新条目 */
-    char final_buf[17000];
-    if (file_buf[0]) {
-        /* 文件已有内容——去尾括号追加 */
-        size_t fl = strlen(file_buf);
-        while (fl > 0 && (file_buf[fl-1] == ']' || file_buf[fl-1] == '\n' || file_buf[fl-1] == ' ')) fl--;
-        /* 追加逗号 + 新条目 + ] */
-        safe_snprintf(final_buf, sizeof(final_buf), "%.*s,%s]", (int)fl, file_buf, new_entry + 1);
-    } else {
-        safe_snprintf(final_buf, sizeof(final_buf), "[{\"token\":\"%s\",\"expires_at\":%ld,\"revoked\":0}]",
-                      token, (long)(time(NULL) + ttl_seconds));
+    if (!found) {
+        cJSON *entry = cJSON_CreateObject();
+        cJSON_AddStringToObject(entry, "token", token);
+        cJSON_AddNumberToObject(entry, "expires_at", (double)(time(NULL) + ttl_seconds));
+        cJSON_AddNumberToObject(entry, "revoked", 0);
+        cJSON_AddItemToArray(arr, entry);
+        /* 上限保护（防无限增长） */
+        while (cJSON_GetArraySize(arr) > MAX_TOKEN_STORE) {
+            cJSON_DeleteItemFromArray(arr, 0);
+        }
     }
-    token_file_save_all(final_buf);
+
+    char *out = cJSON_PrintUnformatted(arr);
+    if (out) {
+        token_file_save_all(out);
+        free(out);
+    }
+    cJSON_Delete(arr);
     LOG_WARN_T("Connection", "StoreToken", "FileOK", "token saved to file");
 }
 
@@ -236,16 +264,35 @@ void connection_revoke_token_store(const char *token) {
     size_t n = fread(file_buf, 1, sizeof(file_buf) - 1, rf);
     file_buf[n] = '\0';
     fclose(rf);
-    /* 重建：匹配 token 的条目置 revoked=1（简易——按 token 定位整条替换） */
-    char *pos = strstr(file_buf, token);
-    if (pos) {
-        char *r = strstr(pos, "revoked");
-        if (r && strncmp(r, "revoked\":0", 11) == 0) {
-            r[9] = '1';  /* revoked":0 → revoked":1 */
+
+    /* 【2026-10-02 修复】cJSON 解析置 revoked=1（原按字符串偏移替换——仅能处理
+     * revoked":0 紧邻格式，且损坏文件时行为不可预期） */
+    cJSON *arr = cJSON_Parse(file_buf);
+    if (!arr || !cJSON_IsArray(arr)) {
+        if (arr) cJSON_Delete(arr);
+        return;
+    }
+    int changed = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, arr) {
+        cJSON *tk = cJSON_GetObjectItem(item, "token");
+        if (tk && cJSON_IsString(tk) && strcmp(tk->valuestring, token) == 0) {
+            cJSON *rv = cJSON_GetObjectItem(item, "revoked");
+            if (rv) cJSON_SetNumberValue(rv, 1);
+            else cJSON_AddNumberToObject(item, "revoked", 1);
+            changed = 1;
+            break;
         }
-        token_file_save_all(file_buf);
+    }
+    if (changed) {
+        char *out = cJSON_PrintUnformatted(arr);
+        if (out) {
+            token_file_save_all(out);
+            free(out);
+        }
         LOG_WARN_T("Connection", "RevokeStore", "OK", "token revoked in file");
     }
+    cJSON_Delete(arr);
 }
 static char g_pending_connection_code[32] = {0};
 static time_t g_pending_code_time = 0;

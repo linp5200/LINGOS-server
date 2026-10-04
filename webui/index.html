@@ -776,9 +776,20 @@ async function bindLog(){
   var txt = (lv&&lv.status==='ok')? String(lv.data||'') : '';
   if(!txt){ box.innerHTML='<div style="color:var(--d);font-family:var(--mono);padding:10px">'+(lv&&lv.status==='error'?'日志读取失败':'暂无日志')+'</div>'; return; }
   var lines = txt.split('\n').filter(Boolean).slice(-30).reverse();
+  /* 【2026-10-02 修复】日志文件为 JSON 行格式——解析后渲染（原按纯文本匹配 [ERROR] 失效） */
   box.innerHTML = lines.map(function(l){
-    var cls='INFO'; if(l.indexOf('[ERROR]')>=0)cls='ERROR'; else if(l.indexOf('[WARN')>=0)cls='WARN'; else if(l.indexOf('[DEBUG')>=0)cls='DEBUG';
-    return '<div class="l"><span class="lvl '+cls+'">'+cls+'</span><span class="msg">'+l.replace(/</g,'&lt;')+'</span></div>';
+    var lvl='INFO', msg=l, ts='';
+    try {
+      var j = JSON.parse(l);
+      lvl = String(j.level||'INFO').toUpperCase();
+      msg = String(j.txt||'');
+      var m = /T(\d{2}:\d{2}:\d{2})/.exec(String(j.time||''));
+      ts = m ? m[1] : '';
+    } catch(e) {
+      /* 非 JSON（历史行/纯文本）——旧逻辑回退 */
+      if(l.indexOf('[ERROR]')>=0)lvl='ERROR'; else if(l.indexOf('[WARN')>=0)lvl='WARN'; else if(l.indexOf('[DEBUG')>=0)lvl='DEBUG';
+    }
+    return '<div class="l"><span class="lvl '+lvl+'">'+lvl+'</span><span class="msg">'+(ts?'<span style="color:var(--d)">['+ts+']</span> ':'')+msg.replace(/</g,'&lt;')+'</span></div>';
   }).join('');
 }
 /* ===== 文件(系统目录) ===== */

@@ -86,6 +86,12 @@ typedef struct wizard_engine_ctx {
 int wizard_engine_init(wizard_engine_ctx_t *ctx, int renderer_type);
 int wizard_engine_load_steps(wizard_engine_ctx_t *ctx);
 int wizard_engine_run(wizard_engine_ctx_t *ctx);
+
+/* 【2026-10-02】交互式运行（完整循环——启动路径与 shell config 命令共用）
+ * renderer_type: 0=TUI 1=CLI 2=RAW（见 config_renderer.h renderer_type_t）
+ * force_override: 1=强制覆盖保存
+ * @return 0=完成并保存 / 1=异常或保存失败 / 2=取消 / -1=初始化错误 */
+int wizard_engine_run_interactive(wizard_engine_ctx_t *ctx, int renderer_type, int force_override);
 int wizard_engine_handle_input(wizard_engine_ctx_t *ctx, const char *input);
 wizard_step_def_t* wizard_engine_current_step(wizard_engine_ctx_t *ctx);
 int wizard_engine_goto(wizard_engine_ctx_t *ctx, const char *step_id);

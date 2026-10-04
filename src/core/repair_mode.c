@@ -23,42 +23,94 @@
 /* ============================================================
  * 辅助：显示修复菜单
  * ============================================================ */
+/* ============================================================
+ * 【2026-10-02 修复】框线工具：UTF-8 感知宽度 + 逐行加框
+ *   · R3 修复：多行消息（exit_status 报告）逐行加框——原实现直接输出破坏框线
+ *   · 对齐修复：中英混排行宽统一（原 60/61/62 不一致）
+ * ============================================================ */
+#define REPAIR_BOX_INNER 60
+
+static int repair_disp_width(const char *s) {
+    int w = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    if (!s) return 0;
+    while (*p) {
+        if (p[0] < 0x80) { w += 1; p += 1; }
+        else if ((p[0] & 0xE0) == 0xC0) { w += 1; p += 2; }
+        else if ((p[0] & 0xF0) == 0xE0) {
+            unsigned int cp = (unsigned int)((p[0] & 0x0F) << 12)
+                            | (unsigned int)((p[1] & 0x3F) << 6)
+                            | (unsigned int)(p[2] & 0x3F);
+            w += (cp >= 0x2E80) ? 2 : 1;   /* CJK 区段按 2 宽；符号（⚠ 等）按 1 */
+            p += 3;
+        }
+        else if ((p[0] & 0xF8) == 0xF0) { w += 2; p += 4; }
+        else { p += 1; }
+    }
+    return w;
+}
+
+/* 输出一行框内容：║ + 内容（2 空格边距）+ 右侧填充 + ║ */
+static void repair_box_line(const char *text) {
+    char content[512];
+    safe_snprintf(content, sizeof(content), "  %s", text ? text : "");
+
+    /* 截断到内宽-1（防溢出框线；按 UTF-8 字符边界安全截断） */
+    while (repair_disp_width(content) > REPAIR_BOX_INNER - 1 && content[0]) {
+        size_t l = strlen(content);
+        if (l == 0) break;
+        size_t cut = l - 1;
+        while (cut > 0 && ((unsigned char)content[cut] & 0xC0) == 0x80) cut--;
+        content[cut] = '\0';
+    }
+
+    int pad = REPAIR_BOX_INNER - repair_disp_width(content);
+    if (pad < 0) pad = 0;
+    char out[680];
+    safe_snprintf(out, sizeof(out), "║%s%*s║\n", content, pad, "");
+    uart_puts(out);
+}
+
+/* 多行文本逐行加框（R3 修复核心） */
+static void repair_box_multiline(const char *text) {
+    char buf[512];
+    safe_strncpy(buf, text ? text : "", sizeof(buf));
+    if (!buf[0]) { repair_box_line(""); return; }
+    char *p = buf;
+    while (p) {
+        char *nl = strchr(p, '\n');
+        if (nl) *nl = '\0';
+        size_t l = strlen(p);
+        if (l && p[l-1] == '\r') p[l-1] = '\0';
+        repair_box_line(p);
+        if (!nl) break;
+        if (!*(nl + 1)) break;   /* 结尾换行——不再多打空行 */
+        p = nl + 1;
+    }
+}
+
 static void display_repair_menu(const exit_status_t *status) {
     char msg[512];
     exit_status_format_message(status, "en", msg, sizeof(msg));
 
     uart_puts(COLOR_YELLOW);
     uart_puts("\n╔════════════════════════════════════════════════════════════╗\n");
-    uart_puts("║                                                           ║\n");
-    uart_puts("║  ⚠  LING OS was not shut down properly                   ║\n");
-    uart_puts("║  ⚠  LING OS 上次未正常关闭                                ║\n");
-    uart_puts("║                                                           ║\n");
-    uart_puts("║  The system may have crashed or been powered off.        ║\n");
-    uart_puts("║  系统可能已崩溃或断电。                                    ║\n");
-    uart_puts("║                                                           ║\n");
-    uart_puts("║  ");
-    uart_puts(msg);
-    uart_puts("\n");
-    uart_puts("║                                                           ║\n");
-    uart_puts(COLOR_RESET);
-
-    uart_puts(tr(
-        "║  Options:                                                 ║\n"
-        "║  [1] Auto Repair (recommended)                           ║\n"
-        "║  [2] Restore from backup                                 ║\n"
-        "║  [3] Manual Repair (emergency shell)                     ║\n"
-        "║  [4] Ignore and continue                                 ║\n"
-        "║                                                           ║\n"
-        "║  Enter choice (1-4):                                     ║\n",
-        "║  选项：                                                   ║\n"
-        "║  [1] 自动修复（推荐）                                     ║\n"
-        "║  [2] 从备份恢复                                           ║\n"
-        "║  [3] 手动修复（紧急终端）                                 ║\n"
-        "║  [4] 忽略并继续                                           ║\n"
-        "║                                                           ║\n"
-        "║  输入选项 (1-4)：                                         ║\n"
-    ));
-
+    repair_box_line("");
+    repair_box_line(tr("⚠  LING OS was not shut down properly",
+                       "⚠  LING OS 上次未正常关闭"));
+    repair_box_line("");
+    repair_box_line(tr("The system may have crashed or been powered off.",
+                       "系统可能已崩溃或断电。"));
+    repair_box_line("");
+    repair_box_multiline(msg);   /* 多行报告——逐行加框（R3 修复） */
+    repair_box_line("");
+    repair_box_line(tr("Options:", "选项："));
+    repair_box_line(tr("[1] Auto Repair (recommended)", "[1] 自动修复（推荐）"));
+    repair_box_line(tr("[2] Restore from backup", "[2] 从备份恢复"));
+    repair_box_line(tr("[3] Manual Repair (emergency shell)", "[3] 手动修复（紧急终端）"));
+    repair_box_line(tr("[4] Ignore and continue", "[4] 忽略并继续"));
+    repair_box_line("");
+    repair_box_line(tr("Enter choice (1-4):", "输入选项 (1-4)："));
     uart_puts(COLOR_YELLOW);
     uart_puts("╚════════════════════════════════════════════════════════════╝\n");
     uart_puts(COLOR_RESET);

@@ -467,7 +467,10 @@ def _openai_stream(provider: LLMProvider, messages: List[Dict], tools: Optional[
                             acc = tool_calls_acc.setdefault(idx, {"name": "", "arguments": ""})
                             fn = tc.get("function", {})
                             if fn.get("name"):
-                                acc["name"] += fn["name"]
+                                # 【2026-10-02 修复】赋值而非累加——部分供应商每个 chunk
+                                # 重发完整 name（OpenAI 兼容网关差异），"+"= 会翻倍 →
+                                # 工具名失真 → 执行分支找不到（"无参数"表象之一）
+                                acc["name"] = fn["name"]
                             if fn.get("arguments"):
                                 acc["arguments"] += fn["arguments"]
                 # 【0.2.2 #3 修复】流式中断检测（官方文档：响应以 completed/incomplete/failed 结束）

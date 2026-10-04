@@ -269,18 +269,24 @@ static void log_cleanup_atexit(void) {
     emergency_write_simple("[LogExtra] atexit: cleanup thread stopped\n");
 }
 
+static volatile int cleanup_thread_started = 0;
+
 static void start_cleanup_thread(void) {
-    if (cleanup_thread_running) {
-        emergency_write_simple("[LogExtra] Cleanup thread already running\n");
+    /* 【2026-10-02 修复】同步防重（原仅查 cleanup_thread_running——该标志在
+     * 线程体内才置位，快速二次调用可创建双线程；且"Cleanup thread started"
+     * 与线程体重复打印两次） */
+    if (cleanup_thread_started || cleanup_thread_running) {
         return;
     }
     cleanup_stop_flag = 0;
+    cleanup_thread_started = 1;
     if (pthread_create(&cleanup_thread, NULL, cleanup_thread_func, NULL) != 0) {
+        cleanup_thread_started = 0;
         emergency_write_simple("[LogExtra] Failed to start cleanup thread\n");
         return;
     }
     atexit(log_cleanup_atexit);
-    emergency_write_simple("[LogExtra] Cleanup thread started\n");
+    /* "Cleanup thread started" 由线程体打印（此处不再重复） */
 }
 
 /* ============================================================
@@ -486,11 +492,12 @@ void log_output(int level, const char *module, const char *submodule,
 
     const char *lvl_str = "???";
     const char *color = COLOR_RESET;
+    /* 【2026-10-02 · A4 先生定稿】级别名固定英文（原中文 tr("错误") 与英文内容混排） */
     switch (level) {
-        case LOG_LEVEL_ERROR: lvl_str = tr("ERROR", "错误"); color = COLOR_RED; break;
-        case LOG_LEVEL_WARN:  lvl_str = tr("WARN", "警告");  color = COLOR_YELLOW; break;
-        case LOG_LEVEL_INFO:  lvl_str = tr("INFO", "信息");  color = COLOR_DIM; break;
-        case LOG_LEVEL_DEBUG: lvl_str = tr("DEBUG", "调试"); color = COLOR_DIM; break;
+        case LOG_LEVEL_ERROR: lvl_str = "ERROR"; color = COLOR_RED; break;
+        case LOG_LEVEL_WARN:  lvl_str = "WARN";  color = COLOR_YELLOW; break;
+        case LOG_LEVEL_INFO:  lvl_str = "INFO";  color = COLOR_DIM; break;
+        case LOG_LEVEL_DEBUG: lvl_str = "DEBUG"; color = COLOR_DIM; break;
         default: break;
     }
 
@@ -510,7 +517,7 @@ void log_output(int level, const char *module, const char *submodule,
      *        叠加而非清除 → 颜色污染
      *   修法：行首 + 行尾都追加 RESET；color 在干净基础上设置。 */
     int len = safe_snprintf(full_msg, sizeof(full_msg),
-                           "%s%s[%s][%s][%s][%s][%s] %s%s%s\n",
+                           "%s%s[%s][%s][%s][%s][%s] %s %s%s\n",
                            COLOR_RESET, color, time_buf, lvl_str,
                            module ? module : "?",
                            submodule ? submodule : "?",

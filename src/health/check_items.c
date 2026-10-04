@@ -503,6 +503,14 @@ static check_item_t g_builtin_checks[] = {
  * 注册所有检查项
  * ============================================================ */
 int check_items_register_all(void) {
+    /* 【2026-10-02 修复】幂等保护：修复模式与启动流程各自会调用一次
+     * （原实现第二次注册全部失败 → "already registered" ×7 ERROR 刷屏） */
+    static int s_registered = 0;
+    if (s_registered) {
+        LOG_DEBUG_T("CheckItems", "Register", "Skip", "idempotent — already registered");
+        return 0;
+    }
+
     int count = (int)(sizeof(g_builtin_checks) / sizeof(g_builtin_checks[0]));
     int registered = 0;
 
@@ -515,5 +523,6 @@ int check_items_register_all(void) {
     }
 
     LOG_INFO_T("CheckItems", "Register", "OK", "registered %d/%d check items", registered, count);
+    if (registered > 0) s_registered = 1;
     return (registered > 0) ? 0 : -1;
 }

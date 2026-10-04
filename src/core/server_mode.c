@@ -28,6 +28,7 @@
 #include <signal.h>
 #include <termios.h>
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -172,6 +173,129 @@ static void server_mode_restore_term(void) {
     }
 }
 
+/* ============================================================
+ * 【2026-10-02】日志行渲染（方案 A——文件保持 JSON、显示转可读+着色）
+ *   · lingos.log（JSON 行）→ 解析 → [HH:MM:SS] + 按级着色正文（ERROR 红/WARN 黄/DEBUG 暗）
+ *   · api.log（7 列文本）→ 超宽截断保证"一行一条"（终端软换行不再拆行）
+ * ============================================================ */
+static int sm_term_cols(void) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 20) {
+        return (int)ws.ws_col;
+    }
+    return 0;
+}
+
+static const char *sm_json_field(const char *json, const char *key) {
+    char pat[32];
+    safe_snprintf(pat, sizeof(pat), "\"%s\":\"", key);
+    const char *p = strstr(json, pat);
+    if (!p) return NULL;
+    return p + strlen(pat);
+}
+
+/* 从 JSON 字符串值处复制到未转义闭合引号（含简单反转义） */
+static void sm_json_copy(const char *src, char *out, size_t out_sz) {
+    size_t j = 0;
+    if (!src || !out || out_sz == 0) { if (out && out_sz) out[0] = '\0'; return; }
+    while (*src && *src != '"' && j + 1 < out_sz) {
+        if (*src == '\\' && src[1]) {
+            src++;
+            switch (*src) {
+                case 'n': out[j++] = '\n'; break;
+                case 'r': out[j++] = '\r'; break;
+                case 't': out[j++] = '\t'; break;
+                case '\\': out[j++] = '\\'; break;
+                case '"': out[j++] = '"'; break;
+                default: out[j++] = *src; break;
+            }
+            src++;
+        } else {
+            out[j++] = *src++;
+        }
+    }
+    out[j] = '\0';
+}
+
+/* 可见文本超宽截断（UTF-8 边界安全回退） */
+static void sm_truncate_utf8(char *txt, int avail) {
+    if (avail <= 8) return;
+    size_t l = strlen(txt);
+    if ((int)l <= avail) return;
+    size_t cut = (size_t)avail;
+    while (cut > 0 && ((unsigned char)txt[cut] & 0xC0) == 0x80) cut--;
+    txt[cut] = '\0';
+}
+
+/* lingos.log JSON 行 → 人类可读 + 着色 */
+static void sm_render_log_line(const char *line) {
+    if (!line) return;
+    const char *p = line;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '{') {           /* 非 JSON（罕见）→ 原样 */
+        uart_puts(line);
+        return;
+    }
+    /* 时间 → HH:MM:SS */
+    char ts[16] = "--:--:--";
+    const char *tv = sm_json_field(line, "time");
+    if (tv) {
+        const char *t = strchr(tv, 'T');
+        if (t && strlen(t + 1) >= 8) {
+            memcpy(ts, t + 1, 8);
+            ts[8] = '\0';
+        }
+    }
+    /* 级别 */
+    char lvl[8] = "INFO";
+    const char *lv = sm_json_field(line, "level");
+    if (lv) {
+        int i = 0;
+        while (lv[i] && lv[i] != '"' && i < 7) { lvl[i] = lv[i]; i++; }
+        lvl[i] = '\0';
+    }
+    /* 正文 */
+    char txt[2048];
+    sm_json_copy(sm_json_field(line, "txt"), txt, sizeof(txt));
+
+    /* 颜色：ERROR 红 / WARN 黄 / INFO 默认 / DEBUG 暗 */
+    const char *color = "";
+    if (strcmp(lvl, "ERROR") == 0 || strcmp(lvl, "CRIT") == 0) color = COLOR_RED;
+    else if (strcmp(lvl, "WARN") == 0) color = COLOR_YELLOW;
+    else if (strcmp(lvl, "DEBUG") == 0) color = COLOR_DIM;
+
+    char head[40];
+    safe_snprintf(head, sizeof(head), "%s[%s]%s ", COLOR_DIM, ts, COLOR_RESET);
+    uart_puts(head);
+
+    int cols = sm_term_cols();
+    if (cols > 0) sm_truncate_utf8(txt, cols - 12);
+
+    uart_puts(color);
+    uart_puts(txt);
+    uart_puts(COLOR_RESET);
+    uart_puts("\n");
+}
+
+/* api.log 文本行 → 一行一条（超宽截断 "..."） */
+static void sm_render_api_line(const char *line) {
+    size_t l = strlen(line);
+    while (l > 0 && (line[l-1] == '\n' || line[l-1] == '\r')) l--;
+    int cols = sm_term_cols();
+    char tmp[8192];
+    if (l >= sizeof(tmp)) l = sizeof(tmp) - 1;
+    memcpy(tmp, line, l);
+    tmp[l] = '\0';
+
+    if (cols > 20 && (int)strlen(tmp) >= cols - 1) {
+        size_t cut = (size_t)(cols - 4);   /* 留 "..." */
+        while (cut > 0 && ((unsigned char)tmp[cut] & 0xC0) == 0x80) cut--;
+        tmp[cut] = '.'; tmp[cut+1] = '.'; tmp[cut+2] = '.'; tmp[cut+3] = '\0';
+    }
+    uart_puts(tmp);
+    uart_puts("\n");
+}
+
 static void tail_open(FILE **fp, long *pos) {
     char logpath[512];
     safe_snprintf(logpath, sizeof(logpath), "%s/log/lingos.log", lingos_data_root());
@@ -189,9 +313,9 @@ static void tail_open(FILE **fp, long *pos) {
         int ch;
         while ((ch = fgetc(*fp)) != EOF && ch != '\n') { }
     }
-    char buf[1024];
+    char buf[8192];
     while (fgets(buf, sizeof(buf), *fp)) {
-        uart_puts(buf);
+        sm_render_log_line(buf);
     }
     *pos = ftell(*fp);
 }
@@ -211,9 +335,9 @@ static void tail_open_named(const char *name, FILE **fp, long *pos) {
         int ch;
         while ((ch = fgetc(*fp)) != EOF && ch != '\n') { }
     }
-    char buf[1024];
+    char buf[8192];
     while (fgets(buf, sizeof(buf), *fp)) {
-        uart_puts(buf);
+        sm_render_api_line(buf);
     }
     *pos = ftell(*fp);
 }
@@ -224,9 +348,9 @@ static void tail_pump_named(FILE *fp, long *pos) {
     long sz = ftell(fp);
     if (sz < *pos) *pos = 0;
     if (fseek(fp, *pos, SEEK_SET) != 0) return;
-    char buf[1024];
+    char buf[8192];
     while (fgets(buf, sizeof(buf), fp)) {
-        uart_puts(buf);
+        sm_render_api_line(buf);
     }
     long np = ftell(fp);
     if (np >= 0) *pos = np;
@@ -241,9 +365,9 @@ static void tail_pump(FILE *fp, long *pos) {
     if (sz < *pos) *pos = 0;
 
     if (fseek(fp, *pos, SEEK_SET) != 0) return;
-    char buf[1024];
+    char buf[8192];
     while (fgets(buf, sizeof(buf), fp)) {
-        uart_puts(buf);
+        sm_render_log_line(buf);
     }
     long np = ftell(fp);
     if (np >= 0) *pos = np;

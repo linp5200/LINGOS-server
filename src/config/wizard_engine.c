@@ -459,6 +459,158 @@ int wizard_engine_run(wizard_engine_ctx_t *ctx) {
 }
 
 /* ============================================================
+ * FTF[交互式运行向导——公共循环]
+ * 【2026-10-02 修复】原 wizard_engine_run() 为空壳：仅重置状态即返回 0，
+ *   main.c 启动路径据此直接 save + render_complete → 用户看到"选 n 后
+ *   没有显示配置直接显示配置完成"（先生真机取证）。
+ *   完整交互循环此前只存在于 shell.c —— 现提取为公共函数，两条路径共用。
+ * @param renderer_type  初始渲染器类型（int：兼容头文件无 renderer 依赖）
+ * @param force_override 1=强制覆盖保存（--force）
+ * @return 0=完成并保存成功 / 1=异常结束或保存失败 / 2=取消 / -1=初始化错误
+ * ============================================================ */
+int wizard_engine_run_interactive(wizard_engine_ctx_t *ctx, int renderer_type, int force_override) {
+    if (!ctx) return -1;
+
+    renderer_ctx_t renderer;
+
+    /* ---- 创建渲染器（带降级链 TUI→CLI→RAW） ---- */
+    int renderer_ret = -1;
+    if (renderer_type == RENDERER_TYPE_TUI) {
+        renderer_ret = renderer_tui_create(&renderer);
+        if (renderer_ret != 0) {
+            uart_puts(tr("TUI not available, falling back to CLI.\n",
+                         "TUI 不可用，降级到 CLI。\n"));
+            renderer_type = RENDERER_TYPE_CLI;
+            renderer_ret = renderer_cli_create(&renderer);
+        }
+    } else if (renderer_type == RENDERER_TYPE_RAW) {
+        renderer_ret = renderer_raw_create(&renderer);
+    } else {
+        renderer_ret = renderer_cli_create(&renderer);
+        if (renderer_ret != 0) {
+            uart_puts(tr("CLI not available, falling back to RAW.\n",
+                         "CLI 不可用，降级到 RAW。\n"));
+            renderer_type = RENDERER_TYPE_RAW;
+            renderer_ret = renderer_raw_create(&renderer);
+        }
+    }
+    if (renderer_ret != 0) {
+        uart_puts(tr("Failed to create renderer.\n", "创建渲染器失败。\n"));
+        return -1;
+    }
+    ctx->renderer = &renderer;
+
+    /* ---- 重置引擎状态 ---- */
+    if (wizard_engine_run(ctx) != 0) {
+        uart_puts(tr("Failed to start wizard.\n", "启动向导失败。\n"));
+        renderer_destroy(&renderer);
+        return -1;
+    }
+
+    /* ---- 事件循环：渲染 → 读入 → 流转 ---- */
+    char input_buf[256];
+    int wizard_result = 0;
+
+    while (1) {
+        wizard_step_def_t *step = wizard_engine_current_step(ctx);
+        if (!step) {
+            wizard_result = 1;
+            break;
+        }
+
+        renderer.render_header(&renderer, step, ctx->current_index + 1, ctx->step_count);
+
+        if (step->type == STEP_TYPE_SELECT) {
+            wizard_option_t opts[16];
+            int count = wizard_engine_get_options(ctx, opts, 16);
+            renderer.render_options(&renderer, opts, count, 0);
+        } else if (step->type == STEP_TYPE_INPUT) {
+            const char *prompt = wizard_engine_get_input_prompt(ctx);
+            renderer.render_input(&renderer, prompt, input_buf, sizeof(input_buf));
+        }
+
+        memset(input_buf, 0, sizeof(input_buf));
+        int get_ret = renderer.get_input(&renderer, input_buf, sizeof(input_buf));
+        if (get_ret == -3) {
+            uart_puts(tr("\n⚠ Auto-downgrading to next mode...\n",
+                         "\n⚠ 自动降级到下一模式...\n"));
+            renderer_destroy(&renderer);
+            int next_type = renderer_type_next((renderer_type_t)renderer_type);
+            if (next_type >= 0 &&
+                renderer_create((renderer_type_t)next_type, &renderer) == 0) {
+                renderer_type = next_type;
+                ctx->renderer = &renderer;
+                continue;
+            }
+            return -1;
+        } else if (get_ret == -2) {
+            uart_puts(tr("\n⚠ Render anomaly detected. Use ^L/^R/^Q to switch.\n",
+                         "\n⚠ 检测到渲染异常。使用 ^L/^R/^Q 切换。\n"));
+            continue;
+        } else if (get_ret == -1) {
+            ctx->cancelled = 1;
+            break;
+        } else if (get_ret == 2) {
+            uart_puts(tr("\n⚠ Switching to CLI mode...\n", "\n⚠ 切换到 CLI 模式...\n"));
+            renderer_destroy(&renderer);
+            renderer_type = RENDERER_TYPE_CLI;
+            if (renderer_create(RENDERER_TYPE_CLI, &renderer) == 0) {
+                ctx->renderer = &renderer;
+                continue;
+            }
+            return -1;
+        } else if (get_ret == 3) {
+            uart_puts(tr("\n⚠ Switching to RAW mode...\n", "\n⚠ 切换到 RAW 模式...\n"));
+            renderer_destroy(&renderer);
+            renderer_type = RENDERER_TYPE_RAW;
+            if (renderer_create(RENDERER_TYPE_RAW, &renderer) == 0) {
+                ctx->renderer = &renderer;
+                continue;
+            }
+            return -1;
+        } else if (get_ret == 4) {
+            ctx->cancelled = 1;
+            break;
+        }
+
+        int handle_ret = wizard_engine_handle_input(ctx, input_buf);
+        if (handle_ret == 1) {
+            wizard_result = 1;
+            break;
+        } else if (handle_ret == -1) {
+            ctx->cancelled = 1;
+            break;
+        }
+    }
+
+    /* ---- 保存配置 ---- */
+    int ret;
+    if (ctx->cancelled) {
+        renderer.render_message(&renderer, tr("Wizard cancelled.\n", "向导已取消。\n"), 1);
+        ret = 2;
+    } else if (wizard_result == 1) {
+        int save_ret;
+        if (force_override) {
+            save_ret = config_core_save_force(&ctx->config);
+        } else {
+            save_ret = wizard_engine_save_config(ctx);
+        }
+        if (save_ret == 0) {
+            renderer.render_complete(&renderer, 1);
+            ret = 0;
+        } else {
+            renderer.render_complete(&renderer, 0);
+            ret = 1;
+        }
+    } else {
+        ret = 1;   /* 异常结束（无完成标记） */
+    }
+
+    renderer_destroy(&renderer);
+    return ret;
+}
+
+/* ============================================================
  * FTF[处理输入（含健康检查与自动降级）]
  * ============================================================ */
 int wizard_engine_handle_input(wizard_engine_ctx_t *ctx, const char *input) {

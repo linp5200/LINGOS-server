@@ -1362,6 +1362,7 @@ int main(int argc, char **argv) {
      * 配置文件存在检查与询问（#3）
      * ============================================================ */
     int use_existing = 0;
+    int force_reconfigure = 0;   /* 【2026-10-02 修复】用户选 n → 强制进入向导 */
     wizard_config_t tmp_cfg;
     /* 【修复】已配置过（state.json system_configured=true）→ 静默使用，不再询问 */
     int already_configured = config_core_is_configured();
@@ -1377,35 +1378,16 @@ int main(int argc, char **argv) {
                 lang_reload();
                 LOG_INFO_T("Main", "Config", "UsingExisting", "already configured, using existing silently");
             } else {
-            uart_puts(COLOR_CYAN);
-            uart_puts(tr("\nExisting configuration found:\n", "\n检测到已有配置：\n"));
-            uart_puts(tr("  Backend: ", "  后端："));
-            uart_puts(tmp_cfg.ai_backend);
-            uart_puts("\n");
-            uart_puts(tr("  Language: ", "  语言："));
-            uart_puts(tmp_cfg.language);
-            uart_puts("\n");
-            if (strcmp(tmp_cfg.ai_backend, "deepseek") == 0) {
-                uart_puts(tr("  Model: ", "  模型："));
-                uart_puts(tmp_cfg.model);
-                uart_puts("\n");
-            }
-            uart_puts(tr("\nUse this configuration? (Y/n): ", "\n使用此配置？(Y/n): "));
-            char choice = uart_getc();
-            uart_putc(choice);
-            uart_puts("\n");
-            if (choice == 'y' || choice == 'Y' || choice == '\n' || choice == '\r') {
+                /* 【2026-10-02 修复 · 启动简略化（先生定稿）】
+                 * 原实现：每次启动询问 "使用此配置？(Y/n)"——此询问不必要。
+                 * 现：配置有效（language+backend 齐全）→ 静默采用 + 标记已配置。
+                 * 需要重新配置时：shell 命令 `config` 或 `system configuration`。 */
                 use_existing = 1;
-                /* FF[src/config/config_core.c]-CFN[config_core_get_mutable]-FTF[获取全局配置指针] */
                 wizard_config_t *global_cfg = config_core_get_mutable();
                 *global_cfg = tmp_cfg;
                 config_core_mark_configured();
-                uart_puts(tr("✅ Using existing configuration.\n", "✅ 将使用已有配置。\n"));
-                /* 重载语言 */
                 lang_reload();
-            } else {
-                uart_puts(tr("Proceeding with new configuration.\n", "将进行全新配置。\n"));
-            }
+                LOG_INFO_T("Main", "Config", "UsingExisting", "valid config adopted silently");
             }
         }
     }
@@ -1415,12 +1397,11 @@ int main(int argc, char **argv) {
         goto after_wizard;
     }
 
-    /* --- 首次启动或配置不完整时自动进入配置向导 --- */
-    if (is_first_start || check_summary.need_configuration) {
+    /* --- 首次启动/配置不完整/用户选 n 时进入配置向导 --- */
+    if (is_first_start || check_summary.need_configuration || force_reconfigure) {
         uart_puts(tr("\nStarting configuration wizard...\n", "\n启动配置向导...\n"));
 
         wizard_engine_ctx_t wiz_ctx;
-        renderer_ctx_t renderer;
 
         /* 【0.4.3 修复】先生环境向导叠加：LINGOS_WIZARD=cli 强制文本向导；
          * 非 tty/无 TERM 时也自动用 CLI（notcurses 全屏 TUI 在 proot/远程终端半失败——
@@ -1436,26 +1417,15 @@ int main(int argc, char **argv) {
 
         if (wizard_engine_init(&wiz_ctx, use_cli_first ? RENDERER_TYPE_CLI : RENDERER_TYPE_TUI) == 0) {
             if (wizard_engine_load_steps(&wiz_ctx) == 0) {
-                if (!use_cli_first && renderer_tui_create(&renderer) == 0) {
-                    wiz_ctx.renderer = &renderer;
-                    if (wizard_engine_run(&wiz_ctx) == 0) {
-                        wizard_engine_save_config(&wiz_ctx);
-                        /* 配置保存后重新加载语言 */
-                        lang_reload();
-                        renderer.render_complete(&renderer, 1);
-                    }
-                    renderer_destroy(&renderer);
-                } else {
-                    LOG_WARN_T("Main", "Wizard", "RenderFail", "TUI renderer failed, trying CLI");
-                    if (renderer_cli_create(&renderer) == 0) {
-                        wiz_ctx.renderer = &renderer;
-                        if (wizard_engine_run(&wiz_ctx) == 0) {
-                            wizard_engine_save_config(&wiz_ctx);
-                            lang_reload();
-                            renderer.render_complete(&renderer, 1);
-                        }
-                        renderer_destroy(&renderer);
-                    }
+                /* 【2026-10-02 修复】改用公共交互循环——原 wizard_engine_run()
+                 * 为空壳（仅重置状态），导致"选 n 后直接显示配置完成"（先生取证）。
+                 * 现与 shell `config` 命令共用同一完整循环（渲染→读入→流转→保存）。 */
+                int wiz_ret = wizard_engine_run_interactive(
+                    &wiz_ctx,
+                    use_cli_first ? RENDERER_TYPE_CLI : RENDERER_TYPE_TUI, 0);
+                if (wiz_ret == 0) {
+                    /* 配置保存后重新加载语言 */
+                    lang_reload();
                 }
                 free(wiz_ctx.steps);
                 free(wiz_ctx.stack);

@@ -1481,7 +1481,6 @@ static int handle_builtin_command(const char *cmd) {
 
         /* ---- 初始化引擎 ---- */
         wizard_engine_ctx_t ctx;
-        renderer_ctx_t renderer;
 
         if (wizard_engine_init(&ctx, renderer_type) != 0) {
             uart_puts(tr("Failed to initialize configuration wizard.\n",
@@ -1500,148 +1499,9 @@ static int handle_builtin_command(const char *cmd) {
             return 1;
         }
 
-        /* ---- 创建渲染器（带降级） ---- */
-        int renderer_ret = -1;
-        switch (renderer_type) {
-            case RENDERER_TYPE_TUI:
-                renderer_ret = renderer_tui_create(&renderer);
-                if (renderer_ret != 0) {
-                    uart_puts(tr("TUI not available, falling back to CLI.\n",
-                                 "TUI 不可用，降级到 CLI。\n"));
-                    renderer_type = RENDERER_TYPE_CLI;
-                    renderer_ret = renderer_cli_create(&renderer);
-                }
-                break;
-            case RENDERER_TYPE_CLI:
-                renderer_ret = renderer_cli_create(&renderer);
-                if (renderer_ret != 0) {
-                    uart_puts(tr("CLI not available, falling back to RAW.\n",
-                                 "CLI 不可用，降级到 RAW。\n"));
-                    renderer_type = RENDERER_TYPE_RAW;
-                    renderer_ret = renderer_raw_create(&renderer);
-                }
-                break;
-            case RENDERER_TYPE_RAW:
-                renderer_ret = renderer_raw_create(&renderer);
-                break;
-            default:
-                renderer_ret = renderer_tui_create(&renderer);
-                break;
-        }
+        /* ---- 运行交互式向导（【2026-10-02】提取公共循环——与启动路径共用） ---- */
+        wizard_engine_run_interactive(&ctx, renderer_type, force_override);
 
-        if (renderer_ret != 0) {
-            uart_puts(tr("Failed to create renderer.\n", "创建渲染器失败。\n"));
-            free(ctx.steps);
-            free(ctx.stack);
-            return 1;
-        }
-
-        ctx.renderer = &renderer;
-
-        /* ---- 运行向导 ---- */
-        if (wizard_engine_run(&ctx) != 0) {
-            uart_puts(tr("Failed to start wizard.\n", "启动向导失败。\n"));
-            renderer_destroy(&renderer);
-            free(ctx.steps);
-            free(ctx.stack);
-            return 1;
-        }
-
-        /* ---- 事件循环 ---- */
-        char input_buf[256];
-        int wizard_result = 0;
-
-        while (1) {
-            wizard_step_def_t *step = wizard_engine_current_step(&ctx);
-            if (!step) {
-                wizard_result = 1;
-                break;
-            }
-
-            renderer.render_header(&renderer, step, ctx.current_index + 1, ctx.step_count);
-
-            if (step->type == STEP_TYPE_SELECT) {
-                wizard_option_t opts[16];
-                int count = wizard_engine_get_options(&ctx, opts, 16);
-                renderer.render_options(&renderer, opts, count, 0);
-            } else if (step->type == STEP_TYPE_INPUT) {
-                const char *prompt = wizard_engine_get_input_prompt(&ctx);
-                renderer.render_input(&renderer, prompt, input_buf, sizeof(input_buf));
-            }
-
-            memset(input_buf, 0, sizeof(input_buf));
-            int get_ret = renderer.get_input(&renderer, input_buf, sizeof(input_buf));
-            if (get_ret == -3) {
-                uart_puts(tr("\n⚠ Auto-downgrading to next mode...\n",
-                             "\n⚠ 自动降级到下一模式...\n"));
-                renderer_destroy(&renderer);
-                int next_type = renderer_type_next((renderer_type_t)renderer_type);
-                if (next_type >= 0) {
-                    renderer_type = next_type;
-                    renderer_create((renderer_type_t)renderer_type, &renderer);
-                    ctx.renderer = &renderer;
-                    continue;
-                }
-                break;
-            } else if (get_ret == -2) {
-                uart_puts(tr("\n⚠ Render anomaly detected. Use ^L/^R/^Q to switch.\n",
-                             "\n⚠ 检测到渲染异常。使用 ^L/^R/^Q 切换。\n"));
-                continue;
-            } else if (get_ret == -1) {
-                ctx.cancelled = 1;
-                break;
-            } else if (get_ret == 2) {
-                uart_puts(tr("\n⚠ Switching to CLI mode...\n", "\n⚠ 切换到 CLI 模式...\n"));
-                renderer_destroy(&renderer);
-                renderer_type = RENDERER_TYPE_CLI;
-                if (renderer_create(RENDERER_TYPE_CLI, &renderer) == 0) {
-                    ctx.renderer = &renderer;
-                    continue;
-                }
-                break;
-            } else if (get_ret == 3) {
-                uart_puts(tr("\n⚠ Switching to RAW mode...\n", "\n⚠ 切换到 RAW 模式...\n"));
-                renderer_destroy(&renderer);
-                renderer_type = RENDERER_TYPE_RAW;
-                if (renderer_create(RENDERER_TYPE_RAW, &renderer) == 0) {
-                    ctx.renderer = &renderer;
-                    continue;
-                }
-                break;
-            } else if (get_ret == 4) {
-                ctx.cancelled = 1;
-                break;
-            }
-
-            int handle_ret = wizard_engine_handle_input(&ctx, input_buf);
-            if (handle_ret == 1) {
-                wizard_result = 1;
-                break;
-            } else if (handle_ret == -1) {
-                ctx.cancelled = 1;
-                break;
-            }
-        }
-
-        /* ---- 保存配置（根据 force_override 决定） ---- */
-        if (ctx.cancelled) {
-            renderer.render_message(&renderer, tr("Wizard cancelled.\n", "向导已取消。\n"), 1);
-        } else if (wizard_result == 1) {
-            int save_ret;
-            if (force_override) {
-                /* FF[src/config/config_core.c]-CFN[config_core_save_force]-FTF[强制保存配置，无视文件存在性] */
-                save_ret = config_core_save_force(&ctx.config);
-            } else {
-                save_ret = wizard_engine_save_config(&ctx);
-            }
-            if (save_ret == 0) {
-                renderer.render_complete(&renderer, 1);
-            } else {
-                renderer.render_complete(&renderer, 0);
-            }
-        }
-
-        renderer_destroy(&renderer);
         free(ctx.steps);
         free(ctx.stack);
 
@@ -2326,16 +2186,30 @@ void shell_run(void) {
 
     check_disk_space();
 
-    uart_puts("\033[2J\033[H");
-    uart_puts(COLOR_BOLD COLOR_CYAN);
-    uart_puts("┌────────────────────────────────────────────────────────────┐\n");
-    uart_puts("│  LING OS v");
-    uart_puts(version_get());
-    uart_puts("                    │\n");
-    uart_puts("│  Welcome to LING OS                                     │\n");
-    uart_puts("└────────────────────────────────────────────────────────────┘\n");
-    uart_puts(COLOR_RESET);
-    uart_puts("\n");
+    /* 【2026-10-02 修复】欢迎横幅原子输出：
+     *   原实现分 8 次 uart_puts —— 日志线程可插入其中（真机实测
+     *   "LING OS v[日志]LN-0.7.2..." 交织），且版本行对齐错误。
+     *   现：拼接完整横幅一次性写出 + 逐行按宽度 60 对齐。 */
+    {
+        char vb[96], wb[96], bb[512];
+        safe_snprintf(vb, sizeof(vb), "%-60s", "");
+        {
+            char line_v[80];
+            safe_snprintf(line_v, sizeof(line_v), "  LING OS v%s", version_get());
+            if (strlen(line_v) > 60) line_v[60] = '\0';
+            safe_snprintf(vb, sizeof(vb), "%-60s", line_v);
+        }
+        safe_snprintf(wb, sizeof(wb), "%-60s", "  Welcome to LING OS");
+        safe_snprintf(bb, sizeof(bb),
+            "\033[2J\033[H" COLOR_BOLD COLOR_CYAN
+            "┌────────────────────────────────────────────────────────────┐\n"
+            "│%s│\n"
+            "│%s│\n"
+            "└────────────────────────────────────────────────────────────┘\n"
+            COLOR_RESET "\n",
+            vb, wb);
+        uart_puts(bb);
+    }
     uart_puts(tr("Type 'help' to see available commands\n",
                  "输入 'help' 查看可用命令\n"));
     uart_puts("\n");

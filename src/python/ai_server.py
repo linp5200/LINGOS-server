@@ -86,6 +86,16 @@ except ImportError:
     SocketIO = None
     CORS = None
 
+# ========== 【2026-10-02 修复】模块双重加载防呆 ==========
+#   现象：日志双写（同一条记录写两次、两组 id 恒定差 1313）。
+#   根因：ai_server 作为 __main__ 运行时，crisis/ux_ext/memory_pipeline/weather_link
+#         的 `from ai_server import ...` 找不到 sys.modules["ai_server"] → 模块体二次
+#         执行 → 第二次 addHandler(file_handler) 叠加到同一 logger → 双写。
+#   修复：把 __main__ 注册为 "ai_server" 别名——后续 import 直接复用，不再二次执行。
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.modules.setdefault("ai_server", _sys.modules[__name__])
+
 # ========== 修复引擎导入 ==========
 from repair_engine import get_engine, get_repair_history, get_repair_history_by_id, reload_repair_config
 
@@ -141,8 +151,59 @@ except Exception as _sc_e:
     def call_syscall(*_a, **_k):  # 防御性存根（daemon 不可用时优雅报错）
         return False, "syscall client unavailable: %s" % _sc_err
 logger.setLevel(logging.DEBUG)  # 初始级别，启动后从配置文件读取
-logger.addHandler(console_handler)
-logger.addHandler(file_handler)
+
+# 【2026-10-02 修复】handler 挂载防重（防模块二次执行/多次调用叠加——日志双写）
+def _add_handler_once(target_logger, handler):
+    for h in target_logger.handlers:
+        if type(h) is type(handler):
+            if isinstance(handler, logging.FileHandler):
+                if getattr(h, "baseFilename", None) == getattr(handler, "baseFilename", None):
+                    return
+            else:
+                return
+    target_logger.addHandler(handler)
+
+_add_handler_once(logger, console_handler)
+_add_handler_once(logger, file_handler)
+
+# ========== 【2026-10-02 修复】守护进程应答读取（半截读取 bug） ==========
+#   现象：技能 schema 等加载报 "Failed to load ... Expecting value: line 1 column 25"
+#   根因：原实现单次 recv()——守护进程分多次 write 时首个 recv 只返回半截 JSON
+#         （实测：收到 '{"status":"ok","result":' 前 24 字节即中断解析）。
+#   修复：循环接收直至换行符（lingosd / authorization 应答均为单行 JSON + '\n'）。
+def _sock_recv_line(sock, max_bytes=1 << 20):
+    buf = b""
+    while len(buf) < max_bytes:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+        if b"\n" in buf:
+            break
+    return buf
+
+def _conn_alive(conn) -> bool:
+    """检测客户端连接是否仍存活（MSG_PEEK——不消费数据）。
+    【2026-10-02 修复 · 中断即时化】C 端（websocket_server）收到 App 的 interrupt 帧后
+    close(fd)——本端此刻应可见 EOF。原实现无此检测 → App 已"中断"，服务端仍继续
+    跑完整轮（实测：点中断后 3 秒仍有工具在执行）。现在 ReAct 各检查点调用本函数，
+    EOF 即中止剩余工具与后续迭代。"""
+    if conn is None:
+        return True
+    try:
+        import select as _select
+        r, _, _ = _select.select([conn], [], [], 0)
+        if not r:
+            return True   # 无事件 → 存活（同时说明无 EOF）
+        try:
+            data = conn.recv(1, socket.MSG_PEEK)
+        except (BlockingIOError, InterruptedError):
+            return True
+        except OSError:
+            return False  # 连接错误
+        return data != b""   # b"" = EOF = 已关闭
+    except Exception:
+        return True   # 检测失败不阻断正常流程
 
 # 【0.7.0-hf2】早期环境变量检测日志（延迟到 logger 定义后）
 if globals().get("_early_env_backend"):
@@ -599,7 +660,7 @@ def auth_service_monitor():
                 sock.settimeout(2)
                 sock.connect(AUTH_SOCKET_PATH)
                 sock.send(b'{"cmd":"ping"}\n')
-                resp = sock.recv(1024)
+                resp = _sock_recv_line(sock)   # 【2026-10-02 半截读取修复】
                 sock.close()
                 if b'pong' not in resp:
                     raise Exception("Invalid response")
@@ -664,7 +725,7 @@ def request_authorization(skill_name: str, args: dict, session_id: str, timeout:
             sock.connect(AUTH_SOCKET_PATH)
             req = {"cmd": "request", "skill": skill_name, "args": args, "session": session_id}
             sock.send((json.dumps(req) + "\n").encode())
-            resp = json.loads(sock.recv(1024).decode())
+            resp = json.loads(_sock_recv_line(sock).decode())   # 【2026-10-02 半截读取修复】
             rid = resp.get("request_id")
             sock.close()
             if not rid:
@@ -686,7 +747,7 @@ def request_authorization(skill_name: str, args: dict, session_id: str, timeout:
                 sock2.connect(AUTH_SOCKET_PATH)
                 query = json.dumps({"cmd": "query", "request_id": rid}) + "\n"
                 sock2.send(query.encode())
-                status_resp = json.loads(sock2.recv(1024).decode())
+                status_resp = json.loads(_sock_recv_line(sock2).decode())   # 【2026-10-02 半截读取修复】
                 sock2.close()
                 status = status_resp.get("status")
                 if status == "approved":
@@ -1138,6 +1199,22 @@ def build_system_prompt(user_name: str, user_country: str, session_id: str = "de
         f"## Available System Skills\n{skill_descriptions}\n- To perform any operation, you MUST use function calling (tool_calls) to invoke the skill — never describe the call in text.\n- For long-running tasks, call `sub_ai_dispatch` to delegate to sub-AI.\n- On tool execution errors, call `query_knowledge_base` (parameters: error_msg, skill_name).",
         f"## 当前可用系统技能\n{skill_descriptions}\n- 需要执行任何操作时，**必须通过 function calling（tool_calls）调用技能**，绝不能只在回复文本中描述调用。\n- 耗时任务可调用 `sub_ai_dispatch` 分发给子AI。\n- 遇到工具执行错误，可调用 `query_knowledge_base` 技能（参数：error_msg, skill_name）查询常见问题解决方案。"
     )
+    # 【2026-10-02 · B5 先生定稿】Shell 优先引导（引导式——自管限制范围）
+    shell_guide = t(
+        "## Tool Usage Strategy (Shell First)\n"
+        "- When exploring files/directories, prefer ONE `sys_command` (shell) call with efficient commands (`ls -la`, `find ... -maxdepth N`, `head`, `wc -l`) instead of many separate exploratory tool calls.\n"
+        "- Manage the scope yourself: depth limits (`-maxdepth`), output limits (`| head -n 100`), targeted paths — avoid unbounded recursive scans on large trees.\n"
+        "- Batch related queries into one command when possible (`cmd1 && cmd2`).\n"
+        "- Once a path is known, read the exact file directly.\n"
+        "- If a tool is unavailable or errors, fall back to shell commands to finish the task.",
+        "## 工具使用策略（Shell 优先）\n"
+        "- 探索文件/目录时，优先用**一次 `sys_command`（shell）**完成（配合 `ls`、`find -maxdepth`、`head`、`wc` 等高效命令），不要发起大量分开的探索调用。\n"
+        "- 自行控制范围：加深度限制（`-maxdepth`）、输出限制（`| head`）、明确路径——不要在大目录上做无界递归扫描。\n"
+        "- 相关查询尽量合并为一条命令（`cmd1 && cmd2`）。\n"
+        "- 已知路径时直接读取目标文件。\n"
+        "- 工具不可用或报错时，用 shell 命令完成任务。"
+    )
+
     interaction = t(
         "## Interaction Flow\n1. Receive message → 2. Analyze intent → 3. Call skills → 4. Confirm high-risk → 5. Provide response → 6. Ask if further assistance is needed",
         "## 交互范式\n1. 接收消息 → 2. 分析意图 → 3. 调用技能 → 4. 确认高风险 → 5. 给出回答 → 6. 任务完成后询问是否继续"
@@ -1196,14 +1273,14 @@ def build_system_prompt(user_name: str, user_country: str, session_id: str = "de
     # 【B5】GUI 模式：注入 App 交互引导
     if gui_mode:
         return "\n\n".join([identity, region_rules, core_rules, sys_rules, thought_rules,
-                            skills_desc, memory_guide, interaction,
+                            skills_desc, shell_guide, memory_guide, interaction,
                             language_instruction, meta_section,
                             personality_section, assistant_section, custom_section,
                             guide_section, crisis_section,
                             t("## GUI Mode\nYou are in the mobile GUI. Keep replies concise for phone reading. Use gui_ask for questions, gui_notify for notifications, gui_open_url for links.",
                               "## GUI 模式\n您正在移动端 GUI 中运行。回复请简洁、适合手机阅读。需要提问时用 gui_ask，需要通知时用 gui_notify，需要打开链接时用 gui_open_url。")])
     return "\n\n".join([identity, region_rules, core_rules, sys_rules, thought_rules,
-                        skills_desc, memory_guide, interaction,
+                        skills_desc, shell_guide, memory_guide, interaction,
                         language_instruction, meta_section,
                         personality_section, assistant_section, custom_section,
                         guide_section, crisis_section])
@@ -1731,7 +1808,7 @@ def load_skill_schemas_from_daemon():
         sock.connect(DAEMON_SOCKET_PATH)
         msg = json.dumps({"cmd": "registry_list"}) + "\n"
         sock.send(msg.encode())
-        resp = sock.recv(65536).decode()
+        resp = _sock_recv_line(sock).decode()   # 【2026-10-02 半截读取修复】
         sock.close()
         data = json.loads(resp)
         if data.get("status") == "ok":
@@ -1980,6 +2057,12 @@ def execute_tool_calls(tool_calls: List[Dict], session_id: str = "default", conn
             orch_session = None
 
     for tc in tool_calls:
+        # 【2026-10-02 修复 · 中断即时化】客户端已断开（interrupt → C 端 close）
+        #   → 停止执行剩余工具（原继续执行到轮末——"点了中断工具还在出现"根因）
+        if conn is not None and not _conn_alive(conn):
+            logger.info("execute_tool_calls: client gone — aborting remaining %d tool(s)",
+                        len(tool_calls) - len(results))
+            break
         func = tc.get("function", {})
         name = func.get("name")
         args_str = func.get("arguments", "{}")
@@ -2305,12 +2388,14 @@ def call_deepseek_nonstream(messages: List[Dict], tools: Optional[List[Dict]] = 
 
 
 def call_ollama_nonstream(messages: List[Dict], tools: Optional[List[Dict]] = None, timeout: int = DEFAULT_API_TIMEOUT) -> Dict:
-    """【0.2.0 统一层】Ollama 走 OpenAI 兼容端点 /v1/chat/completions（官方确认兼容 tools）"""
+    """【2026-10-02 统一】与 deepseek 路径合并——统一走 provider.json 活动提供商。
+    原实现直接用 legacy ollama_url（无视 provider.json）——"改了配置不生效"根因：
+    先生真机取证 = 请求打向 8080（LINGOS 自身面板）→ HTTP 405。"""
     logger.debug(f"call_ollama_nonstream(统一层): messages={len(messages)}")
-    p = llm_unified.LLMProvider({"id": "ollama", "format": "openai", "base_url": ollama_url,
-                                 "api_key": "", "model": ollama_model})
+    p = _current_provider()
     resp = llm_unified.call_llm_nonstream(messages, tools, provider=p, timeout=timeout,
-                                          temperature=temperature)
+                                          temperature=temperature,
+                                          reasoning_effort=deepseek_reasoning_effort)
     if resp.get("error"):
         return {"error": resp.get("content", "")}
     return resp
@@ -2326,12 +2411,12 @@ def call_deepseek_stream(messages: List[Dict], tools: Optional[List[Dict]] = Non
 
 
 def call_ollama_stream(messages: List[Dict], tools: Optional[List[Dict]] = None, timeout: int = DEFAULT_API_TIMEOUT) -> Generator[Dict, None, None]:
-    """【0.2.0 统一层】Ollama 流式（OpenAI 兼容端点）"""
+    """【2026-10-02 统一】同 call_ollama_nonstream——统一 provider 解析（消灭双路径）"""
     logger.debug(f"call_ollama_stream(统一层): messages={len(messages)}")
-    p = llm_unified.LLMProvider({"id": "ollama", "format": "openai", "base_url": ollama_url,
-                                 "api_key": "", "model": ollama_model})
+    p = _current_provider()
     yield from llm_unified.call_llm_stream(messages, tools, provider=p, timeout=timeout,
-                                           temperature=temperature)
+                                           temperature=temperature,
+                                           reasoning_effort=deepseek_reasoning_effort)
 
 # ========== ReAct循环 ==========
 def _send_evt(conn, evt):
@@ -2402,6 +2487,12 @@ def _stream_final_reply(conn, messages, fallback_content):
                     thinking_sent = False
                 collected.append(text)
                 _send_evt(conn, {"type": "content", "delta": text})
+        # 【2026-10-02 修复】流结束仍未关思考块 → 补发 thinking_hide
+        #   （原仅"正文出现时"才发——工具轮无正文时不发，下一轮思考被 App
+        #    并入同一思考块："第二次思考混入第一次"——先生真机反馈）
+        if thinking_sent:
+            _send_evt(conn, {"type": "thinking_hide"})
+            thinking_sent = False
     except Exception as e:
         logger.warning("Stream final reply failed, fallback: %s", e)
         _send_evt(conn, {"type": "content", "delta": fallback_content})
@@ -2427,6 +2518,10 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
     usage_info = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cache_hit": 0}
     iteration = 0
     while True:
+        # 【2026-10-02 修复 · 中断即时化】客户端断开 → 立即结束本轮处理
+        if conn is not None and not _conn_alive(conn):
+            logger.info("react_stream: client disconnected (interrupt) — stopping at iter=%d", iteration)
+            return full, usage_info
         iteration += 1
         if max_iterations > 0 and iteration > max_iterations:
             # 达到上限：强制总结（防"未收到有效回复"）
@@ -2493,6 +2588,12 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
                         "total_tokens": u.get("total_tokens", 0),
                         "cache_hit": u.get("prompt_cache_hit_tokens", 0),
                     }
+            # 【2026-10-02 修复】迭代轮边界：本轮流结束仍未关思考块 → 补发
+            #   （同 _stream_final_reply——工具轮无正文时思考块不闭合，
+            #    下一轮思考被并入同一块。补发后 App 每轮思考独立成块）
+            if thinking_sent:
+                _send_evt(conn, {"type": "thinking_hide"})
+                thinking_sent = False
         except Exception as e:
             logger.error("react_stream iteration exception: %s", traceback.format_exc())
             _send_evt(conn, {"type": "content", "delta": t(f"AI processing error: {str(e)}", f"AI处理错误：{str(e)}")})
@@ -4407,7 +4508,7 @@ def cmd_auth_respond(req_id: str = "", decision: str = "", tool: str = "") -> di
         sock.settimeout(5)
         sock.connect(AUTH_SOCKET_PATH)
         sock.send((json.dumps({"cmd": _cmd, "request_id": req_id}) + "\n").encode())
-        resp_raw = sock.recv(1024).decode()
+        resp_raw = _sock_recv_line(sock).decode()   # 【2026-10-02 半截读取修复】
         sock.close()
         try:
             resp = json.loads(resp_raw)
@@ -4430,7 +4531,7 @@ def cmd_auth_pending() -> dict:
         sock.settimeout(5)
         sock.connect(AUTH_SOCKET_PATH)
         sock.send(b'{"cmd":"pending"}\n')
-        resp_raw = sock.recv(1024).decode()
+        resp_raw = _sock_recv_line(sock).decode()   # 【2026-10-02 半截读取修复】
         sock.close()
         try:
             resp = json.loads(resp_raw)
@@ -5719,7 +5820,10 @@ AUDIO_HTTP_PORT = 8088
 
 
 def _http_auth_ok(token: str) -> bool:
-    """Bearer token 校验（读 tokens.json；文件不存在时拒绝——安全默认）"""
+    """Bearer token 校验（读 tokens.json；文件不存在时拒绝——安全默认）
+    【2026-10-02 修复】原 any(str(tk) == token for tk in data) 对 list-of-dict 恒 False
+    （tk 是 dict——str(dict) 永不等于 token 字符串；该接口自设计起从未校验成功）。
+    现按实际结构取 dict["token"]，并检查 revoked / expires_at。"""
     if not token:
         return False
     try:
@@ -5727,13 +5831,30 @@ def _http_auth_ok(token: str) -> bool:
         if os.path.exists(tf):
             with open(tf, encoding="utf-8") as f:
                 data = json.load(f)
+            now = time.time()
+
+            def _check_entry(entry):
+                if isinstance(entry, dict):
+                    if str(entry.get("token", "")) != token:
+                        return False
+                    if entry.get("revoked"):
+                        return False
+                    exp = entry.get("expires_at")
+                    if exp is not None:
+                        try:
+                            if float(exp) < now:
+                                return False
+                        except (TypeError, ValueError):
+                            pass
+                    return True
+                return str(entry) == token   # 兼容纯字符串数组（旧格式）
             if isinstance(data, list):
-                return any(str(tk) == token for tk in data)
+                return any(_check_entry(e) for e in data)
             if isinstance(data, dict):
                 tokens = data.get("tokens", [])
                 if isinstance(tokens, list):
-                    return any(str(tk) == token for tk in tokens)
-                return str(data.get("token", "")) == token
+                    return any(_check_entry(e) for e in tokens)
+                return _check_entry(data)
     except Exception:
         pass
     return False
