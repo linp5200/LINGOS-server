@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <pwd.h>
+#include <sys/syscall.h>   /* 【2026-10-10】黑名单用 __NR_* 宏（跨架构正确） */
 
 /* ============================================================
  * 文件权限检查
@@ -185,14 +186,40 @@ int permission_check_syscall(const char *app_id, int syscall_num) {
         return 0;
     }
 
-    /* 黑名单系统调用（始终禁止） */
-    int blacklist[] = { /* reboot, mount, umount, swapon, swapoff 等 */ };
-    for (int i = 0; i < (int)(sizeof(blacklist)/sizeof(blacklist[0])); i++) {
-        if (syscall_num == blacklist[i]) {
-            LOG_WARN_T("PermCheck", "Syscall", "Blacklisted", "app %s attempted syscall %d", app_id, syscall_num);
-            return 0;
-        }
-    }
+    /* 【2026-10-10 P0 补全】黑名单系统调用（始终禁止）
+     * 此前 blacklist[] 为空数组——即使接上执行点也拦不住任何 syscall。
+     * 用 __NR_* 宏（跨架构正确；seccomp 为第一道防线，此处为纵深第二道）。
+     * 刻意只列"高危且正常业务不使用"的持久化/破坏类：*/
+#ifdef __NR_reboot
+    if (syscall_num == __NR_reboot)        { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted reboot", app_id);        return 0; }
+#endif
+#ifdef __NR_kexec_load
+    if (syscall_num == __NR_kexec_load)    { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted kexec_load", app_id);    return 0; }
+#endif
+#ifdef __NR_init_module
+    if (syscall_num == __NR_init_module)   { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted init_module", app_id);   return 0; }
+#endif
+#ifdef __NR_finit_module
+    if (syscall_num == __NR_finit_module)  { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted finit_module", app_id);  return 0; }
+#endif
+#ifdef __NR_delete_module
+    if (syscall_num == __NR_delete_module) { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted delete_module", app_id); return 0; }
+#endif
+#ifdef __NR_mount
+    if (syscall_num == __NR_mount)         { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted mount", app_id);         return 0; }
+#endif
+#ifdef __NR_umount2
+    if (syscall_num == __NR_umount2)       { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted umount2", app_id);       return 0; }
+#endif
+#ifdef __NR_pivot_root
+    if (syscall_num == __NR_pivot_root)    { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted pivot_root", app_id);    return 0; }
+#endif
+#ifdef __NR_swapon
+    if (syscall_num == __NR_swapon)        { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted swapon", app_id);        return 0; }
+#endif
+#ifdef __NR_swapoff
+    if (syscall_num == __NR_swapoff)       { LOG_WARN_T("PermCheck","Syscall","Blacklisted","app %s attempted swapoff", app_id);       return 0; }
+#endif
 
     return 1;
 }

@@ -401,6 +401,127 @@ int permission_whitelist_list(const char *app_id, char *out, size_t out_len) {
 }
 
 /* ============================================================
+ * 【2026-10-10 P0 修复】白名单获取（加载 + 首次冷启动播种）
+ * ------------------------------------------------------------
+ * 根因（先生环境实测）：permission_whitelist_load() 全仓 0 外部调用，
+ *   白名单文件 /LINGOS/system/config/permission_whitelist.json 从未生成；
+ *   load() 在文件缺失时只建 {"apps":[]} 空名单 →
+ *   permission_whitelist_check("ai", …) 恒 0 →
+ *   permission_check_file 恒 0 → syscall file_check 恒 allowed=false →
+ *   skill_handlers._file_guard fail-closed → 文件类技能（读/写/删）全被拒。
+ *
+ * 本函数修复：显式加载；若为"文件不存在"的冷启动 → 播种内置应用基线授权
+ *   并在日志中打印 seeded（不静默，便于追查）。
+ *   授权范围按先生 2026-10-10 决策：ai 授文件读写执行 + 网络 + DNS + SYSCALL（靠审批链兜底）。
+ * ============================================================ */
+
+/* 为 app 添加权限；返回新增条数（已存在则不重复添加） */
+static int wl_add_perms(cJSON *app, const permission_type_t *perms, int n) {
+    cJSON *arr = cJSON_GetObjectItem(app, "permissions");
+    if (!arr || !cJSON_IsArray(arr)) {
+        arr = cJSON_CreateArray();
+        if (!arr) return 0;
+        cJSON_AddItemToObject(app, "permissions", arr);
+    }
+    int added = 0;
+    for (int i = 0; i < n; i++) {
+        const char *s = permission_type_to_string(perms[i]);
+        if (!s) continue;
+        int dup = 0;
+        cJSON *it = NULL;
+        cJSON_ArrayForEach(it, arr) {
+            if (cJSON_IsString(it) && strcmp(it->valuestring, s) == 0) { dup = 1; break; }
+        }
+        if (!dup) { cJSON_AddItemToArray(arr, cJSON_CreateString(s)); added++; }
+    }
+    return added;
+}
+
+/* 追加/补全一个应用条目并授权；返回新增权限条数 */
+static int wl_seed_app(const char *app_id, const char *desc,
+                       const permission_type_t *perms, int n) {
+    if (!g_whitelist_root) return 0;
+    cJSON *apps = cJSON_GetObjectItem(g_whitelist_root, "apps");
+    if (!apps || !cJSON_IsArray(apps)) {
+        apps = cJSON_CreateArray();
+        if (!apps) return 0;
+        cJSON_AddItemToObject(g_whitelist_root, "apps", apps);
+    }
+    cJSON *app = NULL;
+    cJSON_ArrayForEach(app, apps) {
+        cJSON *id = cJSON_GetObjectItem(app, "id");
+        if (id && cJSON_IsString(id) && strcmp(id->valuestring, app_id) == 0)
+            return wl_add_perms(app, perms, n);   /* 已存在：只补权限，不覆盖用户配置 */
+    }
+    app = cJSON_CreateObject();
+    if (!app) return 0;
+    cJSON_AddStringToObject(app, "id", app_id);
+    cJSON_AddStringToObject(app, "desc", desc);
+    cJSON_AddItemToObject(app, "permissions", cJSON_CreateArray());
+    cJSON_AddItemToArray(apps, app);
+    return wl_add_perms(app, perms, n);
+}
+
+int permission_whitelist_seed_defaults(void) {
+    if (!g_loaded) {
+        if (permission_whitelist_load() != 0) return -1;
+    }
+    pthread_mutex_lock(&g_whitelist_lock);
+    if (!g_whitelist_root) {
+        pthread_mutex_unlock(&g_whitelist_lock);
+        return -1;
+    }
+
+    /* ① AI Agent（经 daemon.sock 执行面）——读写执行 + 网络 + DNS + SYSCALL */
+    static const permission_type_t AI_PERMS[] = {
+        PERM_FILE_READ, PERM_FILE_WRITE, PERM_FILE_DELETE, PERM_FILE_EXEC, PERM_FILE_LIST,
+        PERM_NET_CONNECT, PERM_NET_DNS, PERM_NET_BIND, PERM_SYSCALL
+    };
+    /* ② 视觉守护——摄像头 */
+    static const permission_type_t VISIOND_PERMS[] = { PERM_CAMERA, PERM_FILE_WRITE };
+    /* ③ 语音守护——麦克风 */
+    static const permission_type_t VOICED_PERMS[] = { PERM_MICROPHONE, PERM_FILE_WRITE };
+
+    int n = 0;
+    n += wl_seed_app("ai",      "AI Agent (daemon.sock exec plane)", AI_PERMS,
+                     (int)(sizeof(AI_PERMS) / sizeof(AI_PERMS[0])));
+    n += wl_seed_app("visiond", "vision daemon (camera capture)",    VISIOND_PERMS,
+                     (int)(sizeof(VISIOND_PERMS) / sizeof(VISIOND_PERMS[0])));
+    n += wl_seed_app("voiced",  "voice daemon (microphone)",         VOICED_PERMS,
+                     (int)(sizeof(VOICED_PERMS) / sizeof(VOICED_PERMS[0])));
+    pthread_mutex_unlock(&g_whitelist_lock);
+
+    if (n > 0) {
+        permission_whitelist_save();
+        LOG_INFO_T("PermWhitelist", "Seed", "Done", "seeded=%d perms for ai/visiond/voiced", n);
+    } else {
+        LOG_DEBUG_T("PermWhitelist", "Seed", "Noop", "defaults already present");
+    }
+    return 0;
+}
+
+/* 启动期显式加载（此前全仓无调用者 → 白名单从未加载） */
+int permission_whitelist_acquire(void) {
+    if (g_loaded) {
+        LOG_DEBUG_T("PermWhitelist", "Acquire", "Already", "whitelist already loaded");
+        return 0;
+    }
+    const char *path = get_whitelist_path();
+    struct stat st;
+    int existed = (stat(path, &st) == 0);
+    if (permission_whitelist_load() != 0) {
+        LOG_ERROR_T("PermWhitelist", "Acquire", "LoadFail", "cannot load whitelist");
+        return -1;
+    }
+    if (!existed) {
+        LOG_WARN_T("PermWhitelist", "Acquire", "ColdStart", "whitelist absent -> seeding defaults");
+        return permission_whitelist_seed_defaults();
+    }
+    LOG_INFO_T("PermWhitelist", "Acquire", "OK", "whitelist loaded from disk");
+    return 0;
+}
+
+/* ============================================================
  * 权限类型转换
  * ============================================================ */
 

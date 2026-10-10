@@ -67,6 +67,19 @@ static int daemon_init(void) {
     tcp_client_init();
     log_system_init();
     permission_init();
+    /* 【2026-10-10 P0 修复】白名单启动加载 + 冷启动播种
+     * 此前 permission_whitelist_load() 全仓无调用者 → 白名单从未加载 →
+     * permission_check_file 恒 0 → 文件类技能全被 fail-closed 拒绝。
+     * 注：此处用 extern 而非 include（permission.h 与 permission_whitelist.h
+     *     存在 PERM_CAMERA 等同名枚举，直接 include 会编译冲突）。 */
+    {
+        extern int permission_whitelist_acquire(void);
+        if (permission_whitelist_acquire() != 0) {
+            LOG_WARN_T("Lingosd", "Init", "PermWhitelist", "whitelist acquire failed (file ops will be denied)");
+        } else {
+            LOG_INFO_T("Lingosd", "Init", "PermWhitelist", "whitelist acquired (load+seed)");
+        }
+    }
     fs_layout_init();
     api_core_init(1);  /* R1: lingosd 强制启动 WS/HTTP */
 
@@ -506,7 +519,9 @@ static void handle_command(int client_fd, const char *json_req) {
         const char *args_json = (cJSON_IsObject(args_item) || cJSON_IsString(args_item)) ?
                                  cJSON_PrintUnformatted(args_item) : "{}";
         char result[8192] = {0};
-        int ret = handle_syscall(operation, args_json, result, sizeof(result));
+        /* 【2026-10-10】原 int ret = ... 未使用（-Wunused-variable）——
+         * 显式忽略返回值，保持零警告约定；返回值语义不变 */
+        (void)handle_syscall(operation, args_json, result, sizeof(result));
         if (args_json && args_json[0] != '{' && args_json[0] != '\0') {
             free((void*)args_json);
         }

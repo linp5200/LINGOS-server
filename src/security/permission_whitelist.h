@@ -35,6 +35,10 @@ typedef enum {
 
 int permission_whitelist_load(void);
 int permission_whitelist_save(void);
+/* 【2026-10-10 P0】启动显式加载（冷启动自动播种默认应用授权） */
+int permission_whitelist_acquire(void);
+/* 播种默认授权：ai / visiond / voiced（已存在则只补权限，不覆盖用户配置） */
+int permission_whitelist_seed_defaults(void);
 int permission_whitelist_check(const char *app_id, permission_type_t perm);
 int permission_whitelist_grant(const char *app_id, permission_type_t perm);
 int permission_whitelist_revoke(const char *app_id, permission_type_t perm);
