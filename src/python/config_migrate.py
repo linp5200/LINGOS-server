@@ -221,7 +221,14 @@ def migrate(cfg_dir, force=False, dry=False):
         f.write("\n")
     os.replace(tmp, target)
 
-    print("✅ 已写出 %s（%d 字节）" % (target, os.path.getsize(target)))
+    # 【隐私】config.json 含 api_key / ha token / 加密密钥引用 → 收紧到 0600
+    #   （先生隐私优先级 #2：数据默认不出家门，凭据不裸奔）
+    try:
+        os.chmod(target, 0o600)
+    except Exception as e:
+        print("  ! 权限收紧失败（建议手工 chmod 600）：%s" % e)
+
+    print("✅ 已写出 %s（%d 字节，权限 0600）" % (target, os.path.getsize(target)))
     print("   旧文件备份：%s（%d 个）" % (backup_dir, len(moved)))
     print("   兼容：三端读取层应实现「有 config.json 用新，无则读旧」——旧文件保持原位未动")
     return 0
@@ -244,6 +251,11 @@ def verify(cfg_dir):
         ok = False
     zones = [k for k in cfg if not k.startswith("_")]
     print("分区：%s" % ", ".join(sorted(zones)))
+    mode = oct(os.stat(p).st_mode & 0o777)
+    if mode != "0o600":
+        print("⚠ 权限 %s（建议 0600——文件含凭据）" % mode)
+    else:
+        print("权限：0600 ✓")
     for z in ("ai", "security", "runtime"):
         if z not in cfg:
             print("⚠ 缺少分区：%s" % z)
