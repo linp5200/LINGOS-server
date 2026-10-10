@@ -34,6 +34,7 @@
 #include <ifaddrs.h>
 #include <sys/sysinfo.h>
 #include <sys/wait.h>
+#include <sys/syscall.h>    /* 【2026-10-10 P1】exec_command 的 SYSCALL 权限检查（__NR_execve） */
 #include <time.h>
 
 /* ============================================================
@@ -382,6 +383,45 @@ static int is_safe_url_input(const char *s) {
         if (c < 0x20) return 0;                        /* 控制字符 */
     }
     return 1;
+}
+
+/* 【2026-10-10 P1】URL → 主机提取（供 permission_check_network 使用）
+ *   输入已在 is_safe_url_input() 校验过字符集，此处只做切分：
+ *   scheme://user@host:port/path → host（IPv6 字面量去方括号）
+ *   空/非法输入 → 输出空串（调用方自行回退）。 */
+static void url_extract_host(const char *url, char *out, size_t out_len) {
+    if (!out || out_len == 0) return;
+    out[0] = '\0';
+    if (!url || !*url) return;
+
+    const char *p = strstr(url, "://");
+    p = p ? (p + 3) : url;
+    const char *end = strchr(p, '/');
+    if (!end) end = p + strlen(p);
+
+    const char *at = memchr(p, '@', (size_t)(end - p));   /* 去 userinfo */
+    const char *start = at ? (at + 1) : p;
+
+    if (start < end && *start == '[') {                    /* IPv6 字面量 */
+        const char *rb = memchr(start, ']', (size_t)(end - start));
+        if (rb) { start++; end = rb; }
+    } else {
+        const char *colon = memchr(start, ':', (size_t)(end - start));
+        if (colon) end = colon;                            /* 去端口 */
+    }
+
+    size_t n = (size_t)(end - start);
+    if (n >= out_len) n = out_len - 1;
+    memcpy(out, start, n);
+    out[n] = '\0';
+}
+
+/* 【2026-10-10 P1】权限拒绝统一响应（fail-closed；结构一致便于 App/日志解析） */
+static void set_permission_denied(cJSON *result, const char *message) {
+    if (!result) return;
+    cJSON_AddStringToObject(result, "status", "error");
+    cJSON_AddStringToObject(result, "error_type", "permission_denied");
+    cJSON_AddStringToObject(result, "message", message ? message : "Denied by permission system");
 }
 
 /* 【0.7.0-hf2 · 安全】写/删保护路径（敏感系统区域——纵深防御兜底）
@@ -769,6 +809,14 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "error_type", "invalid_host");
             cJSON_AddStringToObject(result, "message", "非法主机名（仅允许域名/IP 字符）");
             ret = -1;
+        } else if (!permission_check_network("ai", host, 0, 1)) {
+            /* 【2026-10-10 P1】网络执行点（此前 permission_check_network 零调用点）
+             *   置于主机字符白名单之后：格式合法才进入授权判定；fail-closed。
+             *   AI 需 NET_CONNECT（域名另需 NET_DNS）。 */
+            LOG_WARN_T("Syscall", "NetPing", "Denied",
+                       "ai lacks NET_CONNECT/NET_DNS for host=%s", host);
+            set_permission_denied(result, "权限系统拒绝：AI 无网络访问权限（NET_CONNECT）");
+            ret = -1;
         } else {
         char cmd[128];
         safe_snprintf(cmd, sizeof(cmd), "ping -c %d %s 2>&1", count, host);
@@ -792,6 +840,12 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
     else if (strcmp(operation, "net_curl") == 0) {
         LOG_DEBUG_T("Syscall", "Handle", "NetCurl", "HTTP request");
         cJSON *url_item = cJSON_GetObjectItem(args, "url");
+
+        /* 【2026-10-10 P1】网络执行点：先取主机（授权判定放在 URL 白名单校验之后） */
+        char curl_host[256];
+        url_extract_host(cJSON_IsString(url_item) ? url_item->valuestring : NULL,
+                         curl_host, sizeof(curl_host));
+
         if (!cJSON_IsString(url_item)) {
             cJSON_AddStringToObject(result, "status", "error");
             cJSON_AddStringToObject(result, "error_type", "missing_param");
@@ -802,6 +856,13 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "status", "error");
             cJSON_AddStringToObject(result, "error_type", "invalid_url");
             cJSON_AddStringToObject(result, "message", "非法 URL（仅允许 http/https 且不含特殊字符）");
+            ret = -1;
+        } else if (!permission_check_network("ai",
+                       curl_host[0] ? curl_host : url_item->valuestring, 0, 1)) {
+            /* 【2026-10-10 P1】网络执行点：URL 合法后再判授权（不改原语义）；fail-closed */
+            LOG_WARN_T("Syscall", "NetCurl", "Denied",
+                       "ai lacks NET_CONNECT/NET_DNS for host=%s", curl_host);
+            set_permission_denied(result, "权限系统拒绝：AI 无网络访问权限（NET_CONNECT）");
             ret = -1;
         } else {
             char cmd[256];
@@ -838,6 +899,12 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "status", "error");
             cJSON_AddStringToObject(result, "error_type", "missing_param");
             cJSON_AddStringToObject(result, "message", "Missing 'domain'");
+            ret = -1;
+        } else if (!permission_check_network("ai", domain_item->valuestring, 53, 1)) {
+            /* 【2026-10-10 P1】网络执行点：域名解析需 NET_CONNECT + NET_DNS；fail-closed */
+            LOG_WARN_T("Syscall", "NetDNS", "Denied", "ai lacks NET_DNS for domain=%s",
+                       domain_item->valuestring);
+            set_permission_denied(result, "权限系统拒绝：AI 无域名解析权限（NET_DNS）");
             ret = -1;
         } else {
             struct addrinfo hints, *res;

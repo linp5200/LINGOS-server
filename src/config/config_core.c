@@ -263,9 +263,137 @@ static int load_privilege_config(wizard_config_t *cfg) {
     return 0;
 }
 
+/* ============================================================
+ * 【2026-10-10 配置统一·方案 C】优先读单一 config.json
+ * ------------------------------------------------------------
+ * 先生 2026-10-01 拍板（§10.5 Q1）：新建统一 schema = config.json 单文件，
+ *   三端全部迁移；兼容铁律 = "有 config.json 用新，无则读旧文件族"。
+ * 本函数实现 C 端读取侧的统一入口：
+ *   ① ai.provider.active → 权威提供商（先生 Q5：AI 合并 OpenAI，与 App 同 schema）
+ *      base_url / model / api_key(_enc) 取自该 active provider（解决配置三源分裂）
+ *   ② schema_version 校验；缺失或读失败 → 返回 -1，由调用方回退旧文件族
+ * 注：api_key_enc 为值级加密（S5），此处仅回填密文占位不落明文；
+ *     解密由上层（Python llm_unified / C envelope）负责。
+ * ============================================================ */
+static int load_unified_config(wizard_config_t *cfg) {
+    char path[512];
+    get_config_path(path, sizeof(path), "config.json");
+    cJSON *root = load_json(path);
+    if (!root) return -1;   /* 无 config.json → 调用方回退旧文件族 */
+
+    cJSON *ver = cJSON_GetObjectItem(root, "schema_version");
+    int schema = cJSON_IsNumber(ver) ? ver->valueint : 0;
+    LOG_INFO_T("ConfigCore", "LoadUnified", "Enter", "config.json found (schema_version=%d)", schema);
+
+    cJSON *ai = cJSON_GetObjectItem(root, "ai");
+    cJSON *ai_cfg = ai ? cJSON_GetObjectItem(ai, "ai_config") : NULL;
+    cJSON *prov  = ai ? cJSON_GetObjectItem(ai, "provider") : NULL;
+
+    /* ① 通用 AI 参数（新路径 ai.ai_config.*；旧结构完全一致，直接复用键名） */
+    if (cJSON_IsObject(ai_cfg)) {
+        cJSON *it;
+        it = cJSON_GetObjectItem(ai_cfg, "backend");
+        if (cJSON_IsString(it)) safe_strncpy(cfg->ai_backend, it->valuestring, sizeof(cfg->ai_backend));
+        it = cJSON_GetObjectItem(ai_cfg, "thinking_enabled");
+        if (cJSON_IsBool(it)) cfg->thinking_enabled = cJSON_IsTrue(it);
+        it = cJSON_GetObjectItem(ai_cfg, "stream_enabled");
+        if (cJSON_IsBool(it)) cfg->stream_enabled = cJSON_IsTrue(it);
+        it = cJSON_GetObjectItem(ai_cfg, "show_thinking");
+        if (cJSON_IsBool(it)) cfg->show_thinking = cJSON_IsTrue(it);
+        it = cJSON_GetObjectItem(ai_cfg, "meta_info_enabled");
+        if (cJSON_IsBool(it)) cfg->meta_info_enabled = cJSON_IsTrue(it);
+        it = cJSON_GetObjectItem(ai_cfg, "max_context_tokens");
+        if (cJSON_IsNumber(it)) cfg->max_context_tokens = it->valueint;
+        it = cJSON_GetObjectItem(ai_cfg, "socket_timeout");
+        if (cJSON_IsNumber(it)) cfg->socket_timeout = it->valueint;
+        it = cJSON_GetObjectItem(ai_cfg, "auth_timeout");
+        if (cJSON_IsNumber(it)) cfg->auth_timeout = it->valueint;
+        it = cJSON_GetObjectItem(ai_cfg, "log_level");
+        if (cJSON_IsString(it)) safe_strncpy(cfg->log_level, it->valuestring, sizeof(cfg->log_level));
+        it = cJSON_GetObjectItem(ai_cfg, "temperature");
+        if (cJSON_IsNumber(it)) cfg->temperature = it->valuedouble;
+        it = cJSON_GetObjectItem(ai_cfg, "creativity");
+        if (cJSON_IsNumber(it)) cfg->creativity = it->valuedouble;
+        it = cJSON_GetObjectItem(ai_cfg, "max_agents");
+        if (cJSON_IsNumber(it)) cfg->max_agents = it->valueint;
+        it = cJSON_GetObjectItem(ai_cfg, "search_backend");
+        if (cJSON_IsString(it)) safe_strncpy(cfg->search_backend, it->valuestring, sizeof(cfg->search_backend));
+        it = cJSON_GetObjectItem(ai_cfg, "search_max_urls");
+        if (cJSON_IsNumber(it)) cfg->search_max_urls = it->valueint;
+        it = cJSON_GetObjectItem(ai_cfg, "search_rate_limit");
+        if (cJSON_IsNumber(it)) cfg->search_rate_limit = it->valueint;
+        it = cJSON_GetObjectItem(ai_cfg, "personality_file");
+        if (cJSON_IsString(it)) safe_strncpy(cfg->personality_file, it->valuestring, sizeof(cfg->personality_file));
+        it = cJSON_GetObjectItem(ai_cfg, "assistant_file");
+        if (cJSON_IsString(it)) safe_strncpy(cfg->assistant_file, it->valuestring, sizeof(cfg->assistant_file));
+        it = cJSON_GetObjectItem(ai_cfg, "thinking_display");
+        if (cJSON_IsString(it)) safe_strncpy(cfg->thinking_display, it->valuestring, sizeof(cfg->thinking_display));
+        /* 语言属 UI 区，但旧结构在 ai_config —— 兼容读取 */
+        it = cJSON_GetObjectItem(ai_cfg, "language");
+        if (cJSON_IsString(it)) safe_strncpy(cfg->language, it->valuestring, sizeof(cfg->language));
+    }
+
+    /* ② active provider → 权威 base_url / model / key（解决三源分裂） */
+    if (cJSON_IsObject(prov)) {
+        cJSON *act = cJSON_GetObjectItem(prov, "active");
+        cJSON *list = cJSON_GetObjectItem(prov, "providers");
+        cJSON *entry = NULL;
+        if (cJSON_IsString(act) && cJSON_IsArray(list)) {
+            cJSON *p = NULL;
+            cJSON_ArrayForEach(p, list) {
+                cJSON *id = cJSON_GetObjectItem(p, "id");
+                if (cJSON_IsString(id) && strcmp(id->valuestring, act->valuestring) == 0) { entry = p; break; }
+            }
+        }
+        if (entry) {
+            cJSON *it;
+            it = cJSON_GetObjectItem(entry, "base_url");
+            if (cJSON_IsString(it)) safe_strncpy(cfg->base_url, it->valuestring, sizeof(cfg->base_url));
+            it = cJSON_GetObjectItem(entry, "model");
+            if (cJSON_IsString(it)) safe_strncpy(cfg->model, it->valuestring, sizeof(cfg->model));
+            it = cJSON_GetObjectItem(entry, "api_key");
+            if (cJSON_IsString(it) && it->valuestring[0]) {
+                safe_strncpy(cfg->api_key, it->valuestring, sizeof(cfg->api_key));
+            } else {
+                /* 仅密文（值级加密）→ 明文留空，由上层解密注入 */
+                it = cJSON_GetObjectItem(entry, "api_key_enc");
+                if (cJSON_IsString(it) && it->valuestring[0]) cfg->api_key[0] = '\0';
+            }
+            /* active 提供商与 backend 不一致 → 以 active 为准（先生 Q5） */
+            if (cJSON_IsString(act)) safe_strncpy(cfg->ai_backend, act->valuestring, sizeof(cfg->ai_backend));
+            LOG_INFO_T("ConfigCore", "LoadUnified", "Provider", "active='%s' model='%s'",
+                       act && cJSON_IsString(act) ? act->valuestring : "?", cfg->model);
+        }
+    }
+
+    /* ③ UI 区（language 等按先生"指定内容由指定端配置"归 ui） */
+    cJSON *ui = cJSON_GetObjectItem(root, "ui");
+    if (cJSON_IsObject(ui)) {
+        cJSON *it = cJSON_GetObjectItem(ui, "language");
+        if (cJSON_IsString(it)) safe_strncpy(cfg->language, it->valuestring, sizeof(cfg->language));
+    }
+
+    cJSON_Delete(root);
+    LOG_INFO_T("ConfigCore", "LoadUnified", "OK", "unified config loaded (backend=%s)", cfg->ai_backend);
+    return 0;
+}
+
 int config_core_load(wizard_config_t *cfg) {
     if (!cfg) return -1;
     config_core_set_defaults(cfg);
+    /* 【2026-10-10 方案 C】优先单一 config.json；不存在则回退旧文件族（兼容铁律） */
+    if (load_unified_config(cfg) == 0) {
+        load_user_profile(cfg);
+        load_startup_conf(cfg);
+        load_security_config(cfg);
+        load_privilege_config(cfg);
+        g_config = *cfg;
+        g_config_loaded = 1;
+        LOG_INFO_T("ConfigCore", "Load", "UnifiedOK", "config.json (backend=%s, language=%s)",
+                   cfg->ai_backend, cfg->language);
+        return 0;
+    }
+    LOG_INFO_T("ConfigCore", "Load", "LegacyFallback", "config.json absent → reading legacy file family");
     load_ai_config(cfg);
     load_user_profile(cfg);
     load_startup_conf(cfg);
