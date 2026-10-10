@@ -170,8 +170,14 @@ int app_sandbox_cgroup_init(void) {
  * 公共 API：应用 cgroup 资源限制
  * ============================================================ */
 
-int app_sandbox_apply_cgroup(pid_t pid) {
-    LOG_INFO_T("Cgroup", "Apply", "Enter", "pid=%d", pid);
+/* 【2026-10-10 P1】参数化：CPU%/内存MB 由调用方（app_sandbox.c，经 permission_check_cpu/memory
+ *   判定后）传入；<=0 或越界回退内置默认值（保持既有行为）。 */
+int app_sandbox_apply_cgroup(pid_t pid, int cpu_percent, int memory_mb) {
+    LOG_INFO_T("Cgroup", "Apply", "Enter", "pid=%d, cpu=%d%%, mem=%dMB",
+               pid, cpu_percent, memory_mb);
+
+    if (cpu_percent <= 0 || cpu_percent > 100) cpu_percent = DEFAULT_CPU_PERCENT;
+    if (memory_mb <= 0) memory_mb = DEFAULT_MEMORY_MB;
 
     if (pid <= 0) {
         LOG_ERROR_T("Cgroup", "Apply", "Invalid", "pid=%d", pid);
@@ -207,24 +213,24 @@ int app_sandbox_apply_cgroup(pid_t pid) {
     char cpu_max_path[512];
     safe_snprintf(cpu_max_path, sizeof(cpu_max_path), "%s/cpu.max", cgroup_path);
     char cpu_value[32];
-    safe_snprintf(cpu_value, sizeof(cpu_value), "%d0000 100000", DEFAULT_CPU_PERCENT);
+    safe_snprintf(cpu_value, sizeof(cpu_value), "%d0000 100000", cpu_percent);
 
     if (write_cgroup_file(cpu_max_path, cpu_value) != 0) {
         LOG_WARN_T("Cgroup", "Apply", "CPUWarn", "failed to set CPU limit");
     } else {
-        LOG_DEBUG_T("Cgroup", "Apply", "CPU", "CPU limit: %d%%", DEFAULT_CPU_PERCENT);
+        LOG_DEBUG_T("Cgroup", "Apply", "CPU", "CPU limit: %d%%", cpu_percent);
     }
 
     /* ====== 2. 内存限制 ====== */
     char mem_max_path[512];
     safe_snprintf(mem_max_path, sizeof(mem_max_path), "%s/memory.max", cgroup_path);
     char mem_value[32];
-    safe_snprintf(mem_value, sizeof(mem_value), "%d", DEFAULT_MEMORY_MB * 1024 * 1024);
+    safe_snprintf(mem_value, sizeof(mem_value), "%d", memory_mb * 1024 * 1024);
 
     if (write_cgroup_file(mem_max_path, mem_value) != 0) {
         LOG_WARN_T("Cgroup", "Apply", "MemWarn", "failed to set memory limit");
     } else {
-        LOG_DEBUG_T("Cgroup", "Apply", "Memory", "memory limit: %d MB", DEFAULT_MEMORY_MB);
+        LOG_DEBUG_T("Cgroup", "Apply", "Memory", "memory limit: %d MB", memory_mb);
     }
 
     /* ====== 3. Swap 限制 ====== */
@@ -263,6 +269,6 @@ int app_sandbox_apply_cgroup(pid_t pid) {
     }
 
     LOG_INFO_T("Cgroup", "Apply", "OK", "cgroup limits applied for pid %d (CPU=%d%%, MEM=%dMB, SWAP=%dMB, PIDS=%d)",
-               pid, DEFAULT_CPU_PERCENT, DEFAULT_MEMORY_MB, DEFAULT_SWAP_MB, DEFAULT_PIDS_MAX);
+               pid, cpu_percent, memory_mb, DEFAULT_SWAP_MB, DEFAULT_PIDS_MAX);
     return 0;
 }

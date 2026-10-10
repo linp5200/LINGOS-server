@@ -27,7 +27,9 @@
 #include "../common/data_path.h"
 #include "../common/safe_string.h"
 #include "../lib/log_extra.h"
-#include "../security/defense_mode.h"   /* 新增防御模式 */
+#include "../security/defense_mode.h"        /* 新增防御模式 */
+#include "../security/permission_check.h"    /* 【2026-10-10 P1】内存/CPU 执行点 */
+#include "../security/permission_whitelist.h"/* 【2026-10-10 P1】配额类权限登记 */
 
 #ifndef CLONE_NEWNS
 #define CLONE_NEWNS 0x00020000
@@ -52,7 +54,7 @@ static int default_cpu_percent = 50;
 static int default_memory_mb = 256;
 
 extern int app_sandbox_apply_seccomp(void);
-extern int app_sandbox_apply_cgroup(pid_t pid);
+extern int app_sandbox_apply_cgroup(pid_t pid, int cpu_percent, int memory_mb);
 extern int app_sandbox_cgroup_init(void);
 
 static const char *get_config_path(void) {
@@ -105,9 +107,9 @@ static void load_config(void) {
     fclose(fp);
 }
 
-static int setup_cgroup(const char *app_name, pid_t pid) {
+static int setup_cgroup(const char *app_name, pid_t pid, int cpu_percent, int memory_mb) {
     (void)app_name;
-    return app_sandbox_apply_cgroup(pid);
+    return app_sandbox_apply_cgroup(pid, cpu_percent, memory_mb);
 }
 
 static int apply_seccomp_rules(void) {
@@ -142,6 +144,50 @@ static void setup_namespace_and_root(const char *app_dir) {
     }
 }
 
+/* ============================================================
+ * 【2026-10-10 P1】资源权限执行点（内存 / CPU）
+ * ------------------------------------------------------------
+ * 此前 permission_check_memory / permission_check_cpu 零调用点；
+ * 沙箱应用是唯一"应用请求资源"的真实路径（cgroup 为最终强制点）。
+ * 策略（与 P0 播种衔接，避免误伤功能，且可被 revoke 收紧）：
+ *   · 应用未登记 → 首次启动登记配额类权限（MEM_ALLOC/MEM_MAP/CPU_QUOTA）并记日志；
+ *     此后由 permission_check_* 正常裁决 —— 用户 revoke 后即拒绝启动（fail-closed）。
+ *   · 已登记但缺权限 / 超硬上限（>256MB、>80% CPU）→ 拒绝（fork 之前，不留子进程）。
+ * ============================================================ */
+static int app_resource_permission_guard(const char *app_name, int cpu_percent, int memory_mb) {
+    if (!app_name || !*app_name) return 0;
+
+    char probe[64] = {0};
+    if (permission_whitelist_list(app_name, probe, sizeof(probe)) != 0) {
+        LOG_WARN_T("AppSandbox", "Perm", "ProbeFail", "app=%s whitelist probe failed", app_name);
+        return 0;                       /* 白名单不可读 → fail-closed */
+    }
+    if (strcmp(probe, "{}") == 0) {    /* 未登记 → 首次使用登记配额类权限 */
+        LOG_INFO_T("AppSandbox", "Perm", "Provision",
+                   "app=%s not whitelisted -> provisioning quota perms (MEM_ALLOC/MEM_MAP/CPU_QUOTA)",
+                   app_name);
+        permission_whitelist_grant(app_name, PERM_MEM_ALLOC);
+        permission_whitelist_grant(app_name, PERM_MEM_MAP);
+        permission_whitelist_grant(app_name, PERM_CPU_QUOTA);
+    }
+
+    int mb = (memory_mb > 0) ? memory_mb : default_memory_mb;
+    size_t mem_bytes = (size_t)mb * 1024u * 1024u;
+    if (!permission_check_memory(app_name, mem_bytes, 0)) {
+        LOG_WARN_T("AppSandbox", "Perm", "MemDenied",
+                   "app=%s denied by permission_check_memory (%d MB)", app_name, mb);
+        return 0;
+    }
+
+    int cpu = (cpu_percent > 0) ? cpu_percent : default_cpu_percent;
+    if (!permission_check_cpu(app_name, cpu, 0)) {
+        LOG_WARN_T("AppSandbox", "Perm", "CpuDenied",
+                   "app=%s denied by permission_check_cpu (%d%%)", app_name, cpu);
+        return 0;
+    }
+    return 1;
+}
+
 int app_start_sandboxed(const char *app_name) {
     LOG_INFO_T("AppSandbox", "Start", "Enter", "app_name='%s'", app_name ? app_name : "(null)");
     if (!app_name) return -1;
@@ -152,6 +198,14 @@ int app_start_sandboxed(const char *app_name) {
     const char *mode_env = getenv("LINGOS_SANDBOX_MODE");
     if (mode_env && strcmp(mode_env, "compat") == 0) sandbox_mode = 1;
     else if (mode_env && strcmp(mode_env, "strict") == 0) sandbox_mode = 0;
+
+    /* 【2026-10-10 P1】内存/CPU 权限检查——刻意放在 fork 之前：
+     *   拒绝时不得留下已启动的子进程。 */
+    if (!app_resource_permission_guard(app_name, default_cpu_percent, default_memory_mb)) {
+        LOG_ERROR_T("AppSandbox", "Start", "Denied",
+                    "app=%s refused by permission system (memory/cpu)", app_name);
+        return -1;
+    }
 
     app_sandbox_cgroup_init();
 
@@ -187,7 +241,7 @@ int app_start_sandboxed(const char *app_name) {
         execl(script_path, script_path, (char*)NULL);
         _exit(1);
     } else {
-        setup_cgroup(app_name, pid);
+        setup_cgroup(app_name, pid, default_cpu_percent, default_memory_mb);
         char pid_path[1024];
         const char *app_dir = get_app_dir(app_name);
         safe_snprintf(pid_path, sizeof(pid_path), "%s/pid", app_dir);
