@@ -938,6 +938,15 @@ int handle_syscall(const char *operation, const char *args_json, char *out, uint
             cJSON_AddStringToObject(result, "error_type", "missing_param");
             cJSON_AddStringToObject(result, "message", "Missing 'command'");
             ret = -1;
+        } else if (!permission_check_syscall("ai", __NR_execve)) {
+            /* 【2026-10-10 P1】系统调用执行点（此前 permission_check_syscall 零调用点）
+             *   语义：AI 经 daemon.sock 执行命令 = 代其触发 execve；
+             *   无 SYSCALL 权限或命中黑名单（reboot/mount/kexec…）→ 拒绝。
+             *   顺序：deny > shadow（拒绝优先于影子假成功）。 */
+            LOG_WARN_T("Syscall", "ExecCommand", "Denied",
+                       "ai lacks SYSCALL (execve) — command refused");
+            set_permission_denied(result, "权限系统拒绝：AI 无命令执行权限（SYSCALL）");
+            ret = -1;
         } else if (defense_mode_get() == DEFENSE_MODE_SHADOW) {
             /* 【2026-09-18 接线】影子模式 C 端拦截（shadow_mode.c 体系此前零调用者）：
              *   影子模式 = 假成功——命令不真正执行，返回结构正确的模拟结果
