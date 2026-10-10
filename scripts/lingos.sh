@@ -28,8 +28,8 @@ _pick_python() {
 }
 
 # 【2026-09-19】全链进程清单（预检/停止/补刀共用）
-_ALL_PROCS="lingos_supervisor lingos_linux lingosd lingos_alertd lingos_visiond lingos_voiced ai_server.py"
-_ORPHAN_PROCS="lingos_supervisor lingosd lingos_alertd lingos_visiond lingos_voiced ai_server.py"
+_ALL_PROCS="lingos_supervisor lingos_linux lingosd lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision ai_server.py"
+_ORPHAN_PROCS="lingos_supervisor lingosd lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision ai_server.py"
 
 _wait_gone() {
     # 等待某模式进程全部退出（最多 $2 秒）；返回 0=已退净
@@ -202,7 +202,7 @@ case "$CMD" in
         _wait_gone lingos_supervisor 3
     fi
     # 3) 其余守护与 AI
-    for pat in lingosd lingos_alertd lingos_visiond lingos_voiced ai_server.py; do
+    for pat in lingosd lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision ai_server.py; do
         pkill -TERM -f "$pat" 2>/dev/null && echo "    ↓ 已停 $pat"
     done
     sleep 1
@@ -222,7 +222,7 @@ case "$CMD" in
   status)
     echo "==> LING OS 状态"
     s(){ printf "  %-16s %s\n" "$1" "$2"; }
-    for b in lingos_supervisor lingos_linux lingosd lingos_alertd lingos_visiond lingos_voiced; do
+    for b in lingos_supervisor lingos_linux lingosd lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision; do
         p=$(_pids "$b" | head -1)
         [ -n "$p" ] && s "$b" "运行中 (pid $p)" || s "$b" "未运行"
     done

@@ -519,11 +519,15 @@ static void terminate_children(void) {
         LINGOS_RUN_DIR "/lingos_alertd.pid",
         LINGOS_RUN_DIR "/lingos_visiond.pid",
         LINGOS_RUN_DIR "/lingos_voiced.pid",
+        /* 【2026-10-10 监控系统拆分】monitor 独立进程（给人看：采集/预览/快照/录像） */
+        LINGOS_RUN_DIR "/lingos_monitor.pid",
+        /* 【2026-10-10 监控系统拆分】ai_vision 独立进程（给 AI 用：检测/标定/追踪） */
+        LINGOS_RUN_DIR "/lingos_ai_vision.pid",
         LINGOS_RUN_DIR "/ai_server.pid",
     };
-    pid_t pids[8];
+    pid_t pids[12];
     int n = 0;
-    for (size_t i = 0; i < sizeof(files)/sizeof(files[0]) && n < 8; i++) {
+    for (size_t i = 0; i < sizeof(files)/sizeof(files[0]) && n < 12; i++) {
         FILE *fp = fopen(files[i], "r");
         if (!fp) continue;
         int pid = 0;
@@ -906,7 +910,8 @@ static void* service_watchdog_thread_func(void *arg) {
 
         /* ---- aux 守护（每 30s = 6 ticks；--safe 模式跳过） ---- */
         if (ticks % 6 == 0 && !g_opt_safe) {
-            static const char *aux_names[] = { "lingos_alertd", "lingos_visiond", "lingos_voiced" };
+            static const char *aux_names[] = { "lingos_alertd", "lingos_visiond", "lingos_voiced",
+                                               "lingos_monitor", "lingos_ai_vision" };
             for (size_t i = 0; i < sizeof(aux_names) / sizeof(aux_names[0]); i++) {
                 if (!aux_daemon_running(aux_names[i])) {
                     LOG_WARN_T("Main", "ServiceWatchdog", "AuxMissing",
@@ -1511,6 +1516,13 @@ after_wizard:
         /* 视觉/语音内核（软启动——缺失不阻塞主程序） */
         ensure_aux_daemon("lingos_visiond");
         ensure_aux_daemon("lingos_voiced");
+        /* 【2026-10-10 监控系统拆分（先生 2026-09-05 裁决）】
+         *   监控系统 monitor（给人看：采集/预览/快照/录像/存储）＝独立进程
+         *   AI 识别引擎 ai_vision（给 AI 用：检测/标定/追踪）＝独立进程
+         *   二者经"帧通道 + 事件"解耦，不互相内含。
+         *   顺序：monitor 先起（产出帧）→ ai_vision 后起（消费帧）。软启动，缺失不阻塞。 */
+        ensure_aux_daemon("lingos_monitor");
+        ensure_aux_daemon("lingos_ai_vision");
     }
 
     connection_load_config(NULL);
