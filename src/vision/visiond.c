@@ -9,7 +9,7 @@
  */
 
 #include "visiond.h"
-#include "camera_input.h"
+#include "../monitor/camera_input.h"   /* 【2026-10-10】采集层已迁至 monitor（先生 09-05 裁决）*/
 #include "vision_config.h"
 #include "detection_engine.h"
 #include "spatial_mapper.h"

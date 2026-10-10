@@ -8,7 +8,7 @@
 #ifndef VISION_DETECTION_ENGINE_H
 #define VISION_DETECTION_ENGINE_H
 
-#include "camera_input.h"
+#include "../monitor/camera_input.h"   /* 【2026-10-10】采集层已迁至 monitor（先生 09-05 裁决）*/
 #include "visiond.h"
 #include <time.h>
 

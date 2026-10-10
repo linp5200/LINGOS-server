@@ -9,7 +9,7 @@
 # ================================================================
 # 【0.6.0】全量打包（先生：完整系统全打包，哪个好用用哪个）
 #   三内核守护随主包构建：alertd=预警生命线 / visiond=视觉内核 / voiced=语音内核
-TARGETS = lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced
+TARGETS = lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision
 
 all: $(TARGETS) install_python_script
 
@@ -290,7 +290,7 @@ ALERT_CORE_SRCS = $(SRC_DIR)/alert/alert_config.c \
 
 ALERT_MAIN_SRCS = $(SRC_DIR)/alert/alertd.c
 
-VISION_CORE_SRCS = $(SRC_DIR)/vision/camera_input.c \
+VISION_CORE_SRCS = \
                    $(SRC_DIR)/vision/detection_engine.c \
                    $(SRC_DIR)/vision/spatial_mapper.c \
                    $(SRC_DIR)/vision/tracker.c \
@@ -299,6 +299,15 @@ VISION_CORE_SRCS = $(SRC_DIR)/vision/camera_input.c \
                    $(SRC_DIR)/vision/vision_config.c
 
 VISION_MAIN_SRCS = $(SRC_DIR)/vision/visiond.c
+
+# 【2026-10-10 监控系统拆分（先生 2026-09-05 裁决）】
+#   monitor    采集/预览/快照/录像（给人看）—— 独立进程
+#   ai_vision  检测/标定/追踪（给 AI 用）—— 独立进程，经帧通道消费 monitor 帧
+MONITOR_MAIN_SRCS = $(SRC_DIR)/monitor/monitord.c
+MONITOR_CORE_SRCS = $(SRC_DIR)/monitor/camera_input.c                     $(SRC_DIR)/monitor/frame_channel.c                     $(SRC_DIR)/monitor/monitor_config.c
+
+AI_VISION_MAIN_SRCS = $(SRC_DIR)/vision/ai_visiond.c
+AI_VISION_CORE_SRCS = $(SRC_DIR)/vision/detection_engine.c                       $(SRC_DIR)/vision/spatial_mapper.c                       $(SRC_DIR)/vision/tracker.c                       $(SRC_DIR)/vision/vision_memory.c                       $(SRC_DIR)/vision/vision_config.c                       $(SRC_DIR)/monitor/frame_channel.c
 
 VOICE_CORE_SRCS = $(SRC_DIR)/voice/audio_input.c \
                   $(SRC_DIR)/voice/voice_cmds.c \
@@ -494,7 +503,15 @@ lingos_alertd: $(ALERT_MAIN_SRCS) $(ALERT_CORE_SRCS) $(CORE_DAEMON)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread -ldl -lm
 
 lingos_visiond: $(VISION_MAIN_SRCS) $(VISION_CORE_SRCS) $(CORE_DAEMON)
+	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread -lsqlite3 -lmlingos_visiond: $(VISION_MAIN_SRCS) $(VISION_CORE_SRCS) $(CORE_DAEMON)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread -lsqlite3 -lm
+
+# 【2026-10-10】监控系统 / AI 识别引擎（拆分为独立进程）
+lingos_monitor: $(MONITOR_MAIN_SRCS) $(MONITOR_CORE_SRCS) $(CORE_DAEMON)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
+
+lingos_ai_vision: $(AI_VISION_MAIN_SRCS) $(AI_VISION_CORE_SRCS) $(CORE_DAEMON)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 lingos_voiced: $(VOICE_MAIN_SRCS) $(VOICE_CORE_SRCS) $(CORE_DAEMON)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread -lm

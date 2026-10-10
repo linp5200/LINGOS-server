@@ -13,6 +13,8 @@ lingos_gui
 lingos_alertd
 lingos_visiond
 lingos_voiced
+lingos_monitor
+lingos_ai_vision
 
 # 构建产物
 build/

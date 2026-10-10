@@ -1,13 +1,18 @@
 /**
- * @file    camera_input.c
- * @brief   摄像头输入层
- * @version LN-B-5.0.0.0
+ * @file    src/monitor/camera_input.c
+ * @brief   摄像头输入层（监控系统 monitor——采集归 monitor，画面给人看）
+ * @version LN-0.9.0
  * @par     核心协议：防御性编程 + 容错编程
+ * @changes 2026-10-10 P4 拆分：由 src/vision/ 迁入 src/monitor/（先生 2026-09-05 裁决）；
+ *          配置类型 vision_config_t → monitor_config_t；
+ *          新增设备权限执行点 permission_check_device（此前全仓零调用点）——fail-closed；
+ *          帧元数据补全（format/camera_id——帧通道需要）
  * @changes V4L2 恢复机制增强；安全字符串替换
  */
 
 #include "camera_input.h"
 #include "../common/error_report.h"
+#include "../security/permission_check.h"
 #include "../common/safe_string.h"
 #include "../common/lang.h"
 #include "../lib/log_extra.h"
@@ -38,12 +43,50 @@ static int g_recovery_attempts = 0;
 static int g_max_recovery_attempts = 3;
 
 /* ============================================================
+ * 采集进程身份（设备权限闸门）
+ * ============================================================ */
+
+static char g_app_id[32] = "visiond";
+
+void camera_set_app_id(const char *app_id) {
+    if (!app_id || !app_id[0]) return;
+    safe_strncpy(g_app_id, app_id, sizeof(g_app_id));
+    LOG_INFO_T("Camera", "AppId", "Set", "camera permission app_id = %s", g_app_id);
+}
+
+const char *camera_get_app_id(void) {
+    return g_app_id;
+}
+
+/* ============================================================
  * 初始化摄像头
  * ============================================================ */
 
-int camera_init(const vision_config_t *config) {
+int camera_init(const monitor_config_t *config) {
+    if (!config) {
+        LOG_ERROR_T("Camera", "Init", "Invalid", "config is NULL");
+        return -1;
+    }
+
     LOG_DEBUG_T("Camera", "Init", "Enter", "device=%s source=%s", config->device_path,
                 config->camera_source[0] ? config->camera_source : "v4l2");
+
+    /* 【2026-10-10 P1 设备执行点】permission_check_device 此前全仓零调用点（先生 2026-10-10 审计）。
+     *   入口一处覆盖 RTSP / V4L2 / /dev/video0 fallback 三条路径；fail-closed：拒绝即不采集。
+     *   app_id 默认 visiond（白名单播种 PERM_CAMERA）；monitor 进程可 camera_set_app_id() 声明身份。 */
+    if (!permission_check_device(g_app_id, "camera")) {
+        LOG_ERROR_T("Camera", "Init", "Denied",
+                    "%s lacks CAMERA permission — capture refused (fail-closed)", g_app_id);
+        return -1;
+    }
+
+    /* 帧元数据（帧通道/存储需要）：与采集源一致 */
+    safe_strncpy(g_frame.camera_id,
+                 config->camera_id[0] ? config->camera_id : "cam0",
+                 sizeof(g_frame.camera_id));
+    g_frame.format = (config->camera_source[0] && strcmp(config->camera_source, "v4l2") != 0)
+                     ? FRAME_FMT_JPEG : FRAME_FMT_YUYV;
+    g_frame.seq = 0;
 
     /* 【0.2.2】RTSP 模式：启动 Python 拉流服务 + 连接帧通道（先生裁决：RTSP 走 Python） */
     if (config->camera_source[0] && strcmp(config->camera_source, "v4l2") != 0) {
@@ -170,6 +213,7 @@ int camera_init(const vision_config_t *config) {
     g_frame.height = fmt.fmt.pix.height;
     g_frame.data = g_frame_buffer;
     g_frame.size = buf.length;
+    g_frame.format = FRAME_FMT_YUYV;   /* V4L2 原始帧（YUY2）——检测端诚实降级（不伪造） */
 
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(g_camera_fd, VIDIOC_STREAMON, &type) < 0) {
@@ -244,7 +288,9 @@ int camera_capture(camera_frame_t *frame) {
         frame->width = 640;
         frame->height = 480;  /* rtsp_streamer 固定 scale=640:-1——实际高度由检测端解析 */
         frame->size = (int)len;
+        frame->format = FRAME_FMT_JPEG;
         frame->timestamp = time(NULL);
+        safe_strncpy(frame->camera_id, g_frame.camera_id, sizeof(frame->camera_id));
         return 0;
     }
 
@@ -288,7 +334,9 @@ int camera_capture(camera_frame_t *frame) {
         frame->height = g_frame.height;
         frame->size = g_frame.size;
         frame->data = g_frame_buffer;
+        frame->format = FRAME_FMT_YUYV;
         frame->timestamp = time(NULL);
+        safe_strncpy(frame->camera_id, g_frame.camera_id, sizeof(frame->camera_id));
     }
 
     if (ioctl(g_camera_fd, VIDIOC_QBUF, &buf) < 0) {
