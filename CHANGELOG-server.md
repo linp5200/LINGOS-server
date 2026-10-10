@@ -5,6 +5,55 @@
 
 ---
 
+## [0.8.0] - 2026-10-10（全量修复批次 + 版本载体落定）
+
+> 版本线：**0.7.2 → 0.8.0**（先生 2026-10-10 指定）。本版 = 2026-10-02 授权批次的
+> 服务端全部成果（B1 C 端 + B2 Python，共 12 文件）+ 真机 22 项问题的修复落地；
+> App 侧同批（B3）另见 App CHANGELOG。
+> **推送纪律**：本批以 [skip ci] 提交入库——不触发 CI、不出包、不部署（等先生"开始部署"）。
+
+### 修复（Fixes）
+
+**P0 · 阻断级（真机取证根因）**
+- **tokens.json 写入损坏**：`connection_handler.c` 手写字符串拼接产生非法 JSON（缺 `{` + 尾逗号，
+  第 2 次签发即坏）→ 改用 cJSON 构建 + cJSON 解析置 revoked（原按字符串偏移替换）
+- **修复模式二次初始化（R1/R2/R3）**：修复后重启 / 检查项重复注册 / 多行消息破坏框线 →
+  `repair_mode.c` 重写（CJK 感知宽度助手 + 检查项幂等注册 + 清理线程防重 + 菜单加框）
+- **配置向导空壳（A2）**：启动路径 `wizard_engine_run()` 只重置状态即返回 0 → 直接保存默认值并
+  显示"✅ 配置完成"（用户看不到任何配置）；现提取公共交互循环
+  `wizard_engine_run_interactive()`（`wizard_engine.c`/`.h`），`main.c` 与 `shell.c` 共用；
+  另修"选 n 未置 force_reconfigure 标志导致门卫不放行"
+
+**P1 · 体验与可观测**
+- **日志粘连**：`log_extra.c` 格式串缺空格（`ensure_ai_server_runningattempt 1/4 failed`）
+- **日志级别英文**：[警告]/[信息] → [WARN]/[INFO]（先生定稿）
+- **横幅原子化**：`shell.c` 欢迎横幅分多段输出被并发日志插入（`LING OS v[日志]LN-…`）→ 单次原子输出
+
+**P2 · 服务器模式**
+- **server_mode 日志渲染（方案 A）**：文件保持 JSON 机器可读，终端显示解析渲染 + 着色
+
+**B2 · Python 侧修复**
+- **半截读取 bug（F10 · 6 处）**：Python 单次 `recv()` 而守护进程分 3 次 `write()` →
+  新增 `_sock_recv_line()` 循环读至换行（"内置技能错误"、审批随机失败的真根因）
+- **日志双写（F9）**：`from ai_server import …` 触发模块二次加载 → handler 叠加双写 →
+  `sys.modules` 别名 + 单次挂载守卫
+- **工具 name 累积**：流式 `name +=` → 赋值（部分供应商名字翻倍）
+- **思考边界（2d）**：`thinking_hide` 仅在"正文开始"发送 → 工具轮无正文时混块 → 每轮补发
+- **中断即时化（F7）**：工具执行前无中断检查（点击后仍执行 3 秒+）→ `_conn_alive` 检测
+  （助手函数 + 工具循环 + ReAct 迭代三处）
+- **双路径统一**：`backend=ollama` 时无视统一层 provider → 两个 ollama 函数改走 `_current_provider()`
+- **Python token 形状**：`any(str(tk)==token)` 对 list-of-dict 恒 False（从未工作）→ dict.get
+- **提示词引导 shell（B5）**：注入"鼓励用 shell 命令"段（自管限制范围）
+
+**WebUI**
+- 命令面板页 + 版本页脚动态化；api 日志 JSON→可读解析
+
+### 版本与工程
+- 统一版本源：`VERSION` = 0.8.0（Makefile / build.yml 自动派生）；`version.c` 内置兜底
+  `LN-0.8.0` 同步；`webui` 页脚 0.8.0
+
+---
+
 ## [0.7.2] - 2026-09-25（hotfix：部署链方向根因 + 输入可打断 + 日志补全）
 
 > 先生真机取证：AI 工具调用错误反复 / App 停止服务器不生效 / 日志无法追踪 App 指令。

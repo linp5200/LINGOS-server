@@ -1,7 +1,7 @@
 /**
  * @file    src/lib/api_log.c
  * @brief   API 日志 + 设备修改日志实现（v0.7.2 格式升级 · 方案 B 语义映射）
- * @version LN-0.7.2
+ * @version LN-0.8.0
  */
 
 #include "api_log.h"
