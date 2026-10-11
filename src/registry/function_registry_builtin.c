@@ -16,6 +16,7 @@
 #include "function_registry.h"
 #include "../config/config_core.h"
 #include "../core/version.h"
+#include "../core/event_bus.h"   /* 【2026-10-11 第 4 期】事件总线观测/发布 */
 #include "../lib/log_extra.h"
 #include "../common/safe_string.h"
 
@@ -236,6 +237,8 @@ static int fn_debug_set_log_level(cJSON *args, cJSON **result, void *ud) {
     }
 
     log_set_level(level);              /* 基础动作：立即生效 */
+    (void)event_publish_fmt(EVT_LOG_LEVEL_CHANGED, "{\"level\":%d,\"name\":\"%s\"}",
+                            level, log_level_to_string(level));
 
     API_DEPENDENCY_BEGIN
         wizard_config_t cfg = *config_core_get();
@@ -251,6 +254,28 @@ static int fn_debug_set_log_level(cJSON *args, cJSON **result, void *ud) {
             cJSON_AddStringToObject(*result, "level_name", log_level_to_string(level));
             cJSON_AddBoolToObject(*result, "persisted", persisted);
         }
+    }
+    return API_ERR_OK;
+}
+
+/* ============================================================
+ * system.events —— 事件总线观测（先生方案：event_publish/subscribe 可视化）
+ * ============================================================ */
+static int fn_system_events(cJSON *args, cJSON **result, void *ud) {
+    cJSON *limit_item;
+    int limit = 10;
+    (void)ud;
+    if (!result) return API_ERR_INTERNAL;
+    limit_item = args ? cJSON_GetObjectItem(args, "limit") : NULL;
+    if (cJSON_IsNumber(limit_item) && limit_item->valueint > 0) limit = limit_item->valueint;
+
+    *result = cJSON_CreateObject();
+    if (!*result) return API_ERR_INTERNAL;
+    {
+        cJSON *stats = event_bus_stats();
+        cJSON *recent = event_bus_recent(limit);
+        if (stats) cJSON_AddItemToObject(*result, "stats", stats);
+        cJSON_AddItemToObject(*result, "recent", recent ? recent : cJSON_CreateArray());
     }
     return API_ERR_OK;
 }
@@ -298,6 +323,11 @@ void api_register_builtin_functions(void) {
         fn_debug_set_log_level, NULL,
         "设置日志级别；rely=false 时不写回配置",
         "{\"type\":\"object\",\"properties\":{\"level\":{\"type\":[\"string\",\"integer\"]}},\"required\":[\"level\"]}");
+
+    (void)api_register_function("system.events",
+        fn_system_events, NULL,
+        "事件总线观测（统计 + 最近事件）",
+        "{\"type\":\"object\",\"properties\":{\"limit\":{\"type\":\"integer\"}}}");
 
     (void)api_register_function("system.version",
         fn_system_version, NULL,

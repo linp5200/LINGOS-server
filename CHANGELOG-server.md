@@ -11,35 +11,59 @@
 
 ### 新增（Features）
 
-- **统一调用 API**（\`src/registry/function_registry.c/.h\`）：严格按先生格式
-  \`{id, command, args, rely, return}\` → \`{id, code, message, data}\`
+- **统一调用 API**（`src/registry/function_registry.c/.h`）：严格按先生格式
+  `{id, command, args, rely, return}` → `{id, code, message, data}`
   - 点分命令名注册表（同名重复注册 = 覆盖，插件热重载友好），上限 128 条
   - 错误码：0 成功 / -1001 参数 / -1002 未注册 / -2001 执行失败 / -2002 内部 / -2003 深度超限
-  - 批量：\`{"commands":[{command,args,rely},...]}\` → data 为结果数组
-  - \`"return":"none"\` 时省略 data；每命令调用/错误计数可查
+  - 批量：`{"commands":[{command,args,rely},...]}` → data 为结果数组
+  - `"return":"none"` 时省略 data；每命令调用/错误计数可查
 - **rely 依赖控制**（§5.3）：
-  - 线程局部 \`suppress_dependencies\`（\`__thread\`）+ 调用深度保护（防递归爆栈）
-  - 宏 \`API_CALL_DEPENDENCY(call)\`（取值版）、\`API_CALL_DEPENDENCY_PTR\`、\`API_DEPENDENCY_BEGIN/END\`（语句块版）
-  - \`rely=false\` → 执行期置抑制位 → 被包装的依赖业务调用跳过并记 DEBUG 日志（含文件:行号）
-  - \`rely=true\`（默认）→ 正常执行；嵌套调用保持外层抑制状态
-- **内置真实命令**（\`function_registry_builtin.c\`，全部调用已存在功能，无假数据）：
-  \`api.describe\` · \`api.rely_status\` · \`config.get\` · \`config.set\` · \`debug.set_log_level\` · \`system.version\`
-  - \`config.set\`：基础动作=改内存配置（始终执行）；依赖业务=落盘（\`API_CALL_DEPENDENCY\` 包裹，rely=false 时不落盘）
-  - \`debug.set_log_level\`：基础动作=立即生效；依赖业务=写回配置（\`API_DEPENDENCY_BEGIN/END\` 包裹）
-- **lingosd 接线**：\`daemon_init\` 注册注册表与内置命令；\`handle_command\` 新增新格式分支——
-  **判据 = 请求含字符串 \`command\` 字段**，旧 \`{"cmd":...}\` 协议零改动
-- Makefile：\`REGISTRY_SRCS\` 纳入两个新源文件
+  - 线程局部 `suppress_dependencies`（`__thread`）+ 调用深度保护（防递归爆栈）
+  - 宏 `API_CALL_DEPENDENCY(call)`（取值版）、`API_CALL_DEPENDENCY_PTR`、`API_DEPENDENCY_BEGIN/END`（语句块版）
+  - `rely=false` → 执行期置抑制位 → 被包装的依赖业务调用跳过并记 DEBUG 日志（含文件:行号）
+  - `rely=true`（默认）→ 正常执行；嵌套调用保持外层抑制状态
+- **内置真实命令**（`function_registry_builtin.c`，全部调用已存在功能，无假数据）：
+  `api.describe` · `api.rely_status` · `config.get` · `config.set` · `debug.set_log_level` · `system.version`
+  - `config.set`：基础动作=改内存配置（始终执行）；依赖业务=落盘（`API_CALL_DEPENDENCY` 包裹，rely=false 时不落盘）
+  - `debug.set_log_level`：基础动作=立即生效；依赖业务=写回配置（`API_DEPENDENCY_BEGIN/END` 包裹）
+- **lingosd 接线**：`daemon_init` 注册注册表与内置命令；`handle_command` 新增新格式分支——
+  **判据 = 请求含字符串 `command` 字段**，旧 `{"cmd":...}` 协议零改动
+- Makefile：`REGISTRY_SRCS` 纳入两个新源文件
+
+### 新增（Features · 续：系统事件总线 —— 架构落地第 4 期第二件）
+
+- **事件总线**（`src/core/event_bus.c/.h`）：先生方案要求 `event_publish/subscribe/EventType`（此前全库 0 命中）
+  - 16 种事件类型：config.changed / log_level.changed / defense_mode.changed / permission.denied /
+    permission.whitelist_changed / skill.loaded / plugin.loaded / monitor.state_changed / monitor.frame /
+    vision.result / **alert.raised（生命线）** / **crisis.entered（§2B）** / ai_server.state /
+    device.state_changed / ha.state_changed
+  - 每种类型最多 8 个订阅者；**回调前对订阅表做快照**（回调内可安全订阅/退订/再发布）
+  - 发布重入深度上限 4（超限丢弃并计数，防事件风暴）；线程安全（互斥锁 + 回调在解锁后执行）
+  - 观测：最近 32 条事件环形缓冲、按类型发布计数、投递/丢弃计数
+  - payload 支持 JSON 字符串与 `event_publish_fmt(...)` 格式化两种写法
+- **真实接线（谁发布 / 谁订阅）**：
+  - 发布：`config_core_save()` / `config_core_save_force()` 成功后发布 `EVT_CONFIG_CHANGED`；
+    `debug.set_log_level` 发布 `EVT_LOG_LEVEL_CHANGED`
+  - 订阅：lingosd 注册**审计订阅者**（8 类事件 → `audit_log()` 入审计链）
+  - 观测命令：新增统一调用命令 `system.events`（统计 + 最近事件）
+- Makefile：`CORE_SRCS` 纳入 `core/event_bus.c`
+- 顺带修复：本文件此前 70 处转义残留（写入时带出的反斜杠）已清理
+
+### 验证（Verification · 事件总线）
+
+- 静态审核：`event_bus.c` / `config_core.c` / `function_registry_builtin.c` / `lingosd.c`
+  `gcc -fsyntax-only -Wall -Wextra`（全量 -I）**0 warning / 0 error**
 
 ### 兼容（Compatibility）
 
-- 旧 v3 命令（\`{"cmd":...}\`）路径、字段、响应格式**完全不变**
+- 旧 v3 命令（`{"cmd":...}`）路径、字段、响应格式**完全不变**
 - 新格式仅新增；未注册命令返回 -1002 且消息含命令名，便于定位
 
 ### 验证（Verification）
 
-- 静态审核：\`function_registry.c\` / \`function_registry_builtin.c\` / \`lingosd.c\` 等
-  \`gcc -fsyntax-only -Wall -Wextra\`（全量 \`-I\`）**0 warning / 0 error**
-- 运行时验证待真机/CI 出包（本地不编译纪律）；\`api.rely_status\` 可用于真机确认抑制计数
+- 静态审核：`function_registry.c` / `function_registry_builtin.c` / `lingosd.c` 等
+  `gcc -fsyntax-only -Wall -Wextra`（全量 `-I`）**0 warning / 0 error**
+- 运行时验证待真机/CI 出包（本地不编译纪律）；`api.rely_status` 可用于真机确认抑制计数
 
 ---
 

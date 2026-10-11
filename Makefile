@@ -169,6 +169,7 @@ UI_SRCS = $(SRC_DIR)/ui/startup_ui.c \
           $(SRC_DIR)/ui/progress_bar.c
 
 CORE_SRCS = $(SRC_DIR)/core/app_runner.c \
+            $(SRC_DIR)/core/event_bus.c \
             $(SRC_DIR)/core/app_sandbox.c \
             $(SRC_DIR)/core/backup.c \
             $(SRC_DIR)/core/background_init.c \

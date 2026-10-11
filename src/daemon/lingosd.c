@@ -36,6 +36,7 @@
 #include "ai_config.h"
 #include "lingos_config.h"
 #include "function_registry.h"   /* 【2026-10-11 第 4 期】统一调用 API + rely 依赖控制 */
+#include "event_bus.h"              /* 【2026-10-11 第 4 期】系统事件总线 */
 #include "ai_server_protocol.h"
 #include "cJSON.h"
 #include "safe_string.h"
@@ -59,6 +60,29 @@ static void cleanup_on_exit(int sig) {
     unlink(reg_sock_path);
     LOG_INFO_T("Lingosd", "Cleanup", "OK", "Removed PID and socket files");
     exit(0);
+}
+
+/* ============================================================
+ * 【2026-10-11 第 4 期】事件总线审计订阅者（真实订阅者——事件全部入审计链）
+ * ============================================================ */
+static void on_system_event(event_type_t type, const char *payload_json, void *userdata) {
+    (void)userdata;
+    audit_log("system", "event_bus", event_type_name(type),
+              payload_json ? payload_json : "", "delivered", 0, "low", 0);
+}
+
+static void subscribe_audit_events(void) {
+    static const event_type_t watched[] = {
+        EVT_CONFIG_CHANGED, EVT_LOG_LEVEL_CHANGED, EVT_DEFENSE_MODE_CHANGED,
+        EVT_PERMISSION_DENIED, EVT_SKILL_LOADED, EVT_MONITOR_STATE_CHANGED,
+        EVT_ALERT_RAISED, EVT_CRISIS_ENTERED
+    };
+    size_t i;
+    for (i = 0; i < sizeof(watched) / sizeof(watched[0]); i++) {
+        (void)event_bus_subscribe(watched[i], on_system_event, NULL);
+    }
+    LOG_INFO_T("Lingosd", "EventBus", "Subscribe", "audit subscriber bound to %d event types",
+               (int)(sizeof(watched) / sizeof(watched[0])));
 }
 
 static int daemon_init(void) {
@@ -89,6 +113,10 @@ static int daemon_init(void) {
      * 旧 {"cmd":...} 协议零改动——新格式仅在请求含 "command" 字段时接管 */
     api_function_registry_init();
     api_register_builtin_functions();
+
+    /* 【2026-10-11 第 4 期】事件总线：初始化 + 审计订阅者（发布—订阅解耦） */
+    event_bus_init();
+    subscribe_audit_events();
 
     nook_init();
     defense_init();

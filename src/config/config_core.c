@@ -8,6 +8,7 @@
  */
 
 #include "config_core.h"
+#include "../core/event_bus.h"   /* 【2026-10-11 第 4 期】配置变更事件发布 */
 #include "../common/safe_string.h"
 #include "../common/data_path.h"
 #include "../common/lang.h"
@@ -757,6 +758,10 @@ int config_core_save(const wizard_config_t *cfg) {
     ret |= save_privilege_config(cfg);
 
     if (ret == 0) {
+        /* 【2026-10-11 第 4 期】配置生效广播（订阅者：审计/MQTT/技能热重载…） */
+        (void)event_publish_fmt(EVT_CONFIG_CHANGED,
+                                "{\"source\":\"config_core_save\",\"backend\":\"%s\",\"scope\":\"defaults\"}",
+                                cfg->ai_backend);
         LOG_INFO_T("ConfigCore", "Save", "OK", "config saved");
     } else {
         LOG_ERROR_T("ConfigCore", "Save", "Partial", "some configs failed to save");
@@ -782,6 +787,10 @@ int config_core_save_force(const wizard_config_t *cfg) {
     ret |= save_privilege_config(cfg);
 
     if (ret == 0) {
+        /* 【2026-10-11 第 4 期】配置变更事件（单一真源落盘完成即广播） */
+        (void)event_publish_fmt(EVT_CONFIG_CHANGED,
+                                "{\"source\":\"config_core_save_force\",\"backend\":\"%s\"}",
+                                cfg->ai_backend);
         LOG_INFO_T("ConfigCore", "SaveForce", "OK", "config saved (forced)");
     } else {
         LOG_ERROR_T("ConfigCore", "SaveForce", "Partial", "some configs failed to save");
