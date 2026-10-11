@@ -153,10 +153,91 @@ def load_providers() -> List[LLMProvider]:
     return _providers
 
 
-def save_providers(providers: List[LLMProvider], active_id: str = "") -> bool:
+# =============================================================
+# 【2026-10-11 配置校验】保存前探测端点有效性
+# -------------------------------------------------------------
+# 先生 2026-10-01 拍板：「加配置校验（保存时探测端点有效性——防 405 类再犯）」。
+# 历史事故（F1·真机取证）：provider.json 的 base_url 被填成 http://127.0.0.1:8080
+#   ——即 LINGOS 自己的 WebUI 面板端口 → POST /v1/chat/completions 恒 405
+#   → AI 聊天全不可用（至少自 2026-09-27 起持续，api_debug 转储 6 份同错）。
+# 分级：error（阻止保存）/ warn（允许保存但提示）/ ok
+# =============================================================
+_SELF_PORTS = {8080, 8088, 2937, 2938, 2939, 7931}
+
+
+def _is_self_endpoint(base_url: str) -> bool:
+    """base_url 是否指向 LINGOS 自身端口（405 根因识别）"""
+    try:
+        from urllib.parse import urlparse
+        raw = base_url if "://" in base_url else "http://" + base_url
+        u = urlparse(raw)
+        host = (u.hostname or "").lower()
+        port = u.port or (443 if u.scheme == "https" else 80)
+        if host in ("127.0.0.1", "localhost", "::1", "0.0.0.0", "[::1]"):
+            return port in _SELF_PORTS
+        return False
+    except Exception:
+        return False
+
+
+def validate_provider_endpoint(p: "LLMProvider", timeout: float = 5.0) -> Tuple[str, str]:
+    """探测 provider 端点有效性 → (level, message)，level ∈ {ok, warn, error}
+
+    · error：明确配置错误（base_url 空 / 指向 LINGOS 自身端口）→ 应阻止保存
+    · warn ：端点暂不可达（离线/内网/localhost 模型未启动）→ 允许保存但提示
+    · ok   ：可达
+    """
+    if not p or not getattr(p, "base_url", ""):
+        return ("error", "base_url 为空——请填写 LLM 服务地址（例：https://api.deepseek.com）")
+    if _is_self_endpoint(p.base_url):
+        return ("error",
+                "base_url 指向 LINGOS 自身端口（%s）——这正是历史 HTTP 405 的根因"
+                "（LLM 请求打到自己的 WebUI 面板）。请改为真实 LLM 服务地址。" % p.base_url)
+    base = p.base_url.rstrip("/")
+    probe = base if base.endswith("/v1") else base + "/v1"
+    probe = probe + "/models"
+    try:
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(probe, method="GET")
+        if getattr(p, "api_key", ""):
+            req.add_header("Authorization", "Bearer " + p.api_key)
+        req.add_header("User-Agent", "LINGOS-config-validate")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            code = getattr(resp, "status", 200)
+        return ("ok", "端点可达（GET %s → %s）" % (probe, code))
+    except urllib.error.HTTPError as he:
+        # 服务**有响应** → 地址本身可达：401/403=需认证（正常，Key 问题）；404=路径待确认；
+        # 405=方法不允许（历史上正是"打到 LINGOS 面板"的特征码）→ 拦下
+        if he.code in (401, 403):
+            return ("ok", "端点可达（HTTP %d：需有效 API Key）" % he.code)
+        if he.code == 405:
+            return ("error", "端点返回 405 Method Not Allowed——该地址很可能不是 LLM API"
+                    "（历史上此码源于 base_url 指向了 LINGOS 自身面板），请核对地址")
+        return ("warn", "端点可达但响应 HTTP %d——请确认 API 路径（通常需 /v1）" % he.code)
+    except Exception as e:
+        return ("warn", "端点暂不可达（%s: %s）——已按当前配置保存，请确认地址与网络"
+                % (type(e).__name__, str(e)[:80]))
+
+
+def save_providers(providers: List[LLMProvider], active_id: str = "",
+                   validate: bool = True, force: bool = False) -> bool:
     """持久化 provider.json（App ai_config_set / model_switch 写入）
-    【0.6.0 S5】api_key 加密存储（api_key_enc）；加密不可用 → 明文+标注降级"""
+    【0.6.0 S5】api_key 加密存储（api_key_enc）；加密不可用 → 明文+标注降级
+    【2026-10-11 配置校验】保存前探测端点；error 级阻止保存（force=True 可强制）"""
     global _providers, _active_provider_id
+    if validate:
+        for p in (providers or []):
+            level, msg = validate_provider_endpoint(p)
+            if level == "error":
+                if not force:
+                    logger.error("save_providers BLOCKED — provider '%s': %s", p.id, msg)
+                    return False
+                logger.warning("provider '%s': %s（force 保存）", p.id, msg)
+            elif level == "warn":
+                logger.warning("provider '%s': %s", p.id, msg)
+            else:
+                logger.info("provider '%s': %s", p.id, msg)
     _providers = providers
     _active_provider_id = active_id
     try:
