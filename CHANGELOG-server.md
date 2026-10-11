@@ -28,6 +28,27 @@
   `LINGOS_WIZARD=clack|tui|cli|raw` 可强制；命令行 `--clack/--tui/--cli/--raw/--auto/--quick` 保留
 - 降级链改为 `TUI→CLACK→CLI→RAW`（任一环创建失败逐级回退，向导不会因渲染器不可用而中断）
 
+### 新增（Features · 续：配置写入侧统一 + 声明式清单落地）
+
+- **配置写入侧统一（方案 C 真源）**：`config_core.c` 新增 `save_unified_config()`——
+  `config_core_save()` / `config_core_save_force()` 先写单一真源 `config.json`，再镜像旧文件族（兼容铁律）
+  - schema 与 Python 迁移器 `src/python/config_migrate.py`（SCHEMA_VERSION=1）完全一致：
+    `ai.ai_config` / `ai.provider.{active,providers[]}` / `ui.language` / `ui.user_profile` /
+    `security.security.shadow_mode` / `security.privilege` / `runtime.startup`
+  - **读-改-写**：迁移器并入的其他分区与未知键原样保留（先生"功能只增不减"）
+  - provider 区保留既有 providers 列表，仅刷新 active 项（治"配置三源分裂" F2）
+  - 私密值：仅在配置含明文时写入；既有 `api_key_enc` 密文保留（S5 值级加密）
+  - 落盘即 `0600`（config.json 可能含 api_key）
+- **读取侧补齐**：纳入迁移器布局 `ui.ai_config.language`——修"迁移后界面语言丢失"；
+  旧文件缺失时改从 `config.json` 读 user_profile / startup / security / privilege
+  （迁移器把旧文件改名 `.bak` 后旧路径落空，此前这些项会退回默认值）
+- `config_files_exist()` 防覆盖检查纳入 `config.json`
+- **声明式清单 16 字段正式落地**（`wizard_step_defs.c`，此前只扩了结构体、内置数据仍是旧 13 字段）：
+  - 内置 7 步全部补齐 `group` / `desc` 双 / `advanced` / `skippable` / `secret` /
+    `validate_hint` 双 / `restart_required` / `order` / `since_version`——
+    Clack 向导据此显示描述、双语标题、[高级配置]、[修改需重启生效]、密钥输入掩码
+  - JSON 外部清单加载器支持全部新增字段（缺省 = 0/空 = 旧行为，老三端清单零改动可继续跑）
+
 ### 兼容（Compatibility）
 
 - 旧渲染器（TUI/CLI/RAW）**零改动**、保留可回退

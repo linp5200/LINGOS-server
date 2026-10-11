@@ -25,6 +25,10 @@
 static wizard_config_t g_config;
 static int g_config_loaded = 0;
 
+/* 【2026-10-11 第 3 期·配置收官】统一 schema 版本——与 Python 迁移器
+ * src/python/config_migrate.py 的 SCHEMA_VERSION 必须一致（当前 = 1） */
+#define CONFIG_SCHEMA_VERSION 1
+
 /* ============================================================
  * 辅助：文件路径
  * ============================================================ */
@@ -110,12 +114,57 @@ static int save_json(const char *path, cJSON *root) {
     return 0;
 }
 
+/* 敏感文件权限加固：config.json 可能含 api_key → 0600（与迁移器同规则） */
+static void save_json_harden(const char *path) {
+    if (path) chmod(path, 0600);
+}
+
+/* 取子对象，不存在则创建 */
+static cJSON* object_ensure(cJSON *parent, const char *key) {
+    cJSON *child;
+    if (!parent || !key) return NULL;
+    child = cJSON_GetObjectItem(parent, key);
+    if (cJSON_IsObject(child)) return child;
+    child = cJSON_CreateObject();
+    if (!child) return NULL;
+    cJSON_DeleteItemFromObject(parent, key);
+    cJSON_AddItemToObject(parent, key, child);
+    return child;
+}
+
+/* 键写入（存在即替换，不存在即新增；避免依赖 cJSON 版本差异） */
+static void json_put(cJSON *obj, const char *key, cJSON *item) {
+    if (!obj || !key || !item) {
+        if (item) cJSON_Delete(item);
+        return;
+    }
+    cJSON_DeleteItemFromObject(obj, key);
+    cJSON_AddItemToObject(obj, key, item);
+}
+static void json_put_str(cJSON *obj, const char *key, const char *val) {
+    json_put(obj, key, cJSON_CreateString(val ? val : ""));
+}
+static void json_put_num(cJSON *obj, const char *key, double val) {
+    json_put(obj, key, cJSON_CreateNumber(val));
+}
+static void json_put_bool(cJSON *obj, const char *key, int val) {
+    json_put(obj, key, cJSON_CreateBool(val ? 1 : 0));
+}
+
+/* 旧文件族是否存在（方案 C：旧文件缺失时以 config.json 为真源） */
+static int legacy_file_exists(const char *filename) {
+    char path[512];
+    get_config_path(path, sizeof(path), filename);
+    return (access(path, F_OK) == 0) ? 1 : 0;
+}
+
 /* ============================================================
  * 配置文件存在性检查（用于防覆盖）
  * ============================================================ */
 static int config_files_exist(void) {
     const char *root = lingos_data_root();
     const char *files[] = {
+        "config.json",   /* 【2026-10-11】统一真源同样纳入防覆盖检查 */
         "ai_config.json", "security.json", "privilege.json",
         "startup.conf", "defense.conf", "health.conf",
         "watchdog.conf", "sandbox.conf", "network.conf",
@@ -369,8 +418,47 @@ static int load_unified_config(wizard_config_t *cfg) {
     /* ③ UI 区（language 等按先生"指定内容由指定端配置"归 ui） */
     cJSON *ui = cJSON_GetObjectItem(root, "ui");
     if (cJSON_IsObject(ui)) {
-        cJSON *it = cJSON_GetObjectItem(ui, "language");
+        cJSON *it;
+        /* 迁移器布局：UI_KEYS_FROM_AI 把 language 从 ai 区挪到 ui.ai_config.language
+         * （旧读取侧只看 ui.language / ai.ai_config.language → 迁移后语言会丢，此处补齐） */
+        cJSON *uai = cJSON_GetObjectItem(ui, "ai_config");
+        if (cJSON_IsObject(uai)) {
+            it = cJSON_GetObjectItem(uai, "language");
+            if (cJSON_IsString(it)) safe_strncpy(cfg->language, it->valuestring, sizeof(cfg->language));
+        }
+        it = cJSON_GetObjectItem(ui, "language");   /* ui.language 为权威（C 写入侧落点） */
         if (cJSON_IsString(it)) safe_strncpy(cfg->language, it->valuestring, sizeof(cfg->language));
+    }
+
+    /* ④ 其余分区（方案 C 完整真源）：旧文件缺失时以 config.json 为准
+     *    ——迁移器把旧文件改名 .bak 后旧读取路径落空（治"配置三源分裂" F2） */
+    if (!legacy_file_exists("user_profile.json")) {
+        cJSON *up = ui ? cJSON_GetObjectItem(ui, "user_profile") : NULL;
+        cJSON *it = up ? cJSON_GetObjectItem(up, "user_name") : NULL;
+        if (cJSON_IsString(it)) safe_strncpy(cfg->user_name, it->valuestring, sizeof(cfg->user_name));
+    }
+    if (!legacy_file_exists("startup.conf")) {
+        cJSON *rt = cJSON_GetObjectItem(root, "runtime");
+        cJSON *st = rt ? cJSON_GetObjectItem(rt, "startup") : NULL;
+        cJSON *it = st ? cJSON_GetObjectItem(st, "mode") : NULL;
+        if (cJSON_IsString(it)) {
+            safe_strncpy(cfg->startup_option, it->valuestring, sizeof(cfg->startup_option));
+        } else if (cJSON_IsString(st)) {   /* 容错：runtime.startup 直接是字符串 */
+            safe_strncpy(cfg->startup_option, st->valuestring, sizeof(cfg->startup_option));
+        }
+    }
+    if (!legacy_file_exists("security.json")) {
+        cJSON *sec = cJSON_GetObjectItem(root, "security");
+        cJSON *s2 = sec ? cJSON_GetObjectItem(sec, "security") : NULL;
+        cJSON *shadow = s2 ? cJSON_GetObjectItem(s2, "shadow_mode") : NULL;
+        cJSON *it = shadow ? cJSON_GetObjectItem(shadow, "enabled") : NULL;
+        if (cJSON_IsBool(it)) cfg->shadow_mode_enabled = cJSON_IsTrue(it);
+    }
+    if (!legacy_file_exists("privilege.json")) {
+        cJSON *sec = cJSON_GetObjectItem(root, "security");
+        cJSON *pv = sec ? cJSON_GetObjectItem(sec, "privilege") : NULL;
+        cJSON *it = pv ? cJSON_GetObjectItem(pv, "auto_allow_high_risk") : NULL;
+        if (cJSON_IsBool(it)) cfg->auto_allow_high_risk = cJSON_IsTrue(it);
     }
 
     cJSON_Delete(root);
@@ -511,6 +599,142 @@ static int save_privilege_config(const wizard_config_t *cfg) {
 }
 
 /* ============================================================
+ * 【2026-10-11 第 3 期·配置收官】写入侧统一（方案 C · 单一真源）
+ * ------------------------------------------------------------
+ * schema 与 Python 迁移器 src/python/config_migrate.py 完全一致：
+ *   { schema_version, _note, _updated_at,
+ *     ai:       { ai_config:{...}, provider:{ active, providers:[{id,base_url,model,api_key}] } },
+ *     security: { security:{shadow_mode:{enabled}}, privilege:{auto_allow_high_risk} },
+ *     runtime:  { startup:{mode} },
+ *     ui:       { language, user_profile:{user_name} } }
+ * 策略 = 读-改-写（不重建文件）：
+ *   · C 端拥有的键全量刷新；
+ *   · 迁移器并入的其他分区与未知键**原样保留**（先生"功能只增不减"）；
+ *   · 旧文件族继续镜像写出（兼容铁律：旧组件/旧版本升级不炸）；
+ *   · 落盘即 0600（config.json 可能含 api_key）。
+ * ============================================================ */
+static int save_unified_config(const wizard_config_t *cfg) {
+    char path[512];
+    char ts[64];
+    time_t now;
+    struct tm tmv;
+    cJSON *root, *ai, *ai_cfg, *prov, *list, *entry = NULL, *ui, *ui_ai;
+    cJSON *sec, *sec_inner, *shadow, *priv, *rt, *startup, *uprof;
+    int ret;
+
+    if (!cfg) return -1;
+    get_config_path(path, sizeof(path), "config.json");
+
+    /* 读-改-写：保留迁移器并入的其余分区/未知键 */
+    root = load_json(path);
+    if (root && !cJSON_IsObject(root)) { cJSON_Delete(root); root = NULL; }
+    if (!root) root = cJSON_CreateObject();
+    if (!root) return -1;
+
+    now = time(NULL);
+    {
+        struct tm *lt = localtime(&now);
+        if (lt) { tmv = *lt; strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S%z", &tmv); }
+        else safe_strncpy(ts, "unknown", sizeof(ts));
+    }
+    json_put(root, "schema_version", cJSON_CreateNumber(CONFIG_SCHEMA_VERSION));
+    json_put_str(root, "_note", "LINGOS 统一配置——全部内容集中此文件；改动后 config reload 生效");
+    json_put_str(root, "_updated_at", ts);
+    json_put_str(root, "_written_by", "config_core_save (C 写入侧统一)");
+
+    /* ---- ai 区 ---- */
+    ai = object_ensure(root, "ai");
+    ai_cfg = object_ensure(ai, "ai_config");
+    json_put_str(ai_cfg, "backend", cfg->ai_backend);
+    json_put_str(ai_cfg, "language", cfg->language);   /* 兼容旧读取路径（权威在 ui 区） */
+    json_put_bool(ai_cfg, "thinking_enabled", cfg->thinking_enabled);
+    json_put_bool(ai_cfg, "stream_enabled", cfg->stream_enabled);
+    json_put_bool(ai_cfg, "show_thinking", cfg->show_thinking);
+    json_put_bool(ai_cfg, "meta_info_enabled", cfg->meta_info_enabled);
+    json_put_num(ai_cfg, "max_context_tokens", cfg->max_context_tokens);
+    json_put_num(ai_cfg, "socket_timeout", cfg->socket_timeout);
+    json_put_num(ai_cfg, "auth_timeout", cfg->auth_timeout);
+    json_put_str(ai_cfg, "log_level", cfg->log_level);
+    json_put_num(ai_cfg, "temperature", cfg->temperature);
+    json_put_num(ai_cfg, "creativity", cfg->creativity);
+    json_put_num(ai_cfg, "max_agents", cfg->max_agents);
+    json_put_str(ai_cfg, "search_backend", cfg->search_backend);
+    json_put_num(ai_cfg, "search_max_urls", cfg->search_max_urls);
+    json_put_num(ai_cfg, "search_rate_limit", cfg->search_rate_limit);
+    json_put_str(ai_cfg, "personality_file", cfg->personality_file);
+    json_put_str(ai_cfg, "assistant_file", cfg->assistant_file);
+    json_put_str(ai_cfg, "thinking_display", cfg->thinking_display);
+    {   /* ollama 子对象：保留旧键（Python 统一层仍读） */
+        cJSON *ollama = object_ensure(ai_cfg, "ollama");
+        json_put_str(ollama, "url", cfg->ollama_url);
+        json_put_str(ollama, "model", cfg->ollama_model);
+    }
+
+    /* provider 区：保留既有 providers 列表，仅刷新 active 项（三源分裂的解药） */
+    prov = object_ensure(ai, "provider");
+    list = cJSON_GetObjectItem(prov, "providers");
+    if (!cJSON_IsArray(list)) {
+        json_put(prov, "providers", cJSON_CreateArray());
+        list = cJSON_GetObjectItem(prov, "providers");
+    }
+    if (cfg->ai_backend[0] != '\0') json_put_str(prov, "active", cfg->ai_backend);
+    if (cJSON_IsArray(list) && cfg->ai_backend[0] != '\0') {
+        cJSON *it = NULL;
+        cJSON_ArrayForEach(it, list) {
+            cJSON *id = cJSON_GetObjectItem(it, "id");
+            if (cJSON_IsString(id) && strcmp(id->valuestring, cfg->ai_backend) == 0) {
+                entry = it;
+                break;
+            }
+        }
+        if (!entry) {
+            entry = cJSON_CreateObject();
+            if (entry) {
+                json_put_str(entry, "id", cfg->ai_backend);
+                cJSON_AddItemToArray(list, entry);
+            }
+        }
+        if (entry) {
+            json_put_str(entry, "base_url", cfg->base_url);
+            json_put_str(entry, "model", cfg->model);
+            /* 私密值：仅在配置里有明文时写入；已有 api_key_enc 密文原样保留（S5） */
+            if (cfg->api_key[0] != '\0') json_put_str(entry, "api_key", cfg->api_key);
+        }
+    }
+
+    /* ---- ui 区（先生"指定内容由指定端配置"）---- */
+    ui = object_ensure(root, "ui");
+    json_put_str(ui, "language", cfg->language);
+    ui_ai = cJSON_GetObjectItem(ui, "ai_config");
+    if (cJSON_IsObject(ui_ai)) json_put_str(ui_ai, "language", cfg->language);  /* 迁移器布局同步 */
+    uprof = object_ensure(ui, "user_profile");
+    json_put_str(uprof, "user_name", cfg->user_name);
+
+    /* ---- security 区（键名沿用迁移器分区布局：security.security.*）---- */
+    sec = object_ensure(root, "security");
+    sec_inner = object_ensure(sec, "security");
+    shadow = object_ensure(sec_inner, "shadow_mode");
+    json_put_bool(shadow, "enabled", cfg->shadow_mode_enabled);
+    priv = object_ensure(sec, "privilege");
+    json_put_bool(priv, "auto_allow_high_risk", cfg->auto_allow_high_risk);
+
+    /* ---- runtime 区（startup.conf → runtime.startup.mode）---- */
+    rt = object_ensure(root, "runtime");
+    startup = object_ensure(rt, "startup");
+    json_put_str(startup, "mode", cfg->startup_option);
+
+    ret = save_json(path, root);
+    if (ret == 0) save_json_harden(path);
+    cJSON_Delete(root);
+    if (ret == 0) {
+        LOG_INFO_T("ConfigCore", "SaveUnified", "OK", "config.json written (schema_version=%d)", CONFIG_SCHEMA_VERSION);
+    } else {
+        LOG_ERROR_T("ConfigCore", "SaveUnified", "Fail", "failed to write config.json");
+    }
+    return ret;
+}
+
+/* ============================================================
  * 常规保存（带防覆盖保护）
  * ============================================================ */
 int config_core_save(const wizard_config_t *cfg) {
@@ -524,6 +748,8 @@ int config_core_save(const wizard_config_t *cfg) {
     LOG_INFO_T("ConfigCore", "Save", "Start", "no config files exist, saving defaults");
 
     int ret = 0;
+    /* 【2026-10-11】写入侧统一：先写单一真源 config.json，再镜像旧文件族（兼容铁律） */
+    ret |= save_unified_config(cfg);
     ret |= save_ai_config(cfg);
     ret |= save_user_profile(cfg);
     ret |= save_startup_conf(cfg);
@@ -547,6 +773,8 @@ int config_core_save_force(const wizard_config_t *cfg) {
     LOG_INFO_T("ConfigCore", "SaveForce", "Start", "force saving config (overwriting if exists)");
 
     int ret = 0;
+    /* 【2026-10-11】写入侧统一：config.json 为真源；旧文件族继续镜像写出 */
+    ret |= save_unified_config(cfg);
     ret |= save_ai_config(cfg);
     ret |= save_user_profile(cfg);
     ret |= save_startup_conf(cfg);
