@@ -16,6 +16,7 @@
  */
 
 #include "safe_exec.h"
+#include "execution_gate.h"   /* 【P5 接线】统一执行门（此前零调用者） */
 #include "log_extra.h"
 #include "safe_string.h"
 
@@ -213,6 +214,30 @@ safe_exec_verdict_t safe_exec_check(const char *cmdline,
     if (strlen(cmdline) > 4096) {
         if (reason) safe_strncpy(reason, "command too long", reason_sz);
         return SAFE_EXEC_DENY;
+    }
+
+    /* 【P5 接线】统一执行门（execution_gate.c 此前零调用者）。
+     *   safe_exec 是 AI 命令执行的唯一入口（syscall_handler.c:981 exec_command），
+     *   在此前置执行门，使「绝对保护 / 输入过滤 / 白名单 / 严格模式」对真实执行链路生效。
+     *   拒绝优先级最高；执行门要求确认时直接透传，不因后续白名单降级。 */
+    {
+        char gate_reason[192] = {0};
+        gate_result_t gate = execution_gate_check(GATE_SOURCE_AI_TOOL, cmdline, "safe_exec",
+                                                  gate_reason, sizeof(gate_reason));
+        if (gate == GATE_RESULT_DENY) {
+            if (reason && reason_sz) {
+                safe_strncpy(reason, gate_reason[0] ? gate_reason : "blocked by execution gate", reason_sz);
+            }
+            LOG_WARN_T("SafeExec", "Check", "GateDenied", "%s | cmd=%.100s", gate_reason, cmdline);
+            return SAFE_EXEC_DENY;
+        }
+        if (gate == GATE_RESULT_NEED_CONFIRM) {
+            if (reason && reason_sz) {
+                safe_strncpy(reason, gate_reason[0] ? gate_reason : "execution gate requires confirmation", reason_sz);
+            }
+            LOG_WARN_T("SafeExec", "Check", "GateNeedConfirm", "%s | cmd=%.100s", gate_reason, cmdline);
+            return SAFE_EXEC_NEED_CONFIRM;
+        }
     }
 
     char norm[4096];

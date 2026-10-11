@@ -7,6 +7,7 @@
 
 #include "defense_mode.h"
 #include "security_config.h"
+#include "dark_mode.h"     /* 【P5 接线】模式切换副作用：敏感数据加密态（此前零调用者） */
 #include "../lib/log_extra.h"
 #include "../common/safe_string.h"
 #include <pthread.h>
@@ -70,8 +71,22 @@ int defense_mode_set(defense_mode_t mode) {
         }
     }
 
+    defense_mode_t previous = g_current_mode;
     g_current_mode = mode;
     pthread_mutex_unlock(&g_mode_lock);
+
+    /* 【P5 接线】模式切换副作用（dark_mode.c 此前零调用者）：
+     *   进入 dark/absolute → 敏感数据目录打加密标记 + 生成锁定内存密钥；
+     *   从 dark/absolute 降级 → 清除标记与密钥。 */
+    if (mode == DEFENSE_MODE_DARK || mode == DEFENSE_MODE_ABSOLUTE) {
+        if (dark_mode_encrypt_sensitive_data() != 0) {
+            LOG_WARN_T("DefenseMode", "Set", "DarkMarkFail", "sensitive data marking failed");
+        }
+    } else if (previous == DEFENSE_MODE_DARK || previous == DEFENSE_MODE_ABSOLUTE) {
+        if (dark_mode_decrypt_data() != 0) {
+            LOG_WARN_T("DefenseMode", "Set", "DarkUnmarkFail", "sensitive data unmarking skipped");
+        }
+    }
 
     /* 同步到 security.json */
     switch (mode) {
@@ -108,7 +123,11 @@ int defense_mode_set(defense_mode_t mode) {
  */
 int defense_mode_set_force(defense_mode_t mode) {
     g_force_downgrade = 1;
-    return defense_mode_set(mode);
+    int ret = defense_mode_set(mode);
+    /* 【P5 修复】标志未被消费（同等级/升级路径）也必须清除，
+     *   否则残留会让「下一次未经授权的降级」被静默放行。 */
+    g_force_downgrade = 0;
+    return ret;
 }
 
 int defense_mode_apply_current(void) {
@@ -133,6 +152,13 @@ int defense_mode_apply_current(void) {
     pthread_mutex_lock(&g_mode_lock);
     g_current_mode = target;
     pthread_mutex_unlock(&g_mode_lock);
+
+    /* 【P5 接线】启动即按持久化配置进入暗影/绝对保护时，同样落地加密标记 */
+    if (target == DEFENSE_MODE_DARK || target == DEFENSE_MODE_ABSOLUTE) {
+        if (dark_mode_encrypt_sensitive_data() != 0) {
+            LOG_WARN_T("DefenseMode", "ApplyCurrent", "DarkMarkFail", "sensitive data marking failed");
+        }
+    }
 
     LOG_INFO_T("DefenseMode", "ApplyCurrent", "OK", "applied mode: %s", defense_mode_name(target));
     return 0;

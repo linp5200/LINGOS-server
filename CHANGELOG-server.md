@@ -109,6 +109,26 @@
   `registry_register_builtin_modules()` 启动路径已有真实调用者（`core/background_init.c:44`）
 - 验证：`registry_builtin.c` `gcc -fsyntax-only -Wall -Wextra` **0 warning / 0 error**
 
+### 新增（Features · 续 7：安全死代码接线上岗 + MQTT 全链接线/ai_master 实装 —— P5，teammate 交付）
+
+- **安全接线（`sec-wire2`，`src/security/**` + `src/firewall/**`）**：新增接线中枢 `security_wire.c/.h`
+  （`security_wire_init()` 已在 lingosd 启动链调用）+ 4 个补齐头文件；16 个模块静态审核零警告
+  真实调用链示例：`input_filter ← execution_gate ← safe_exec ← syscall_handler`；
+  `output_filter ← audit_dump ← lingosd/shell`；`firewall ← permission_check ← syscall_handler`；
+  `second_verify ← defense_absolute_protect`；`dark_mode ← defense_mode_set`
+  顺手修真实缺陷：output_filter 越界写、audit 多线程共享缓冲、firewall `system()` 命令注入、
+  `defense_check_anomaly` 恒真占位 → behavior_monitor 实时 EWMA 评分、绝对保护"只喊不阻断"→ 真阻断
+- **MQTT + 主AI（`net-ai2`，`src/net/mqtt/**` + `src/ai/ai_master.*`）**：唯一入口 `mqtt_service_start/stop`
+  （已在 lingosd 启动/退出接线）；监督线程（指数退避重连/可用性/HA 发现/30s 真实指标）；
+  HA 上报为**真实采样**（/proc/stat 差分、sysinfo、statvfs、loadavg、AF_UNIX 探活），不可用即跳过并告警；
+  `ai_master` 桩 → 真实分类 + 真实审查（危险规则表 + ai_privilege，默认 fail-closed），并接线此前零调用的 `ai_privilege_init`
+- Makefile：`SECURITY_SRCS` 纳入 `security_wire.c`；MQTT/ai_master 均在既有源组内
+
+### 验证（Verification · 安全与MQTT）
+
+- 安全组 16 个 .c、MQTT/AI 组 6 个 .c：`gcc -fsyntax-only -Wall -Wextra`（全量 -I）**0 warning / 0 error**
+- 集成文件 `lingosd.c` / `security_wire.c` 复核 **0 warning / 0 error**
+
 ### 验证（Verification · 自检）
 
 - 静态审核：`registry_selfcheck.c` / `registry.c` / `function_registry_builtin.c` / `lingosd.c`

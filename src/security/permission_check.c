@@ -7,15 +7,60 @@
 
 #include "permission_check.h"
 #include "permission_whitelist.h"
+#include "../firewall/firewall.h"   /* 【P5 接线】网络权限拒绝 → 防火墙真实封堵 */
 #include "../common/error_report.h"
 #include "../lib/log_extra.h"
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <sys/types.h>
 #include <pwd.h>
 #include <sys/syscall.h>   /* 【2026-10-10】黑名单用 __NR_* 宏（跨架构正确） */
+
+/* ============================================================
+ * 【P5 接线上岗】权限拒绝 → 防火墙封堵（firewall.c 此前零调用者）
+ *
+ * 语义：连接被权限系统拒绝时，仅靠「拒绝本次调用」挡不住 App 换路径重试；
+ *       此处把被拒目标下成 INPUT DROP 规则，实现「一次拒绝，持续封堵」。
+ * 约束：① 仅对合法 IPv4/IPv6 字面量+C（域名不做 -s 规则，避免 nft 报错）
+ *       ② 同一目标只下一次规则（避免每次连接都 fork iptables）
+ *       ③ 防火墙失败不影响权限判定结果（fail-closed 仍由返回值 0 保证）
+ * ============================================================ */
+
+#define FW_BLOCK_MAX 16
+
+static char g_fw_blocked[FW_BLOCK_MAX][64];
+static int g_fw_blocked_count = 0;
+static pthread_mutex_t g_fw_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void firewall_enforce_deny(const char *host, int port) {
+    if (!host || !firewall_is_valid_target(host)) return;
+
+    pthread_mutex_lock(&g_fw_lock);
+    int seen = 0;
+    for (int i = 0; i < g_fw_blocked_count; i++) {
+        if (strcmp(g_fw_blocked[i], host) == 0) { seen = 1; break; }
+    }
+    if (!seen && g_fw_blocked_count < FW_BLOCK_MAX) {
+        snprintf(g_fw_blocked[g_fw_blocked_count], sizeof(g_fw_blocked[0]), "%s", host);
+        g_fw_blocked_count++;
+    }
+    pthread_mutex_unlock(&g_fw_lock);
+
+    if (seen) return;
+
+    char port_str[8];
+    if (port > 0 && port <= 65535) snprintf(port_str, sizeof(port_str), "%d", port);
+    else port_str[0] = '\0';
+
+    int rc = firewall_deny(host, port_str[0] ? port_str : NULL);
+    LOG_WARN_T("PermCheck", "Firewall", rc == 0 ? "Blocked" : "BlockFail",
+               "denied target %s port %d enforced via firewall (rc=%d)",
+               host, port, rc);
+}
 
 /* ============================================================
  * 文件权限检查
@@ -69,6 +114,7 @@ int permission_check_network(const char *app_id, const char *host, int port, int
     if (!permission_whitelist_check(app_id, needed_perm)) {
         LOG_WARN_T("PermCheck", "Network", "Denied", "app %s lacks %s",
                    app_id, permission_type_to_string(needed_perm));
+        firewall_enforce_deny(host, port);   /* 【P5 接线】拒绝即封堵 */
         return 0;
     }
 
@@ -80,6 +126,7 @@ int permission_check_network(const char *app_id, const char *host, int port, int
     /* 需要额外 DNS 权限解析域名 */
     if (host && host[0] && !isdigit(host[0]) && !permission_whitelist_check(app_id, PERM_NET_DNS)) {
         LOG_WARN_T("PermCheck", "Network", "DNSDenied", "app %s lacks DNS", app_id);
+        firewall_enforce_deny(host, port);   /* 【P5 接线】拒绝即封堵（域名会被校验拒绝，非 IP 直接跳过） */
         return 0;
     }
 

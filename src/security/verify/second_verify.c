@@ -6,6 +6,7 @@
  */
 
 #include "second_verify.h"
+#include "secure_memory.h"   /* 【P5 接线】口令明文改用锁定内存（secure_alloc/secure_free） */
 #include "data_path.h"
 #include "safe_string.h"
 #include "log_extra.h"
@@ -308,7 +309,15 @@ verify_result_t second_verify_check(const char *operation, verify_mode_t mode, i
 
         /* ----- 有密码：正常验证流程 ----- */
         /* ====== 步骤1：密码验证 ====== */
-        char password[MAX_PASSWORD_LEN] = {0};
+        /* 【P5 接线】口令明文放锁定内存：不进栈、不换页、用后 secure_free 归零解锁 */
+        char *password = secure_alloc(MAX_PASSWORD_LEN);
+        if (!password) {
+            LOG_ERROR_T("SecondVerify", "Check", "SecureAllocFail",
+                        "cannot allocate locked memory for password");
+            uart_puts(tr("Security memory unavailable. Operation cancelled.\n",
+                         "安全内存不可用，操作已取消。\n"));
+            return VERIFY_RESULT_CANCELLED;
+        }
         uart_puts(COLOR_BOLD COLOR_YELLOW);
         char prompt[256];
         safe_snprintf(prompt, sizeof(prompt),
@@ -319,14 +328,16 @@ verify_result_t second_verify_check(const char *operation, verify_mode_t mode, i
         uart_puts(tr("Enter password: ", "请输入密码："));
         uart_puts(COLOR_RESET);
 
-        if (read_password_noecho(password, sizeof(password)) != 0) {
+        if (read_password_noecho(password, MAX_PASSWORD_LEN) != 0) {
             LOG_WARN_T("SecondVerify", "Check", "ReadPassFail", "failed to read password");
+            secure_free(password, MAX_PASSWORD_LEN);
             return VERIFY_RESULT_CANCELLED;
         }
         uart_puts("\n");
 
         int pass_ok = second_verify_check_password(password);
-        explicit_bzero(password, sizeof(password));
+        secure_free(password, MAX_PASSWORD_LEN);   /* 归零 + munlock + munmap */
+        password = NULL;
 
         if (!pass_ok) {
             LOG_WARN_T("SecondVerify", "Check", "PassFail", "incorrect password for operation '%s'", operation);

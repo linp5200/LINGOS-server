@@ -4,8 +4,10 @@
  * @version LN-B-5.0.0.0
  */
 
+#include "dark_mode.h"        /* 【P5 接线】本模块此前无头文件，函数全仓无声明 */
 #include "defense_mode.h"
 #include "security_config.h"
+#include "secure_memory.h"      /* 【P5 接线】密钥改用锁定内存（secure_alloc/secure_free） */
 #include "../common/safe_string.h"
 #include "../lib/log_extra.h"
 #include "../lib/crypto/monocypher.h"
@@ -15,8 +17,10 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#define DARK_KEY_SIZE 32
+
 static pthread_mutex_t g_dark_lock = PTHREAD_MUTEX_INITIALIZER;
-static uint8_t g_dark_encryption_key[32] = {0};
+static uint8_t *g_dark_encryption_key = NULL;   /* 锁定内存，退出一律 secure_free 归零 */
 static int g_dark_encryption_active = 0;
 
 /* ============================================================
@@ -28,8 +32,19 @@ int dark_mode_encrypt_sensitive_data(void) {
 
     pthread_mutex_lock(&g_dark_lock);
 
-    /* 生成临时加密密钥 */
-    crypto_random_bytes(g_dark_encryption_key, sizeof(g_dark_encryption_key));
+    /* 【P5 接线】生成临时加密密钥：使用锁定内存（secure_memory.c），
+     *   避免密钥被换页/核心转储泄漏；重复激活时先归还旧密钥。 */
+    if (g_dark_encryption_key) {
+        secure_free(g_dark_encryption_key, DARK_KEY_SIZE);
+        g_dark_encryption_key = NULL;
+    }
+    g_dark_encryption_key = secure_alloc(DARK_KEY_SIZE);
+    if (!g_dark_encryption_key) {
+        pthread_mutex_unlock(&g_dark_lock);
+        LOG_ERROR_T("DarkMode", "Encrypt", "AllocFail", "secure_alloc(%d) failed", DARK_KEY_SIZE);
+        return -1;
+    }
+    crypto_random_bytes(g_dark_encryption_key, DARK_KEY_SIZE);
     g_dark_encryption_active = 1;
 
     /* 标记敏感数据目录为加密状态 */
@@ -84,8 +99,11 @@ int dark_mode_decrypt_data(void) {
         unlink(marker);
     }
 
-    /* 清除密钥 */
-    explicit_bzero(g_dark_encryption_key, sizeof(g_dark_encryption_key));
+    /* 【P5 接线】清除密钥：secure_free 内部 explicit_bzero + munlock + munmap */
+    if (g_dark_encryption_key) {
+        secure_free(g_dark_encryption_key, DARK_KEY_SIZE);
+        g_dark_encryption_key = NULL;
+    }
     g_dark_encryption_active = 0;
 
     pthread_mutex_unlock(&g_dark_lock);

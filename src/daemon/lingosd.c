@@ -38,6 +38,7 @@
 #include "function_registry.h"   /* 【2026-10-11 第 4 期】统一调用 API + rely 依赖控制 */
 #include "event_bus.h"              /* 【2026-10-11 第 4 期】系统事件总线 */
 #include "registry.h"                /* 【2026-10-11 第 4 期】自检实装（P5） */
+#include "security_wire.h"           /* 【2026-10-11 P5】安全接线中枢（死代码上岗入口） */
 #include "ai_server_protocol.h"
 #include "cJSON.h"
 #include "safe_string.h"
@@ -86,6 +87,12 @@ static void subscribe_audit_events(void) {
                (int)(sizeof(watched) / sizeof(watched[0])));
 }
 
+/* 【2026-10-11 P5】MQTT 退出兜底（进程退出前停服务，避免残留连接） */
+static void mqtt_stop_atexit(void) {
+    extern int mqtt_service_stop(void);
+    (void)mqtt_service_stop();
+}
+
 static int daemon_init(void) {
     LOG_INFO_T("Lingosd", "Init", "Enter", "Initializing lingosd");
     linux_io_init();
@@ -123,6 +130,18 @@ static int daemon_init(void) {
      * （此前 registry_run_selfcheck 是桩、registry_register_selfcheck 无人调用） */
     (void)registry_register_builtin_selfchecks();
     (void)registry_run_all_selfchecks();
+
+    /* 【2026-10-11 P5】安全接线中枢：input/output_filter、secure_memory、firewall、
+     * second_verify、shadow/dark_mode、virus_scanner 的真实调用入口（幂等，自检失败打 ERROR） */
+    (void)security_wire_init();
+
+    /* 【2026-10-11 P5】MQTT 全链接线：唯一对外入口（broker/凭据用
+     * LINGOS_MQTT_BROKER/PORT/USERNAME/PASSWORD 覆盖，默认 127.0.0.1:1883） */
+    {
+        extern int mqtt_service_start(const char *broker, const char *client_id);
+        (void)mqtt_service_start(NULL, NULL);
+        (void)atexit(mqtt_stop_atexit);
+    }
 
     nook_init();
     defense_init();

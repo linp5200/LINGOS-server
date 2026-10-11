@@ -94,4 +94,67 @@ int mqtt_sync_is_running(void);
  */
 void mqtt_sync_cleanup(void);
 
+/**
+ * @brief 启用/禁用同步模块的自动重连
+ */
+void mqtt_sync_set_reconnect_enabled(int enabled);
+
+/**
+ * @brief 当前设备 ID（mqtt_sync_init 解析后的真实值）
+ */
+const char *mqtt_sync_get_device_id(void);
+
+/* ============================================================
+ * MQTT 服务（唯一对外接线入口）
+ *   职责：初始化客户端 → 建立连接 → 订阅 → HA 发现 →
+ *         监督线程（重连 + 真实系统指标周期上报 + 可用性）
+ *
+ * 【集成】守护进程启动时调用一次（lingosd.c / main.c）：
+ *     extern int mqtt_service_start(const char *, const char *);
+ *     mqtt_service_start(NULL, NULL);     // 设备ID/主题前缀用默认值
+ *   退出前调用 mqtt_service_stop()。broker 由环境变量配置，见下。
+ * ============================================================ */
+
+/**
+ * @brief MQTT 服务运行状态（真实计数，供观测/上报）
+ */
+typedef struct {
+    int running;                  /* 监督线程运行中 */
+    int connected;                /* MQTT 已连接 */
+    int reconnect_attempts;       /* 连续重连失败次数（成功后清零） */
+    int subscriptions;            /* 已登记订阅数（重连后自动恢复） */
+    unsigned long publish_ok;     /* 发布成功计数 */
+    unsigned long publish_failed; /* 发布失败计数 */
+    unsigned long report_cycles;  /* HA 指标上报轮次 */
+    long uptime_sec;              /* 服务运行秒数（未运行 = 0） */
+} mqtt_service_status_t;
+
+/**
+ * @brief 启动 MQTT 服务（幂等）
+ * @param device_id 设备 ID，NULL 用 "lingos_device_<pid>"
+ * @param sync_topic_prefix 同步主题前缀，NULL 用 "lingos/sync"
+ * @return 0 服务已启动；-1 初始化/线程创建失败
+ * @note  broker 取环境变量 LINGOS_MQTT_BROKER / LINGOS_MQTT_PORT /
+ *        LINGOS_MQTT_USERNAME / LINGOS_MQTT_PASSWORD，默认 127.0.0.1:1883；
+ *        broker 暂不可达时服务仍启动，由监督线程按指数退避重连。
+ */
+int mqtt_service_start(const char *device_id, const char *sync_topic_prefix);
+
+/**
+ * @brief 停止 MQTT 服务并回收监督线程（幂等）
+ */
+void mqtt_service_stop(void);
+
+/**
+ * @brief 服务监督线程是否运行中
+ * @return 1 运行中，0 未运行
+ */
+int mqtt_service_is_running(void);
+
+/**
+ * @brief 读取服务真实状态
+ * @param out 输出结构（可为 NULL）
+ */
+void mqtt_service_get_status(mqtt_service_status_t *out);
+
 #endif /* NET_MQTT_MQTT_SYNC_H */

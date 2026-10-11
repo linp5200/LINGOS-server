@@ -5,6 +5,7 @@
  * @fix     tar 解压改用 fork + execvp，消除 system() 调用
  */
 
+#include "virus_scanner.h"   /* 【P5 接线】枚举/API 公开（此前 .c 内私有 typedef → 无人可调） */
 #include "../common/safe_string.h"
 #include "../lib/log_extra.h"
 #include <stdio.h>
@@ -16,12 +17,6 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <errno.h>
-
-typedef enum {
-    SCAN_RESULT_CLEAN = 0,
-    SCAN_RESULT_SUSPICIOUS = 1,
-    SCAN_RESULT_MALICIOUS = 2
-} scan_result_t;
 
 /* ============================================================
  * 危险模式列表

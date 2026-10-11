@@ -17,6 +17,7 @@
 #include "../lib/cJSON/cJSON.h"
 #include "../security/crypto/crypto_core.h"
 #include "../security/crypto/envelope.h"
+#include "output_filter.h"   /* 【P5 接线】audit_dump/export 对外输出前脱敏（此前零调用者） */
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -37,6 +38,19 @@ static uint8_t last_hash[AUDIT_HASH_SIZE] = {0};
 /* ============================================================
  * 内部辅助函数
  * ============================================================ */
+
+/**
+ * @brief 【P5 接线】对外输出去敏：output_filter_redact（IP/邮箱打码）
+ *
+ * 说明：内存中的审计条目与哈希链保持原样（audit_verify 不受影响），
+ *       仅在 audit_dump() / audit_export_json() 对外展示/导出时脱敏。
+ */
+static void audit_redact(const char *src, char *dst, size_t dst_sz) {
+    if (!dst || dst_sz == 0) return;
+    if (!src) { dst[0] = '\0'; return; }
+    /* 用可重入版：audit_dump 由 daemon 线程调用，不能共享静态缓冲 */
+    output_filter_redact_r(src, dst, dst_sz);
+}
 
 /**
  * @brief 计算单条审计条目的哈希值（包含 prev_hash）
@@ -148,12 +162,18 @@ void audit_dump(char *buf, uint32_t buf_len) {
         int idx = (start + i) % AUDIT_BUF_SIZE;
         audit_entry_t *e = &audit_ring[idx];
 
+        /* 【P5 接线】args/result 对外展示前经 output_filter 脱敏 */
+        char safe_args[256];
+        char safe_result[256];
+        audit_redact(e->args, safe_args, sizeof(safe_args));
+        audit_redact(e->result, safe_result, sizeof(safe_result));
+
         total += safe_snprintf(buf + total, buf_len - total,
                                "[ts=%llu][uid=%s][src=%s][risk=%s][confirm=%d]\n"
                                "  skill: %s\n  args: %s\n  result(%d): %s\n  prev_hash: ",
                                (unsigned long long)e->timestamp,
                                e->uid, e->source, e->risk_level, e->confirmed,
-                               e->skill_name, e->args, e->ret_code, e->result);
+                               e->skill_name, safe_args, e->ret_code, safe_result);
 
         for (int j = 0; j < 16 && j < AUDIT_HASH_SIZE; j++) {
             total += safe_snprintf(buf + total, buf_len - total, "%02x", e->prev_hash[j]);
@@ -372,8 +392,13 @@ char* audit_export_json(void) {
         cJSON_AddStringToObject(obj, "uid", e->uid);
         cJSON_AddStringToObject(obj, "source", e->source);
         cJSON_AddStringToObject(obj, "skill", e->skill_name);
-        cJSON_AddStringToObject(obj, "args", e->args);
-        cJSON_AddStringToObject(obj, "result", e->result);
+        /* 【P5 接线】JSON 导出前脱敏（同 audit_dump） */
+        char safe_args[256];
+        char safe_result[256];
+        audit_redact(e->args, safe_args, sizeof(safe_args));
+        audit_redact(e->result, safe_result, sizeof(safe_result));
+        cJSON_AddStringToObject(obj, "args", safe_args);
+        cJSON_AddStringToObject(obj, "result", safe_result);
         cJSON_AddNumberToObject(obj, "ret_code", e->ret_code);
         cJSON_AddStringToObject(obj, "risk", e->risk_level);
         cJSON_AddBoolToObject(obj, "confirmed", e->confirmed);

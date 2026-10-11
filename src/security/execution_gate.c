@@ -7,6 +7,7 @@
 #include "execution_gate.h"
 #include "security_config.h"
 #include "defense_mode.h"
+#include "input_filter.h"   /* 【P5 接线】注入/危险模式过滤（此前零调用者） */
 #include "../common/safe_string.h"
 #include "../lib/log_extra.h"
 #include "../security/audit.h"
@@ -135,6 +136,20 @@ gate_result_t execution_gate_check(gate_source_t source,
     if (strcmp(mode, "permissive") == 0) {
         LOG_DEBUG_T("ExecutionGate", "Check", "Permissive", "allowing input from %s", execution_gate_source_name(source));
         return GATE_RESULT_ALLOW;
+    }
+
+    /* 【P5 接线】输入过滤（input_filter.c）：提示注入 / 危险命令模式命中即拒绝。
+     *   顺序说明：permissive 模式仍然全放行（保持原语义）；其余模式下本过滤优先于
+     *   白名单——危险模式不可被白名单豁免。 */
+    {
+        char filter_reason[128] = {0};
+        if (input_filter_check(input, filter_reason, sizeof(filter_reason)) != 0) {
+            if (reason) safe_snprintf(reason, reason_len, "Input filter: %s",
+                                      filter_reason[0] ? filter_reason : "dangerous pattern");
+            LOG_WARN_T("ExecutionGate", "Check", "InputFilterBlock", "%s | from %s",
+                       filter_reason, execution_gate_source_name(source));
+            return GATE_RESULT_DENY;
+        }
     }
 
     /* 白名单检查 */

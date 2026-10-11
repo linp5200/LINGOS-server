@@ -6,6 +6,12 @@
  */
 
 #include "defense.h"
+#include "../health/behavior_monitor.h" /* 【P5 修复】异常检测取真实评分（此前为恒真占位） */
+#include "defense_mode.h"              /* 【P5 接线】与防御状态机保持一致 */
+#include "dark_mode.h"                 /* 【P5 接线】暗影模式敏感数据加密态 */
+#include "absolute_protect.h"          /* 【P5 接线】绝对保护真实阻断 */
+#include "audit.h"                     /* 【P5 接线】高危操作审计 */
+#include "verify/second_verify.h"      /* 【P5 接线】高危操作二次验证（此前零调用者） */
 #include "../common/safe_string.h"
 #include "../common/data_path.h"
 #include "../common/lang.h"      /* 新增：修复 tr() 未声明 */
@@ -113,26 +119,78 @@ void defense_init(void) {
  * 公共 API 实现
  * ============================================================ */
 
+/* 【P5 接线】影子/暗影开关与防御状态机（defense_mode.c）保持一致：
+ *   此前 defense.c 只改自己的静态标志，而执行侧（execution_gate / syscall_handler /
+ *   shadow_mode.c / dark_mode.c）读的是 defense_mode_get() →
+ *   用户在 shell 里开影子模式，链路里根本没生效。
+ *   现在：开 → 升级模式；关 → 仅当当前正是该模式时强制降级到 none。 */
 void defense_shadow_mode(int enable) {
-    g_shadow_mode = enable ? 1 : 0;
+    if (enable) {
+        if (defense_mode_set(DEFENSE_MODE_SHADOW) != 0) {
+            LOG_WARN_T("Defense", "ShadowMode", "Blocked",
+                       "cannot switch to shadow: current mode %s is higher",
+                       defense_mode_name(defense_mode_get()));
+        }
+    } else if (defense_mode_get() == DEFENSE_MODE_SHADOW) {
+        defense_mode_set_force(DEFENSE_MODE_NONE);
+    }
+
+    /* 以状态机为准：可能因等级规则未切换成功 */
+    g_shadow_mode = (defense_mode_get() == DEFENSE_MODE_SHADOW) ? 1 : 0;
     LOG_INFO_T("Defense", "ShadowMode", "%s", enable ? "enabled" : "disabled");
     defense_save_config();
 }
 
 void defense_dark_mode(int enable) {
-    g_dark_mode = enable ? 1 : 0;
+    if (enable) {
+        if (defense_mode_set(DEFENSE_MODE_DARK) != 0) {
+            LOG_WARN_T("Defense", "DarkMode", "Blocked",
+                       "cannot switch to dark: current mode %s is higher",
+                       defense_mode_name(defense_mode_get()));
+        }
+    } else if (defense_mode_get() == DEFENSE_MODE_DARK) {
+        defense_mode_set_force(DEFENSE_MODE_NONE);
+    }
+
+    g_dark_mode = (defense_mode_get() == DEFENSE_MODE_DARK) ? 1 : 0;
     LOG_INFO_T("Defense", "DarkMode", "%s", enable ? "enabled" : "disabled");
     defense_save_config();
 }
 
 void defense_absolute_protect(void) {
-    uart_puts(COLOR_RED);
-    uart_puts("\n╔══════════════════════════════════════════════════════════════════╗\n");
-    uart_puts("║  ⚠️  ABSOLUTE PROTECTION ACTIVATED                            ║\n");
-    uart_puts("║  All high-risk operations are blocked until manual override  ║\n");
-    uart_puts("╚══════════════════════════════════════════════════════════════════╝\n");
-    uart_puts(COLOR_RESET);
-    LOG_WARN_T("Defense", "AbsoluteProtect", "Activated", "absolute protection activated");
+    /* 【P5 接线】高危操作二次验证（verify/second_verify.c 此前零调用者）：
+     *   仅当已设置 root 密码且处于交互终端时要求「密码 + Y/N」；
+     *   非交互（脚本/管道/daemon）保持原行为并写审计，避免阻塞自动化流程。 */
+    if (second_verify_has_password() && isatty(STDIN_FILENO)) {
+        verify_result_t vr = second_verify_quick("activate absolute protect");
+        if (vr != VERIFY_RESULT_APPROVED) {
+            uart_puts(COLOR_RED);
+            uart_puts(tr("Absolute protect activation denied (second verification failed).\n",
+                         "绝对保护激活被拒绝（二次验证未通过）。\n"));
+            uart_puts(COLOR_RESET);
+            LOG_WARN_T("Defense", "AbsoluteProtect", "Denied",
+                       "second verify result=%s", second_verify_result_str(vr));
+            audit_log("system", "defense", "absolute_protect", "activation",
+                      second_verify_result_str(vr), -1, "critical", 0);
+            return;
+        }
+    }
+
+    /* 【P5 接线】真正落地阻断：absolute_protect_trigger() → defense_mode_set(ABSOLUTE)
+     *   → execution_gate_check() 拒绝所有外部输入（safe_exec 链路随之拒绝执行）。
+     *   此前这里只打印横幅，没有任何输入被阻断。 */
+    if (absolute_protect_trigger("shell") == 0) {
+        LOG_WARN_T("Defense", "AbsoluteProtect", "Activated", "absolute protection activated");
+        audit_log("system", "defense", "absolute_protect", "activation",
+                  "success", 0, "critical", 1);
+    } else {
+        uart_puts(COLOR_RED);
+        uart_puts(tr("Failed to activate absolute protect.\n", "绝对保护激活失败。\n"));
+        uart_puts(COLOR_RESET);
+        LOG_ERROR_T("Defense", "AbsoluteProtect", "Fail", "absolute_protect_trigger failed");
+        audit_log("system", "defense", "absolute_protect", "activation",
+                  "failed", -1, "critical", 0);
+    }
 }
 
 void defense_set_anomaly_threshold(int threshold) {
@@ -149,6 +207,10 @@ int defense_get_anomaly_threshold(void) {
 void defense_show_status(void) {
     uart_puts(tr("\n=== Defense System Status ===\n", "\n=== 防御系统状态 ===\n"));
     char buf[256];
+    /* 【P5 接线】展示权威状态机模式（执行侧读的也是它） */
+    safe_snprintf(buf, sizeof(buf), tr("Current mode: %s\n", "当前模式：%s\n"),
+                  defense_mode_name(defense_mode_get()));
+    uart_puts(buf);
     safe_snprintf(buf, sizeof(buf), tr("Shadow mode: %s\n", "影子模式：%s\n"), g_shadow_mode ? "ON" : "OFF");
     uart_puts(buf);
     safe_snprintf(buf, sizeof(buf), tr("Dark mode: %s\n", "暗影模式：%s\n"), g_dark_mode ? "ON" : "OFF");
@@ -162,15 +224,36 @@ void defense_show_status(void) {
 }
 
 /* ============================================================
- * 异常检测（占位）
+ * 异常检测
+ * 【P5 修复】此前是恒真占位（无论输入如何都返回 "No anomaly detected" + 0）——
+ *   违反「禁止假数据/恒真返回」。现改为读取 src/health/behavior_monitor.c 的
+ *   真实 EWMA 评分，并与本模块阈值（defense_set_anomaly_threshold）比较：
+ *     · 评分不可得（monitor 未初始化 / app 未跟踪）→ -1「未知」，绝不当作正常
+ *     · 评分 ≥ 阈值 → 1「异常」；否则 0
  * ============================================================ */
 
 int defense_check_anomaly(const char *ai_name, const char *skill_name,
                           char *result, uint32_t result_len) {
-    (void)ai_name;
-    (void)skill_name;
-    if (result && result_len > 0) {
-        safe_snprintf(result, result_len, "No anomaly detected");
+    if (!result || result_len == 0) return -1;
+
+    const char *who = (ai_name && *ai_name) ? ai_name : "ai";
+    int score = 0;
+    int rc = behavior_monitor_get_anomaly_score(who, &score);
+    if (rc != 0) {
+        safe_snprintf(result, result_len,
+                      "Anomaly score unavailable for '%s' (monitor rc=%d)", who, rc);
+        LOG_DEBUG_T("Defense", "CheckAnomaly", "Unavailable", "app=%s rc=%d", who, rc);
+        return -1;
     }
-    return 0;
+
+    int threshold = defense_get_anomaly_threshold();
+    int anomaly = (score >= threshold);
+    safe_snprintf(result, result_len, "%s: score=%d threshold=%d skill=%s",
+                  anomaly ? "ANOMALY" : "normal", score, threshold,
+                  (skill_name && *skill_name) ? skill_name : "-");
+    LOG_INFO_T("Defense", "CheckAnomaly", anomaly ? "Anomaly" : "Normal",
+               "app=%s score=%d threshold=%d", who, score, threshold);
+    audit_log("system", "defense", "anomaly_check", who, result,
+              anomaly ? -1 : 0, anomaly ? "high" : "low", 1);
+    return anomaly ? 1 : 0;
 }

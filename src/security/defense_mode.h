@@ -40,6 +40,14 @@ defense_mode_t defense_mode_get(void);
 int defense_mode_set(defense_mode_t mode);
 
 /**
+ * @brief 强制设置防御模式（绕过降级检查；用于用户显式关闭 / 绝对保护自动关闭）
+ *        【P5 接线】此前仅 absolute_protect.c 内部 extern 声明，现公开。
+ * @param mode 目标模式
+ * @return 0 成功，-1 失败
+ */
+int defense_mode_set_force(defense_mode_t mode);
+
+/**
  * @brief 检查模式 A 是否比模式 B 等级更高
  * @param a 模式 A
  * @param b 模式 B
