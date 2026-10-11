@@ -199,7 +199,8 @@ REGISTRY_SRCS = $(SRC_DIR)/registry/registry.c \
                 $(SRC_DIR)/registry/registry_skill.c \
                 $(SRC_DIR)/registry/registry_builtin.c
 
-SECURITY_SRCS = $(SRC_DIR)/security/absolute_protect.c \
+SECURITY_SRCS = $(SRC_DIR)/security/security_wire.c \
+                $(SRC_DIR)/security/absolute_protect.c \
                 $(SRC_DIR)/security/audit.c \
                 $(SRC_DIR)/security/dark_mode.c \
                 $(SRC_DIR)/security/defense.c \
