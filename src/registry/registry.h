@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <time.h>
+#include "cJSON.h"   /* 自检报告返回 cJSON*（【2026-10-11】） */
 
 #ifdef __cplusplus
 extern "C" {
@@ -178,6 +179,12 @@ int registry_get_selfcheck_list(registry_entry_t **out, int max_count);
  * @return 0 成功，-1 失败
  */
 int registry_run_selfcheck(const char *module_name);
+
+/* 【2026-10-11 第 4 期】自检实装（此前 registry_run_selfcheck 是"not yet implemented"桩，
+ * registry_register_selfcheck 无任何调用者 = 典型"造好没接线"） */
+int registry_register_builtin_selfchecks(void);   /* 注册内置真实自检项（幂等） */
+int registry_selfcheck_run_module(const char *module);   /* 只跑某模块的自检 */
+cJSON* registry_selfcheck_report(void);           /* 全量自检报告（新分配对象） */
 
 int registry_run_all_selfchecks(void);
 #ifdef __cplusplus

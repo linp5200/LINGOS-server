@@ -37,6 +37,7 @@
 #include "lingos_config.h"
 #include "function_registry.h"   /* 【2026-10-11 第 4 期】统一调用 API + rely 依赖控制 */
 #include "event_bus.h"              /* 【2026-10-11 第 4 期】系统事件总线 */
+#include "registry.h"                /* 【2026-10-11 第 4 期】自检实装（P5） */
 #include "ai_server_protocol.h"
 #include "cJSON.h"
 #include "safe_string.h"
@@ -117,6 +118,11 @@ static int daemon_init(void) {
     /* 【2026-10-11 第 4 期】事件总线：初始化 + 审计订阅者（发布—订阅解耦） */
     event_bus_init();
     subscribe_audit_events();
+
+    /* 【2026-10-11 第 4 期/P5】自检实装：注册内置真实自检项并跑一遍
+     * （此前 registry_run_selfcheck 是桩、registry_register_selfcheck 无人调用） */
+    (void)registry_register_builtin_selfchecks();
+    (void)registry_run_all_selfchecks();
 
     nook_init();
     defense_init();

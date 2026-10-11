@@ -17,6 +17,7 @@
 #include "../config/config_core.h"
 #include "../core/version.h"
 #include "../core/event_bus.h"   /* 【2026-10-11 第 4 期】事件总线观测/发布 */
+#include "registry.h"                /* 【2026-10-11 第 4 期】自检报告 */
 #include "../lib/log_extra.h"
 #include "../common/safe_string.h"
 
@@ -292,6 +293,18 @@ static int fn_system_events(cJSON *args, cJSON **result, void *ud) {
 }
 
 /* ============================================================
+ * system.selfcheck —— 真实自检报告（配置解析/目录可写/socket/索引/审计链）
+ * ============================================================ */
+static int fn_system_selfcheck(cJSON *args, cJSON **result, void *ud) {
+    (void)args;
+    (void)ud;
+    if (!result) return API_ERR_INTERNAL;
+    (void)registry_register_builtin_selfchecks();   /* 幂等 */
+    *result = registry_selfcheck_report();
+    return *result ? API_ERR_OK : API_ERR_INTERNAL;
+}
+
+/* ============================================================
  * system.version
  * ============================================================ */
 static int fn_system_version(cJSON *args, cJSON **result, void *ud) {
@@ -339,6 +352,11 @@ void api_register_builtin_functions(void) {
         fn_debug_set_log_level, NULL,
         "设置日志级别；rely=false 时不写回配置",
         "{\"type\":\"object\",\"properties\":{\"level\":{\"type\":[\"string\",\"integer\"]}},\"required\":[\"level\"]}");
+
+    (void)api_register_function("system.selfcheck",
+        fn_system_selfcheck, NULL,
+        "运行系统自检（配置/目录/socket/注册表/审计链）",
+        "{\"type\":\"object\",\"properties\":{}}");
 
     (void)api_register_function("system.events",
         fn_system_events, NULL,

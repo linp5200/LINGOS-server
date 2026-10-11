@@ -86,6 +86,25 @@
   故结果面必须带 `calibrated` 标志，消费方（Python/规则/AI）据此判断可信度；文件头注释同步更正
 - `spatial_mapper.h/.c`：新增 `spatial_is_calibrated()` 访问器（供结果面与诊断使用）
 
+### 新增（Features · 续 5：registry 自检实装 —— P5 净清单项）
+
+- **问题**：`registry_run_selfcheck()` 是 "selfcheck callback not yet implemented" 桩；
+  `registry_register_selfcheck()` 实现了但**全库无调用者**（典型"造好没接线"）
+- **实装**（`src/registry/registry_selfcheck.c` + `registry.c`）：
+  - 内置 **5 项真实自检**（只报事实，失败不伪造通过）：
+    `config.unified_parse`（config.json 若存在必须可解析）/ `fs.run_dir_writable`（真实写探针）/
+    `daemon.socket_present`（存在且确为 socket）/ `registry.index_parse`（注册表索引可解析）/
+    `security.audit_chain`（`audit_verify()` 真链校验）
+  - `registry_run_selfcheck(module)` → 委托真实回调执行（0=通过 / -1=失败或无该模块自检项）
+  - `registry_selfcheck_report()` → 逐项 JSON 报告（id/module/status + total/passed/failed）
+  - 注册幂等（重复调用不追加）
+- **接线**：lingosd 启动注册并跑一遍；统一调用新增命令 `system.selfcheck`（可随时真机取证）
+
+### 验证（Verification · 自检）
+
+- 静态审核：`registry_selfcheck.c` / `registry.c` / `function_registry_builtin.c` / `lingosd.c`
+  `gcc -fsyntax-only -Wall -Wextra`（全量 -I）**0 warning / 0 error**
+
 ### 验证（Verification · 世界坐标）
 
 - 静态审核：`ai_visiond.c` / `spatial_mapper.c` `gcc -fsyntax-only -Wall -Wextra`（全量 -I）**0 warning / 0 error**

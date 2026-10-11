@@ -565,7 +565,17 @@ int registry_get_selfcheck_list(registry_entry_t **out, int max_count) {
 }
 
 int registry_run_selfcheck(const char *module_name) {
+    /* 【2026-10-11 第 4 期】实装：此前是 "not yet implemented" 桩；
+     * 现委托 registry_selfcheck.c 的真实回调执行（内置 5 项：配置解析/目录可写/
+     * daemon socket/注册表索引/审计链）。返回 0=全部通过，-1=有失败或该模块无自检项。 */
+    int rc;
     LOG_INFO_T("Registry", "RunSelfCheck", "Enter", "module='%s'", module_name ? module_name : "(null)");
-    LOG_DEBUG_T("Registry", "RunSelfCheck", "Stub", "selfcheck callback not yet implemented");
-    return 0;
+    if (!module_name || !module_name[0]) {
+        LOG_WARN_T("Registry", "RunSelfCheck", "NoModule", "module name required");
+        return -1;
+    }
+    (void)registry_register_builtin_selfchecks();   /* 幂等：确保内置项已注册 */
+    rc = registry_selfcheck_run_module(module_name);
+    LOG_INFO_T("Registry", "RunSelfCheck", "Done", "module='%s' rc=%d", module_name, rc);
+    return rc;
 }
