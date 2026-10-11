@@ -4354,6 +4354,32 @@ def _ai_perm_save(data: dict) -> None:
     except Exception:
         pass
 
+def _perm_gate_reply(cmd_name: str, ui_perm: str):
+    """命令面权限闸门（【2026-10-11 P2 ①】技能之外的第二类执行点）
+
+    返回 (handled, resp)：
+      · handled=True  → 调用方直接回 resp（deny=拒绝；shadow=结构正确的空数据）
+      · handled=False → 调用方正常执行命令
+    网关不可用 → 放行（fail-safe + 明确日志）——命令面不因权限模块异常而瘫痪。
+    """
+    try:
+        from permission_gateway import command_perm_gate
+        _d = command_perm_gate(ui_perm)
+    except Exception as e:
+        logger.warning("perm gate unavailable for cmd '%s' (%s) → allow (fail-safe)", cmd_name, e)
+        return False, None
+    _decision = (_d or {}).get("decision", "allow")
+    if _decision == "deny":
+        logger.warning("cmd '%s' denied by permission '%s'", cmd_name, ui_perm)
+        return True, {"status": "error", "error_type": "permission_denied",
+                      "code": "permission_denied", "perm": ui_perm,
+                      "msg": (_d or {}).get("message", "权限不足")}
+    if _decision == "shadow":
+        logger.info("cmd '%s' shadowed by permission '%s' (empty result)", cmd_name, ui_perm)
+        return True, {"status": "ok", "data": [], "count": 0, "shadow": True,
+                      "message": (_d or {}).get("message", "请求已处理。")}
+    return False, None
+
 def cmd_permission_set(perm: str = "", mode: str = "") -> dict:
     """权限模式设置——{perm,mode}"""
     if perm not in AI_PERMS:
@@ -5321,7 +5347,8 @@ def handle_client(conn, addr):
         if cmd == "vision_process":
             _reply(conn, "vision_process", cmd_vision_process(str(req.get("action", "status")))); return
         if cmd == "camera_snapshot":
-            _reply(conn, "camera_snapshot", cmd_camera_snapshot()); return
+            _pgh, _pgr = _perm_gate_reply("camera_snapshot", "camera")
+            _reply(conn, "camera_snapshot", _pgr if _pgh else cmd_camera_snapshot()); return
         # 【0.4.3 类目归位（先生 2026-09-05 定）】监控系统 monitor.*（给人看）/ AI 识别引擎 ai_vision.*（给 AI）
         # 旧 vision_*/camera_* 命令保留兼容（跛脚——历史 App/脚本仍可用），新命令族为现行
         if cmd == "monitor_status":
@@ -5329,7 +5356,9 @@ def handle_client(conn, addr):
         if cmd == "monitor_list":
             _reply(conn, "monitor_list", cmd_monitor_list()); return
         if cmd == "monitor_snapshot":
-            _reply(conn, "monitor_snapshot", cmd_monitor_snapshot(str(req.get("camera_id", "cam0")))); return
+            _pgh, _pgr = _perm_gate_reply("monitor_snapshot", "camera")
+            _reply(conn, "monitor_snapshot",
+                   _pgr if _pgh else cmd_monitor_snapshot(str(req.get("camera_id", "cam0")))); return
         if cmd == "monitor_config_get":
             _reply(conn, "monitor_config_get", cmd_monitor_config_get()); return
         if cmd == "monitor_config_set":
@@ -5339,7 +5368,8 @@ def handle_client(conn, addr):
                 str(req.get("type", "v4l2")), str(req.get("device", "/dev/video0")),
                 str(req.get("url", "")), str(req.get("cam_id", "")))); return
         if cmd == "monitor_record_start":
-            _reply(conn, "monitor_record_start", cmd_monitor_record_start(
+            _pgh, _pgr = _perm_gate_reply("monitor_record_start", "camera")
+            _reply(conn, "monitor_record_start", _pgr if _pgh else cmd_monitor_record_start(
                 str(req.get("camera_id", "cam0")), int(req.get("segment_min", 0) or 0))); return
         if cmd == "monitor_record_stop":
             _reply(conn, "monitor_record_stop", cmd_monitor_record_stop(str(req.get("camera_id", "cam0")))); return
@@ -5350,7 +5380,8 @@ def handle_client(conn, addr):
         if cmd == "ai_vision_status":
             _reply(conn, "ai_vision_status", cmd_vision_status()); return
         if cmd == "ai_vision_detect":
-            _reply(conn, "ai_vision_detect", cmd_ai_vision_detect(
+            _pgh, _pgr = _perm_gate_reply("ai_vision_detect", "camera")
+            _reply(conn, "ai_vision_detect", _pgr if _pgh else cmd_ai_vision_detect(
                 str(req.get("image_path", "")), float(req.get("threshold", 0.5) or 0.5))); return
         if cmd == "ai_vision_ocr":
             _reply(conn, "ai_vision_ocr", cmd_ai_vision_ocr(str(req.get("image_path", "")))); return
