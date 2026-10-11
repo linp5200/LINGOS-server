@@ -3,6 +3,46 @@
 版本线：发行版 0.4.3（server/app 统一——先生 2026-09-04 规范）· 内部 LN-0.4.3
 包名（新规范）：LINGOS_server_linux_v<版本>_<架构>_<allbin|sysbin|plugin>.tar.gz
 
+## [0.9.0-dev] - 2026-10-11（第 4 期 · 架构落地：统一调用 API + rely 依赖控制）
+
+> 先生 2026-09-04 方案（camera_backend 20 章 §5「通用调用 API」）落地第一件：
+> **rely 依赖控制机制**（净清单第 6 项，此前全库 0 命中）。
+> 版本线仍 **0.8.0**（先生指示未推前不升）；本地只静态审核（不编译、不链接）。
+
+### 新增（Features）
+
+- **统一调用 API**（\`src/registry/function_registry.c/.h\`）：严格按先生格式
+  \`{id, command, args, rely, return}\` → \`{id, code, message, data}\`
+  - 点分命令名注册表（同名重复注册 = 覆盖，插件热重载友好），上限 128 条
+  - 错误码：0 成功 / -1001 参数 / -1002 未注册 / -2001 执行失败 / -2002 内部 / -2003 深度超限
+  - 批量：\`{"commands":[{command,args,rely},...]}\` → data 为结果数组
+  - \`"return":"none"\` 时省略 data；每命令调用/错误计数可查
+- **rely 依赖控制**（§5.3）：
+  - 线程局部 \`suppress_dependencies\`（\`__thread\`）+ 调用深度保护（防递归爆栈）
+  - 宏 \`API_CALL_DEPENDENCY(call)\`（取值版）、\`API_CALL_DEPENDENCY_PTR\`、\`API_DEPENDENCY_BEGIN/END\`（语句块版）
+  - \`rely=false\` → 执行期置抑制位 → 被包装的依赖业务调用跳过并记 DEBUG 日志（含文件:行号）
+  - \`rely=true\`（默认）→ 正常执行；嵌套调用保持外层抑制状态
+- **内置真实命令**（\`function_registry_builtin.c\`，全部调用已存在功能，无假数据）：
+  \`api.describe\` · \`api.rely_status\` · \`config.get\` · \`config.set\` · \`debug.set_log_level\` · \`system.version\`
+  - \`config.set\`：基础动作=改内存配置（始终执行）；依赖业务=落盘（\`API_CALL_DEPENDENCY\` 包裹，rely=false 时不落盘）
+  - \`debug.set_log_level\`：基础动作=立即生效；依赖业务=写回配置（\`API_DEPENDENCY_BEGIN/END\` 包裹）
+- **lingosd 接线**：\`daemon_init\` 注册注册表与内置命令；\`handle_command\` 新增新格式分支——
+  **判据 = 请求含字符串 \`command\` 字段**，旧 \`{"cmd":...}\` 协议零改动
+- Makefile：\`REGISTRY_SRCS\` 纳入两个新源文件
+
+### 兼容（Compatibility）
+
+- 旧 v3 命令（\`{"cmd":...}\`）路径、字段、响应格式**完全不变**
+- 新格式仅新增；未注册命令返回 -1002 且消息含命令名，便于定位
+
+### 验证（Verification）
+
+- 静态审核：\`function_registry.c\` / \`function_registry_builtin.c\` / \`lingosd.c\` 等
+  \`gcc -fsyntax-only -Wall -Wextra\`（全量 \`-I\`）**0 warning / 0 error**
+- 运行时验证待真机/CI 出包（本地不编译纪律）；\`api.rely_status\` 可用于真机确认抑制计数
+
+---
+
 ## [0.8.2-dev] - 2026-10-11（第 3 期 · 配置收官：Clack 风格向导落地）
 
 > 版本线：**仍为 0.8.0**（先生 2026-10-11 指示：未推送前不升版本号，等几乎全部完成后再统一推 CI）。

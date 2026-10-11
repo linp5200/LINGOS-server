@@ -35,6 +35,7 @@
 #include "nook_idle.h"
 #include "ai_config.h"
 #include "lingos_config.h"
+#include "function_registry.h"   /* 【2026-10-11 第 4 期】统一调用 API + rely 依赖控制 */
 #include "ai_server_protocol.h"
 #include "cJSON.h"
 #include "safe_string.h"
@@ -82,6 +83,12 @@ static int daemon_init(void) {
     }
     fs_layout_init();
     api_core_init(1);  /* R1: lingosd 强制启动 WS/HTTP */
+
+    /* 【2026-10-11 第 4 期·架构落地】统一调用 API + rely 依赖控制
+     * 先生 2026-09-04 §5：{id,command,args,rely,return} → {id,code,message,data}
+     * 旧 {"cmd":...} 协议零改动——新格式仅在请求含 "command" 字段时接管 */
+    api_function_registry_init();
+    api_register_builtin_functions();
 
     nook_init();
     defense_init();
@@ -491,6 +498,31 @@ static void handle_command(int client_fd, const char *json_req) {
         LOG_WARN_T("Lingosd", "HandleCmd", "ParseFail", "invalid JSON: %s", json_req);
         send_json(client_fd, "error", NULL, "invalid JSON");
         return;
+    }
+
+    /* 【2026-10-11 第 4 期】统一调用 API（新格式）——与旧 {"cmd":...} 并肩
+     * 判据：请求含字符串 "command" 字段。旧命令走原路径，行为零变化。 */
+    {
+        cJSON *new_cmd = cJSON_GetObjectItem(json_root, "command");
+        if (cJSON_IsString(new_cmd)) {
+            cJSON *api_resp = NULL;
+            int api_rc = api_handle_request(json_root, &api_resp);
+            if (api_resp) {
+                char *api_s = cJSON_PrintUnformatted(api_resp);
+                if (api_s) {
+                    write(client_fd, api_s, strlen(api_s));
+                    write(client_fd, "\n", 1);
+                    free(api_s);
+                }
+                cJSON_Delete(api_resp);
+            } else {
+                send_json(client_fd, "error", NULL, "api request failed");
+            }
+            LOG_INFO_T("Lingosd", "HandleCmd", "ApiCall", "command='%s' rc=%d",
+                       new_cmd->valuestring, api_rc);
+            cJSON_Delete(json_root);
+            return;
+        }
     }
 
     cJSON *cmd_item = cJSON_GetObjectItem(json_root, "cmd");

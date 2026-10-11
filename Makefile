@@ -190,6 +190,8 @@ CORE_SRCS = $(SRC_DIR)/core/app_runner.c \
             $(SRC_DIR)/core/repair_mode.c
 
 REGISTRY_SRCS = $(SRC_DIR)/registry/registry.c \
+                $(SRC_DIR)/registry/function_registry.c \
+                $(SRC_DIR)/registry/function_registry_builtin.c \
                 $(SRC_DIR)/registry/registry_feature.c \
                 $(SRC_DIR)/registry/registry_plugin.c \
                 $(SRC_DIR)/registry/registry_selfcheck.c \
