@@ -165,6 +165,10 @@ const char* spatial_match_zone(double wx, double wy) {
     return NULL;
 }
 
+int spatial_is_calibrated(void) {
+    return g_calibrated ? 1 : 0;
+}
+
 void spatial_cleanup(void) {
     g_calibrated = 0;
     g_zone_count = 0;

@@ -73,6 +73,23 @@
 - `ai_server.py`：命令面相应接线
 - 验证：`python3 -m py_compile src/python/*.py src/python/plugin/*.py` **全部通过**；无 random/占位假数据
 
+### 新增（Features · 续 4：世界坐标标定链接线 —— P5 净清单项）
+
+- **问题**：`spatial_mapper`（homography 像素→世界坐标 + 区域多边形匹配）**只被旧 `visiond` 调用**；
+  上一批新拆出的 `lingos_ai_vision` 进程从不调用 → `detection_engine` 的 `world_x/world_y` 恒 0（净清单第 37 项）
+- **修复**（`src/vision/ai_visiond.c`）：
+  - 启动时 `spatial_init(&cfg)`（按 `enable_spatial_mapping` 开关；载入校准文件 + 区域划分）
+  - 每帧检测后逐结果 `spatial_map()` → 真实世界坐标（cm）
+  - 结果面 JSON 新增 `"calibrated":0/1` 与每条检测的 `"zone":"客厅"`（区域匹配，未匹配为 null）
+  - 退出时 `spatial_cleanup()`
+- **诚实标注**（先生铁律）：未标定时 `spatial_map` 内部按近似比例回退（非真实世界坐标）——
+  故结果面必须带 `calibrated` 标志，消费方（Python/规则/AI）据此判断可信度；文件头注释同步更正
+- `spatial_mapper.h/.c`：新增 `spatial_is_calibrated()` 访问器（供结果面与诊断使用）
+
+### 验证（Verification · 世界坐标）
+
+- 静态审核：`ai_visiond.c` / `spatial_mapper.c` `gcc -fsyntax-only -Wall -Wextra`（全量 -I）**0 warning / 0 error**
+
 ### 验证（Verification · 事件总线）
 
 - 静态审核：`event_bus.c` / `config_core.c` / `function_registry_builtin.c` / `lingosd.c`

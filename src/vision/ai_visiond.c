@@ -8,8 +8,9 @@
  *          二者经"帧通道 + 事件"解耦，不互相内含；叠加只是"是否把结果画上监控画面"。
  * @par     本进程职责：订阅帧通道 → detection_run → 结果发布（Unix socket，JSON）
  *          Python/技能侧经 ai_vision.latest / ai_vision.status 读取（供 AI 推理与规则触发）。
- * @par     诚实标注：历史 detection_engine 的世界坐标（world_x/world_y）在无标定时恒 0，
- *          标定链（spatial_mapper + calibration 服务）接通后才有真实坐标。
+ * @par     诚实标注：世界坐标（world_x/world_y）**已于 2026-10-11 接通标定链**——
+ *          spatial_init/spatial_map 在本进程内调用；未标定（calibrated=0）时只是近似比例，
+ *          结果面同时输出 calibrated 标志，消费方须据此判断可信度。
  */
 
 #include <stdio.h>
@@ -27,6 +28,7 @@
 #include "visiond.h"
 #include "vision_config.h"
 #include "detection_engine.h"
+#include "spatial_mapper.h"   /* 【2026-10-11】标定链：像素→世界坐标 + 区域匹配 */
 #include "../monitor/frame_channel.h"
 #include "../monitor/frame.h"
 #include "../lib/log_extra.h"
@@ -107,17 +109,25 @@ static void handle_client(int fd) {
     } else {
         /* 默认 latest：最近一帧的检测结果（AI 消费面） */
         off = snprintf(out, sizeof(out),
-            "{\"status\":\"ok\",\"data\":{\"seq\":%u,\"ts\":%ld,\"count\":%d,\"detections\":[",
-            g_last_seq, (long)g_last_ts, g_last_count);
-        for (int i = 0; i < g_last_count && off < (int)sizeof(out) - 200; i++) {
+            "{\"status\":\"ok\",\"data\":{\"seq\":%u,\"ts\":%ld,\"count\":%d,"
+            "\"calibrated\":%d,\"detections\":[",
+            g_last_seq, (long)g_last_ts, g_last_count, spatial_is_calibrated() ? 1 : 0);
+        for (int i = 0; i < g_last_count && off < (int)sizeof(out) - 260; i++) {
             char label[64];
+            char zone_esc[64];
+            const char *zone = spatial_is_calibrated()
+                             ? spatial_match_zone(g_last[i].world_x, g_last[i].world_y) : NULL;
             json_escape(g_last[i].label, label, sizeof(label));
+            if (zone) json_escape(zone, zone_esc, sizeof(zone_esc));
             off += snprintf(out + off, sizeof(out) - off,
                 "%s{\"label\":\"%s\",\"class_id\":%d,\"confidence\":%.3f,"
-                "\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"world_x\":%.1f,\"world_y\":%.1f,\"track_id\":%d}",
+                "\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"world_x\":%.1f,\"world_y\":%.1f,"
+                "\"zone\":%s%s%s,\"track_id\":%d}",
                 i ? "," : "", label, g_last[i].class_id, g_last[i].confidence,
                 g_last[i].x, g_last[i].y, g_last[i].width, g_last[i].height,
-                g_last[i].world_x, g_last[i].world_y, g_last[i].track_id);
+                g_last[i].world_x, g_last[i].world_y,
+                zone ? "\"" : "null", zone ? zone_esc : "", zone ? "\"" : "",
+                g_last[i].track_id);
         }
         off += snprintf(out + off, sizeof(out) - off, "]}}");
     }
@@ -166,6 +176,18 @@ int main(int argc, char **argv) {
     if (detection_init(&cfg) != 0) {
         LOG_ERROR_T("AiVision", "Main", "DetectionInitFail", "detection_init failed — exiting");
         return 1;
+    }
+
+    /* 【2026-10-11 第 4 期/P5】标定链接线——此前 spatial_mapper 只在旧 visiond 里被调用，
+     * 新 ai_visiond 进程从不调用 → detection_engine 的 world_x/world_y 恒 0（先生净清单项）。
+     * 现在：载入 homography + 区域划分，逐结果做像素→世界映射。 */
+    if (cfg.enable_spatial_mapping) {
+        spatial_init(&cfg);
+        LOG_INFO_T("AiVision", "Spatial", "Init", "calibrated=%d path=%s",
+                   spatial_is_calibrated(), cfg.calibration_path);
+    } else {
+        LOG_INFO_T("AiVision", "Spatial", "Disabled",
+                   "spatial mapping disabled (enable_spatial_mapping=0) — world coords stay 0");
     }
 
     /* ② 结果面 */
@@ -240,6 +262,13 @@ int main(int argc, char **argv) {
                 g_last_seq = frame.seq;
                 g_last_ts = frame.timestamp ? frame.timestamp : time(NULL);
                 if (n > 0) {
+                    /* 标定链：像素中心 → 世界坐标（未标定时 spatial_map 内部按近似比例回退，
+                     * 结果面会带 calibrated 标志，消费方据此判断可信度） */
+                    if (cfg.enable_spatial_mapping) {
+                        for (int k = 0; k < n; k++) {
+                            (void)spatial_map(&results[k]);
+                        }
+                    }
                     memcpy(g_last, results, sizeof(detection_result_t) * (size_t)n);
                     g_detections += (unsigned long long)n;
                 }
@@ -262,6 +291,7 @@ int main(int argc, char **argv) {
                g_frames, g_detections);
     if (sub) frame_channel_sub_close(sub);
     if (g_listen_fd >= 0) close(g_listen_fd);
+    spatial_cleanup();   /* 【2026-10-11】标定链资源释放 */
     unlink(AI_VISION_SOCK);
     unlink("/LINGOS/run/lingos_ai_vision.pid");
     detection_cleanup();
