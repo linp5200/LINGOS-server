@@ -119,24 +119,91 @@ def _query_permission_mode(perm_name: str):
     return None
 
 
+# =============================================================
+# 【2026-10-10 P3】影子模式两层统一 · 一期（零 C 改动）
+# -------------------------------------------------------------
+# 背景：C 端 defense_mode（有效，但执行点仅 exec_command）与 Python 网关三态
+#   （App「设置→权限」写入 ai_permissions.json）此前**互不相通**：
+#   用户在 App 开影子不影响 C 端；shell 里 system defense shadow on 也不影响网关。
+# 先生裁决（2026-10-10）：**最严优先合成** —— 任一侧影子 → 判定为影子。
+# C 端已通过 syscall permission_list 上报 defense_mode / shadow_active
+#   （src/daemon/syscall_handler.c:1480-1482），本模块读取并合成。
+# 二期（待做）：新增 defense_mode_set syscall，让 App 一处控制两层。
+# =============================================================
+_c_defense_cache = {"ts": 0.0, "defense_mode": None, "shadow_active": False, "ok": False}
+_C_DEFENSE_TTL = 5.0
+
+
+def _c_defense_state(ttl: float = _C_DEFENSE_TTL) -> dict:
+    """查询 C 端防御模式状态（TTL 缓存——避免每次技能调用都走 daemon.sock）"""
+    import time as _time
+    now = _time.time()
+    if _c_defense_cache["ok"] and (now - _c_defense_cache["ts"]) < ttl:
+        return _c_defense_cache
+    try:
+        import sys as _sys, os as _os
+        _gdir = _os.path.dirname(_os.path.abspath(__file__))
+        if _gdir not in _sys.path:
+            _sys.path.insert(0, _gdir)
+        from syscall_client import call_syscall
+        ok, res = call_syscall("permission_list", {}, timeout=5)
+        if ok:
+            data = json.loads(res) if isinstance(res, str) else res
+            inner = data.get("data", data) if isinstance(data, dict) else {}
+            if isinstance(inner, str):
+                inner = json.loads(inner or "{}")
+            if isinstance(inner, dict):
+                _c_defense_cache.update({
+                    "ts": now,
+                    "defense_mode": inner.get("defense_mode"),
+                    "shadow_active": bool(inner.get("shadow_active")),
+                    "ok": True,
+                })
+                logger.debug("C defense state: mode=%s shadow=%s",
+                             _c_defense_cache["defense_mode"], _c_defense_cache["shadow_active"])
+    except Exception as e:
+        logger.debug("C defense state query failed: %s", e)
+    return _c_defense_cache
+
+
+def c_shadow_active() -> bool:
+    """C 端当前是否处于影子模式（供最严优先合成）"""
+    return bool(_c_defense_state().get("shadow_active"))
+
+
 def is_shadow_skill(skill_name: str, risk: str = "low") -> bool:
-    """【0.6.0】该技能是否处于影子模式（执行被拦截→返回空数据）
+    """该技能是否处于影子模式（执行被拦截→返回结构正确的空数据）
 
     影子模式语义（先生定稿）：功能"看起来在工作"但不接触真实数据——
-    隐私保护与演示/审计场景用。判定顺序与 check_skill_permission 一致。
+    隐私保护与演示/审计场景用。
+
+    【2026-10-10 P3】**两层最严优先合成**：
+      ① Python 侧（App 权限设置，按权限粒度）判 shadow → 影子
+      ② C 端 defense_mode=shadow（全局）→ 有权限映射的技能一律影子
+    两处任一为真即影子；来源写入 debug 日志便于追查。
     """
     perm = SKILL_PERM_OVERRIDE.get(skill_name)
     if perm is None:
         perm = RISK_PERM_MAP.get(risk or "low")
     if not perm:
+        # 无权限映射（无副作用技能）→ 不受影子影响（保持原判语义）
         return False
+
+    py_shadow = False
     mode = _query_permission_mode(perm)
+    if mode == "shadow":
+        py_shadow = True
     # UI 映射权限（如 location_access → 用户可能只给 location 设了 shadow）
-    if mode != "shadow" and perm in _UI_PERM_MAP:
-        mode2 = _query_permission_mode(_UI_PERM_MAP[perm])
-        if mode2 == "shadow":
-            return True
-    return mode == "shadow"
+    elif perm in _UI_PERM_MAP and _query_permission_mode(_UI_PERM_MAP[perm]) == "shadow":
+        py_shadow = True
+
+    if py_shadow:
+        return True
+    # C 端全局影子（此前对 Python 技能完全不可见——"影子做成谎言"的根因）
+    if c_shadow_active():
+        logger.debug("shadow via C defense_mode for skill '%s' (perm=%s)", skill_name, perm)
+        return True
+    return False
 
 
 def build_shadow_result(skill_name: str, args: dict = None) -> str:
