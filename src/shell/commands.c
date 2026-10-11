@@ -14,9 +14,10 @@
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
+#include "lang.h"    /* 【2026-10-11】C 端双语收尾：调试命令输出 */
 
 static void run_hello(void) {
-    uart_puts("Hello from LING OS debug command!\n");
+    uart_puts(tr("Hello from LING OS debug command!\n", "你好，这是 LING OS 调试命令！\n"));
     LOG_INFO_T("DebugCmd", "Hello", "Exec", "hello command executed");
 }
 
@@ -27,16 +28,16 @@ static void run_time_test(void) {
     struct timeval tv;
 
     if (clock_gettime(CLOCK_MONOTONIC, &mono_a) != 0) {
-        uart_puts("CLOCK_MONOTONIC: FAILED\n");
+        uart_puts(tr("CLOCK_MONOTONIC: FAILED\n", "CLOCK_MONOTONIC：失败\n"));
         LOG_ERROR_T("DebugCmd", "TimeTest", "MonotonicFail", "clock_gettime failed");
         return;
     }
     if (clock_gettime(CLOCK_REALTIME, &real) != 0) {
-        uart_puts("CLOCK_REALTIME: FAILED\n");
+        uart_puts(tr("CLOCK_REALTIME: FAILED\n", "CLOCK_REALTIME：失败\n"));
         return;
     }
     if (gettimeofday(&tv, NULL) != 0) {
-        uart_puts("gettimeofday: FAILED\n");
+        uart_puts(tr("gettimeofday: FAILED\n", "gettimeofday：失败\n"));
         return;
     }
 
@@ -47,7 +48,7 @@ static void run_time_test(void) {
     long d_ns = (mono_b.tv_sec - mono_a.tv_sec) * 1000000000L
               + (mono_b.tv_nsec - mono_a.tv_nsec);
 
-    uart_puts("Time test:\n");
+    uart_puts(tr("Time test:\n", "时钟自检：\n"));
     safe_snprintf(buf, sizeof(buf), "  CLOCK_MONOTONIC : %ld.%09ld s\n",
                   (long)mono_a.tv_sec, mono_a.tv_nsec);
     uart_puts(buf);
@@ -73,30 +74,30 @@ static run_command_t commands[] = {
 
 int run_function(const char *name, int auto_load_deps) {
     if (!name || !*name) {
-        uart_puts("Error: empty function name.\n");
+        uart_puts(tr("Error: empty function name.\n", "错误：函数名为空。\n"));
         return -1;
     }
     for (int i = 0; commands[i].name; i++) {
         if (strcmp(name, commands[i].name) == 0) {
             if (commands[i].deps && !auto_load_deps) {
-                uart_puts("Function '"); uart_puts(name); uart_puts("' has deps: ");
+                uart_puts(tr("Function '", "函数 '")); uart_puts(name); uart_puts(tr("' has deps: ", "' 依赖："));
                 for (const char **d = commands[i].deps; *d; d++) {
                     uart_puts(*d); uart_puts(" ");
                 }
-                uart_puts("\nLoad automatically? (y/n) ");
+                uart_puts(tr("\nLoad automatically? (y/n) ", "\n自动加载依赖？(y/n) "));
                 char c = uart_getc(); uart_putc(c); uart_puts("\r\n");
                 if (c != 'y' && c != 'Y') {
-                    uart_puts("Aborted.\n");
+                    uart_puts(tr("Aborted.\n", "已中止。\n"));
                     return -1;
                 }
-                uart_puts("Loading deps...\n");
+                uart_puts(tr("Loading deps...\n", "正在加载依赖...\n"));
             }
-            uart_puts("Running '"); uart_puts(name); uart_puts("'...\n");
+            uart_puts(tr("Running '", "正在运行 '")); uart_puts(name); uart_puts(tr("'...\n", "'...\n"));
             commands[i].func();
-            uart_puts("Function returned.\n");
+            uart_puts(tr("Function returned.\n", "函数已返回。\n"));
             return 0;
         }
     }
-    uart_puts("Function not found: "); uart_puts(name); uart_puts("\n");
+    uart_puts(tr("Function not found: ", "未找到函数：")); uart_puts(name); uart_puts("\n");
     return -1;
 }

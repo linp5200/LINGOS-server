@@ -49,6 +49,18 @@
     Clack 向导据此显示描述、双语标题、[高级配置]、[修改需重启生效]、密钥输入掩码
   - JSON 外部清单加载器支持全部新增字段（缺省 = 0/空 = 旧行为，老三端清单零改动可继续跑）
 
+### 新增（Features · 续 2：C 端双语收尾 —— 决策 4）
+
+- **C 端用户可见文本残余双语补齐**（部署令决策 4「C 端 TUI/shell 全双语」）：
+  - `src/core/main.c`：`--help` 帮助块原仅中文 → 全部走 `tr()`（中英）
+  - `src/vision/ai_visiond.c`：用法与帧通道说明 → `tr()`（新增 `common/lang.h`、`common/safe_string.h`）
+  - `src/shell/commands.c`：调试命令输出（hello / 时钟自检 / 依赖加载询问 / 运行与返回 / 未找到函数）→ `tr()`
+  - `src/shell/system_info.c`：`Unknown` → `tr()`
+- **盘点结论（诚实）**：C 端 `tr()` 覆盖已高（shell 727 · ai 150 · core 123 · config 119 · tui 114 · security 79 · net 31 · api 22 处）；
+  机器扫描候选 45 处，其中约 20 处为 **TUI 框线/品牌横幅/纯技术串**（`CLOCK_MONOTONIC` 之类与技术符号），
+  **保持原样**——翻译会破坏等宽框线版式；剩余用户可见项本批已补齐。
+- 未引入外部翻译服务（先生要求"翻译不走 AI 烧 token"）——成对中英文由本地直接落盘。
+
 ### 兼容（Compatibility）
 
 - 旧渲染器（TUI/CLI/RAW）**零改动**、保留可回退

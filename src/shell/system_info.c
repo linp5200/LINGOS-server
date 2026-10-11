@@ -63,7 +63,7 @@ void system_debug_info_command(void) {
         }
         fclose(fp);
     } else {
-        uart_puts("Unknown\n");
+        uart_puts(tr("Unknown\n", "未知\n"));
     }
 
     // 内核版本

@@ -30,6 +30,8 @@
 #include "../monitor/frame_channel.h"
 #include "../monitor/frame.h"
 #include "../lib/log_extra.h"
+#include "../common/lang.h"          /* 【2026-10-11】C 端双语收尾 */
+#include "../common/safe_string.h"
 
 #define AI_VISION_VERSION   "LN-0.9.0"
 #define AI_VISION_SOCK      "/LINGOS/run/ai_vision.sock"
@@ -132,10 +134,15 @@ static void write_pid_file(void) {
 int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            char usage[256];
             printf("LINGOS AI vision engine %s\n", AI_VISION_VERSION);
-            printf("用法: lingos_ai_vision [--config-only]\n");
-            printf("  订阅帧通道 %s → 检测 → 结果面 %s\n",
-                   FRAME_CHANNEL_DEFAULT_PATH, AI_VISION_SOCK);
+            printf("%s\n", tr("Usage: lingos_ai_vision [--config-only]",
+                               "用法: lingos_ai_vision [--config-only]"));
+            safe_snprintf(usage, sizeof(usage),
+                          tr("  Subscribe frame channel %s -> detect -> result surface %s\n",
+                             "  订阅帧通道 %s → 检测 → 结果面 %s\n"),
+                          FRAME_CHANNEL_DEFAULT_PATH, AI_VISION_SOCK);
+            printf("%s", usage);
             return 0;
         }
     }

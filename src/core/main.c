@@ -1232,12 +1232,16 @@ int main(int argc, char **argv) {
             return 0;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf("LING OS %s\n", version_get());
-            printf("用法: lingos_linux [选项]\n");
-            printf("  --fast      快速启动（跳过非关键后台检查）\n");
-            printf("  --safe      最小启动（不含 AI 与辅助守护）\n");
-            printf("  --diagnose  诊断模式（打印环境与就绪报告后退出）\n");
-            printf("  --version   显示版本\n");
-            printf("  --help      显示帮助\n");
+            /* 【2026-10-11 C 端双语收尾】帮助文本走 tr()，中英按语言设置输出 */
+            printf("%s\n", tr("Usage: lingos_linux [options]", "用法: lingos_linux [选项]"));
+            printf("%s\n", tr("  --fast      Fast start (skip non-critical background checks)",
+                              "  --fast      快速启动（跳过非关键后台检查）"));
+            printf("%s\n", tr("  --safe      Minimal start (no AI or helper daemons)",
+                              "  --safe      最小启动（不含 AI 与辅助守护）"));
+            printf("%s\n", tr("  --diagnose  Diagnostics (print environment and readiness, then exit)",
+                              "  --diagnose  诊断模式（打印环境与就绪报告后退出）"));
+            printf("%s\n", tr("  --version   Show version", "  --version   显示版本"));
+            printf("%s\n", tr("  --help      Show this help", "  --help      显示帮助"));
             return 0;
         }
     }
