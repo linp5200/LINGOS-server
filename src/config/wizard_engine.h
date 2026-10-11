@@ -41,7 +41,17 @@ typedef struct wizard_option {
 /* ============================================================
  * 步骤定义
  * ============================================================ */
+/* ============================================================
+ * 声明式配置项（先生 2026-10-01 拍板 · 16 字段 · 三端同源渲染基础）
+ * ------------------------------------------------------------
+ * 先生原话：「插件式——类别稳定 + 组内项声明式清单；插入即出现，无步骤号」。
+ * 字段（16）：id / group / type / title双 / desc双 / options / default /
+ *            advanced / skippable / secret / validate / validate_hint双 /
+ *            requires / restart_required / order / since_version
+ * 兼容：既有 13 字段结构**只增不改**——旧代码与内置 7 步零改动。
+ * ============================================================ */
 typedef struct wizard_step_def {
+    /* ---- 既有字段（保持原样，旧调用方零改）---- */
     char id[32];
     char title_en[64];
     char title_zh[64];
@@ -55,6 +65,20 @@ typedef struct wizard_step_def {
     char next_step[32];
     char parent_step[32];
     int optional;   /* 【先生要求】快速模式跳过（1=可选——完整模式才含） */
+
+    /* ---- 【2026-10-11】声明式清单新增字段（默认 0/空 = 旧行为）---- */
+    char group[32];             /* 类别（稳定）：ai / security / network / runtime / ui / notify… */
+    char desc_en[128];          /* 长描述（双语）——解释该项用途，非标题重复 */
+    char desc_zh[128];
+    int  advanced;              /* 1 = 高级配置区（与常规交互完全一致，仅分区） */
+    int  skippable;             /* 1 = 非必要项，可直接跳过（区别于 optional：非快速模式也可跳） */
+    int  secret;                /* 1 = 私密值（输入掩码 + 落盘走值级加密 api_key_enc） */
+    char validate_hint_en[96];  /* 校验失败提示（双语） */
+    char validate_hint_zh[96];
+    char requires[64];          /* 条件显示表达式（例：ai.active == 'deepseek'） */
+    int  restart_required;      /* 1 = 改动需重启生效（UI 提示） */
+    int  order;                 /* 组内排序权重（小在前；0 = 未指定，按声明序） */
+    char since_version[16];     /* 引入版本（未来迁移用） */
 } wizard_step_def_t;
 
 /* ============================================================
