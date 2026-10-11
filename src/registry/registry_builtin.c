@@ -52,6 +52,18 @@ static const builtin_module_t BUILTIN[] = {
     {"ocr",          "识别引擎",     "文字识别（AI 内容）",           REG_TYPE_COMPONENT, "bin/ocr_service.py"},
     /* 天气 */
     {"weather",  "天气系统",   "天气数据/源切换",                    REG_TYPE_COMPONENT, NULL},
+    /* 【2026-10-11 第 4 期·registry 全量】补齐实际存在但未登记的子系统
+     * ——目标：App/Web/Qt/插件经统一 API 能发现全部系统（先生"一切功能进 registry"） */
+    {"vision",   "视觉系统",   "视频流/存储/NVR/重流（非 AI 部分）",  REG_TYPE_MODULE,    "src/python/nvr_ext.py"},
+    {"storage",  "存储系统",   "录像/快照/磁盘/生命周期管理",         REG_TYPE_COMPONENT, "src/python/nvr_ext.py"},
+    {"rules",    "规则系统",   "规则引擎/条件动作/联动",             REG_TYPE_MODULE,    "bin/lingos_linux"},
+    {"mqtt",     "物联系统",   "MQTT 上报/订阅/HA 同步",            REG_TYPE_MODULE,    "bin/lingosd"},
+    {"update",   "更新系统",   "升级检查/下载/签名校验/回滚",         REG_TYPE_COMPONENT, "bin/lingos-upgrade"},
+    {"install",  "安装系统",   "依赖/模型/venv/引导安装",            REG_TYPE_COMPONENT, "bin/lingos_linux"},
+    {"repair",   "修复系统",   "自检/修复/策略执行",                 REG_TYPE_COMPONENT, "src/python/repair_engine.py"},
+    {"memory",   "记忆系统",   "三级记忆/检索/压缩",                 REG_TYPE_COMPONENT, "src/python/memory_pipeline.py"},
+    {"api",      "统一调用API", "命令注册表/rely 依赖控制/OpenAPI",   REG_TYPE_COMPONENT, "bin/lingosd"},
+    {"ui",       "界面系统",   "App/Web/Qt 前端与主题",             REG_TYPE_COMPONENT, "webui/index.html"},
 };
 
 #define BUILTIN_N ((int)(sizeof(BUILTIN) / sizeof(BUILTIN[0])))

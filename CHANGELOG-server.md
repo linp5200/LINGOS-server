@@ -100,6 +100,15 @@
   - 注册幂等（重复调用不追加）
 - **接线**：lingosd 启动注册并跑一遍；统一调用新增命令 `system.selfcheck`（可随时真机取证）
 
+### 新增（Features · 续 6：registry 全量登记 —— P4）
+
+- `registry_builtin.c` 内置系统清单 **16 → 27 条**：补登实际存在但未进的子系统——
+  `vision`（视觉/存储/NVR 非 AI 部分）· `storage` · `rules` · `mqtt` · `update` · `install` ·
+  `repair` · `memory` · `api`（统一调用/rely/OpenAPI）· `ui`
+- 目的（先生裁决"一切功能进 registry"）：App/Web/Qt/插件经统一 API 可发现全部系统；
+  `registry_register_builtin_modules()` 启动路径已有真实调用者（`core/background_init.c:44`）
+- 验证：`registry_builtin.c` `gcc -fsyntax-only -Wall -Wextra` **0 warning / 0 error**
+
 ### 验证（Verification · 自检）
 
 - 静态审核：`registry_selfcheck.c` / `registry.c` / `function_registry_builtin.c` / `lingosd.c`
