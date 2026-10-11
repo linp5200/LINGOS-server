@@ -9,7 +9,7 @@
 # ================================================================
 # 【0.6.0】全量打包（先生：完整系统全打包，哪个好用用哪个）
 #   三内核守护随主包构建：alertd=预警生命线 / visiond=视觉内核 / voiced=语音内核
-TARGETS = lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision
+TARGETS = lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision lingosctl
 
 all: $(TARGETS) install_python_script
 
@@ -492,6 +492,11 @@ lingos_linux: $(CORE_FULL) $(INTERFACE) $(MAIN_SRCS)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(TUI_LDFLAGS)
 
 # 守护进程：不包含界面和渲染器
+# 【2026-10-11 第 4 期】统一调用 API 命令行客户端（先生 P5：OpenAPI + SDK + CLI）
+# 只依赖 cJSON + libc（不引入任何服务端模块），可独立编译/分发
+lingosctl: $(SRC_DIR)/lib/cJSON/cJSON.c tools/lingosctl.c
+	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ -lm
+
 lingosd: $(CORE_DAEMON_FULL) $(DAEMON_MAIN_SRCS) $(HTTP_SRCS)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS)
 

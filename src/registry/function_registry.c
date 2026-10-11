@@ -147,6 +147,76 @@ cJSON* api_describe_commands(const char *filter) {
 }
 
 /* ============================================================
+ * OpenAPI 3.0 描述生成（先生 P5：OpenAPI + SDK + CLI）
+ *   —— 由注册表实时生成，命令增删即反映到文档；schemas 取自各命令的 schema 字符串
+ * ============================================================ */
+cJSON* api_openapi_spec(void) {
+    cJSON *doc = cJSON_CreateObject();
+    cJSON *paths;
+    cJSON *components, *schemas, *envelope;
+    int i;
+    if (!doc) return NULL;
+
+    cJSON_AddStringToObject(doc, "openapi", "3.0.3");
+    {
+        cJSON *info = cJSON_CreateObject();
+        cJSON_AddStringToObject(info, "title", "LINGOS Unified API");
+        cJSON_AddStringToObject(info, "version", "1.0.0");
+        cJSON_AddStringToObject(info, "description",
+            "LINGOS 统一调用 API（先生 2026-09-04 方案）：POST {id,command,args,rely,return} -> {id,code,message,data}");
+        cJSON_AddItemToObject(doc, "info", info);
+    }
+    paths = cJSON_CreateArray();
+    for (i = 0; i < g_function_count; i++) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON *args_schema = NULL;
+        cJSON_AddStringToObject(item, "command", g_functions[i].name);
+        cJSON_AddStringToObject(item, "description", g_functions[i].description);
+        if (g_functions[i].schema[0] != '\0') {
+            args_schema = cJSON_Parse(g_functions[i].schema);
+        }
+        cJSON_AddItemToObject(item, "args_schema",
+                              args_schema ? args_schema : cJSON_CreateObject());
+        cJSON_AddNumberToObject(item, "calls", (double)g_functions[i].call_count);
+        cJSON_AddNumberToObject(item, "errors", (double)g_functions[i].error_count);
+        cJSON_AddItemToArray(paths, item);
+    }
+    cJSON_AddItemToObject(doc, "commands", paths);
+
+    components = cJSON_CreateObject();
+    schemas = cJSON_CreateObject();
+    envelope = cJSON_CreateObject();
+    cJSON_AddStringToObject(envelope, "type", "object");
+    {
+        cJSON *props = cJSON_CreateObject();
+        cJSON *idp = cJSON_CreateObject();
+        cJSON_AddStringToObject(idp, "description", "客户端请求 ID（原样回显）");
+        cJSON_AddItemToObject(props, "id", idp);
+        {
+            cJSON *codep = cJSON_CreateObject();
+            cJSON_AddStringToObject(codep, "type", "integer");
+            cJSON_AddStringToObject(codep, "description", "0=成功；-1001 参数；-1002 未注册；-2001 执行失败；-2002 内部；-2003 深度超限");
+            cJSON_AddItemToObject(props, "code", codep);
+        }
+        {
+            cJSON *msgp = cJSON_CreateObject();
+            cJSON_AddStringToObject(msgp, "type", "string");
+            cJSON_AddItemToObject(props, "message", msgp);
+        }
+        {
+            cJSON *datap = cJSON_CreateObject();
+            cJSON_AddStringToObject(datap, "description", "命令返回值（return=none 时省略）");
+            cJSON_AddItemToObject(props, "data", datap);
+        }
+        cJSON_AddItemToObject(envelope, "properties", props);
+    }
+    cJSON_AddItemToObject(schemas, "Envelope", envelope);
+    cJSON_AddItemToObject(components, "schemas", schemas);
+    cJSON_AddItemToObject(doc, "components", components);
+    return doc;
+}
+
+/* ============================================================
  * 统一调用
  * ============================================================ */
 const char* api_code_message(int code) {

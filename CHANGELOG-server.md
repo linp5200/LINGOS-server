@@ -49,6 +49,18 @@
 - Makefile：`CORE_SRCS` 纳入 `core/event_bus.c`
 - 顺带修复：本文件此前 70 处转义残留（写入时带出的反斜杠）已清理
 
+### 新增（Features · 续 2：OpenAPI 描述 + lingosctl 客户端 —— 先生 P5「OpenAPI+SDK+CLI」）
+
+- `api_openapi_spec()`：由注册表**实时生成** OpenAPI 3.0 描述（命令增删自动反映）；
+  统一调用命令 `api.openapi` 输出该文档（含每命令参数 schema、调用/错误计数、Envelope schema）
+- `tools/lingosctl.c`：统一调用 API 的 **CLI 客户端**
+  - 用法：`lingosctl config.set key_path=language value=zh --rely=false`
+  - `--list`（=api.describe）/ `--openapi` / `--raw` / `--json` / `--socket` / `--id`
+  - `key=value` 自动类型推断（bool/数字/JSON/字符串）；退出码 0/1/2 = 成功/API 错误/连接错误
+  - 只依赖 cJSON + libc，可独立编译与分发
+- Makefile：新增 `lingosctl` 目标并纳入 `TARGETS`；`scripts/bundle.sh` 四处二进制清单同步（随包分发）
+- 观测闭环：`api.describe`（清单）→ `api.openapi`（文档）→ `lingosctl`（调用）→ `api.rely_status`/`system.events`（观测）
+
 ### 验证（Verification · 事件总线）
 
 - 静态审核：`event_bus.c` / `config_core.c` / `function_registry_builtin.c` / `lingosd.c`

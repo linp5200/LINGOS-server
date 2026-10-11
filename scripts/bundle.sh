@@ -36,7 +36,7 @@ mkdir -p "$DEST"/{lib,python,bin}
 
 # ---------- 1. 复制二进制 ----------
 # 【0.6.0】全量：主三件 + 三内核守护（alertd=生命线/visiond/voiced）
-for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision; do
+for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision lingosctl; do
     if [ -x "$ROOT/$bin" ]; then
         cp -a "$ROOT/$bin" "$DEST/"
         echo "==> 复制二进制: $bin"
@@ -73,7 +73,7 @@ collect_recursive() {
     done
 }
 
-for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision; do
+for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision lingosctl; do
     [ -x "$DEST/$bin" ] && collect_recursive "$DEST/$bin"
 done
 
@@ -207,6 +207,8 @@ echo "==> 目录骨架已建: $TARGET"
 # 2) 复制二进制/库/venv/webui（保留可执行位）
 # 【0.6.0】全量：主三件 + 三内核守护（缺失时软跳过——兼容旧包）
 cp -a "$DIR"/lingos_linux "$DIR"/lingosd "$DIR"/lingos_supervisor "$TARGET/bin/" 2>/dev/null || true
+# 【2026-10-11 第 4 期】统一调用 API 客户端（工具，非常驻守护）
+[ -f "$DIR/lingosctl" ] && cp -a "$DIR/lingosctl" "$TARGET/bin/" 2>/dev/null || true
 for _daemon in lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision; do
   [ -f "$DIR/$_daemon" ] && cp -a "$DIR/$_daemon" "$TARGET/bin/" 2>/dev/null || true
 done
@@ -284,7 +286,7 @@ fi
 SYS_PKG="LINGOS_server_linux_v${VER}_${ARCH}_sysbin"
 SYS_DEST="$OUT/$SYS_PKG"
 mkdir -p "$SYS_DEST" "$SYS_DEST/share/webui"
-for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision; do
+for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision lingosctl; do
     [ -f "$DEST/$bin" ] && cp -a "$DEST/$bin" "$SYS_DEST/"
 done
 cp -a "$ROOT"/src/python/*.py "$SYS_DEST/" 2>/dev/null || true

@@ -138,6 +138,17 @@ static int fn_api_describe(cJSON *args, cJSON **result, void *ud) {
 }
 
 /* ============================================================
+ * api.openapi —— 实时 OpenAPI 3.0 描述（供 SDK/CLI/文档生成）
+ * ============================================================ */
+static int fn_api_openapi(cJSON *args, cJSON **result, void *ud) {
+    (void)args;
+    (void)ud;
+    if (!result) return API_ERR_INTERNAL;
+    *result = api_openapi_spec();
+    return *result ? API_ERR_OK : API_ERR_INTERNAL;
+}
+
+/* ============================================================
  * api.rely_status —— 依赖控制状态（验证 rely 是否真的生效）
  * ============================================================ */
 static int fn_rely_status(cJSON *args, cJSON **result, void *ud) {
@@ -303,6 +314,11 @@ void api_register_builtin_functions(void) {
         fn_api_describe, NULL,
         "列出已注册命令（可选 command 过滤）",
         "{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}}}");
+
+    (void)api_register_function("api.openapi",
+        fn_api_openapi, NULL,
+        "OpenAPI 3.0 描述（由注册表实时生成）",
+        "{\"type\":\"object\",\"properties\":{}}");
 
     (void)api_register_function("api.rely_status",
         fn_rely_status, NULL,

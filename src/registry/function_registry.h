@@ -91,6 +91,7 @@ int  api_unregister_function(const char *name);
 api_function_entry_t* api_find_function(const char *name);
 int  api_function_count(void);
 cJSON* api_describe_commands(const char *filter);   /* 新分配数组，调用者 cJSON_Delete */
+cJSON* api_openapi_spec(void);                      /* OpenAPI 3.0 描述（新分配对象） */
 
 /* ============================================================
  * 统一调用 API
