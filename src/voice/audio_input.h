@@ -20,6 +20,10 @@ typedef struct {
     time_t timestamp;
 } audio_frame_t;
 
+/* 【2026-10-11 P1】采集身份（麦克风权限闸门用；默认 "voiced"） */
+void audio_set_app_id(const char *app_id);
+const char *audio_get_app_id(void);
+
 int audio_init(const voice_config_t *config);
 int audio_capture(audio_frame_t *frame);
 void audio_feedback_beep(void);

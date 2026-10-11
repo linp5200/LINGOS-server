@@ -481,12 +481,16 @@ int permission_whitelist_seed_defaults(void) {
     static const permission_type_t VISIOND_PERMS[] = { PERM_CAMERA, PERM_FILE_WRITE };
     /* ③ 语音守护——麦克风 */
     static const permission_type_t VOICED_PERMS[] = { PERM_MICROPHONE, PERM_FILE_WRITE };
+    /* ④ 监控系统守护（2026-10-10 拆分为独立进程）——摄像头采集 + 快照/录像落盘 */
+    static const permission_type_t MONITOR_PERMS[] = { PERM_CAMERA, PERM_FILE_READ, PERM_FILE_WRITE };
 
     int n = 0;
     n += wl_seed_app("ai",      "AI Agent (daemon.sock exec plane)", AI_PERMS,
                      (int)(sizeof(AI_PERMS) / sizeof(AI_PERMS[0])));
-    n += wl_seed_app("visiond", "vision daemon (camera capture)",    VISIOND_PERMS,
+    n += wl_seed_app("visiond", "vision daemon (legacy camera capture)", VISIOND_PERMS,
                      (int)(sizeof(VISIOND_PERMS) / sizeof(VISIOND_PERMS[0])));
+    n += wl_seed_app("monitor", "monitor daemon (camera capture + storage)", MONITOR_PERMS,
+                     (int)(sizeof(MONITOR_PERMS) / sizeof(MONITOR_PERMS[0])));
     n += wl_seed_app("voiced",  "voice daemon (microphone)",         VOICED_PERMS,
                      (int)(sizeof(VOICED_PERMS) / sizeof(VOICED_PERMS[0])));
     pthread_mutex_unlock(&g_whitelist_lock);

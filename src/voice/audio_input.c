@@ -12,6 +12,7 @@
  */
 
 #include "audio_input.h"
+#include "../security/permission_check.h"   /* 【2026-10-11 P1】设备权限闸门（麦克风） */
 #include "../common/error_report.h"
 #include "../common/safe_string.h"
 #include "../common/lang.h"
@@ -27,6 +28,19 @@
 
 static int g_audio_initialized = 0;
 static int g_audio_device_ok = 0;      /* 真实设备可用性 */
+/* 【2026-10-11 P1 设备执行点】采集身份（麦克风权限闸门用）
+ *   默认 "voiced"——白名单播种含 PERM_MICROPHONE；其他进程可 audio_set_app_id() 声明。 */
+static char g_audio_app_id[32] = "voiced";
+
+void audio_set_app_id(const char *app_id) {
+    if (!app_id || !app_id[0]) return;
+    safe_strncpy(g_audio_app_id, app_id, sizeof(g_audio_app_id));
+    LOG_INFO_T("Audio", "AppId", "Set", "microphone permission app_id = %s", g_audio_app_id);
+}
+
+const char *audio_get_app_id(void) {
+    return g_audio_app_id;
+}
 static char g_audio_device[128] = {0};
 static int g_audio_sample_rate = 16000;
 static FILE *g_rec_pipe = NULL;        /* arecord 管道 */
@@ -41,6 +55,16 @@ int audio_init(const voice_config_t *config) {
 
     safe_strncpy(g_audio_device, config->device_path, sizeof(g_audio_device));
     g_audio_sample_rate = config->sample_rate > 0 ? config->sample_rate : 16000;
+
+    /* 【2026-10-11 P1 设备执行点】麦克风权限闸门（此前 permission_check_device 零调用点之一）
+     *   fail-closed：无 MICROPHONE 权限 → 拒绝初始化（采集恒失败，绝不静默放行）。 */
+    if (!permission_check_device(g_audio_app_id, "mic")) {
+        g_audio_initialized = 0;
+        g_audio_device_ok = 0;
+        LOG_WARN_T("Audio", "Init", "Denied",
+                   "%s lacks MICROPHONE permission — audio init refused (fail-closed)", g_audio_app_id);
+        return -1;
+    }
 
     /* 【0.7.0-hf2】真实设备检测（ALSA 声卡 + arecord 工具） */
     {
