@@ -22,6 +22,7 @@ typedef enum {
     RENDERER_TYPE_TUI = 0,
     RENDERER_TYPE_CLI = 1,
     RENDERER_TYPE_RAW = 2,
+    RENDERER_TYPE_CLACK = 3,   /* 【2026-10-11 先生方案 A 定稿】Clack 风格（◆◇│└） */
     RENDERER_TYPE_COUNT
 } renderer_type_t;
 
@@ -63,6 +64,7 @@ typedef struct renderer_ctx {
 int renderer_tui_create(renderer_ctx_t *ctx);
 int renderer_cli_create(renderer_ctx_t *ctx);
 int renderer_raw_create(renderer_ctx_t *ctx);
+int renderer_clack_create(renderer_ctx_t *ctx);
 int renderer_create(renderer_type_t type, renderer_ctx_t *ctx);
 
 /* ============================================================

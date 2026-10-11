@@ -1415,19 +1415,20 @@ int main(int argc, char **argv) {
         const char *term = getenv("TERM");
         int has_tty = (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)
                        && term && strstr(term, "xterm"));
-        int want_tui = !(wiz_mode && strcmp(wiz_mode, "cli") == 0)
-                       && !(wiz_mode && strcmp(wiz_mode, "raw") == 0)
-                       && (has_tty || (wiz_mode && strcmp(wiz_mode, "tui") == 0));
-        int use_cli_first = !want_tui;
+        /* 【2026-10-11 先生方案 A 定稿】配置向导默认 Clack 风格（◆◇│└ · 无步骤号）；
+         * LINGOS_WIZARD=tui/cli/raw/clack 可强制；TUI 仍需真终端。 */
+        int wiz_renderer = RENDERER_TYPE_CLACK;
+        if (wiz_mode && strcmp(wiz_mode, "raw") == 0)      wiz_renderer = RENDERER_TYPE_RAW;
+        else if (wiz_mode && strcmp(wiz_mode, "cli") == 0) wiz_renderer = RENDERER_TYPE_CLI;
+        else if (wiz_mode && strcmp(wiz_mode, "tui") == 0 && has_tty) wiz_renderer = RENDERER_TYPE_TUI;
+        else if (wiz_mode && strcmp(wiz_mode, "clack") == 0) wiz_renderer = RENDERER_TYPE_CLACK;
 
-        if (wizard_engine_init(&wiz_ctx, use_cli_first ? RENDERER_TYPE_CLI : RENDERER_TYPE_TUI) == 0) {
+        if (wizard_engine_init(&wiz_ctx, wiz_renderer) == 0) {
             if (wizard_engine_load_steps(&wiz_ctx) == 0) {
                 /* 【2026-10-02 修复】改用公共交互循环——原 wizard_engine_run()
                  * 为空壳（仅重置状态），导致"选 n 后直接显示配置完成"（先生取证）。
                  * 现与 shell `config` 命令共用同一完整循环（渲染→读入→流转→保存）。 */
-                int wiz_ret = wizard_engine_run_interactive(
-                    &wiz_ctx,
-                    use_cli_first ? RENDERER_TYPE_CLI : RENDERER_TYPE_TUI, 0);
+                int wiz_ret = wizard_engine_run_interactive(&wiz_ctx, wiz_renderer, 0);
                 if (wiz_ret == 0) {
                     /* 配置保存后重新加载语言 */
                     lang_reload();

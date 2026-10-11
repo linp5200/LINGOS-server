@@ -26,6 +26,7 @@ static const char* debug_mode_to_display(renderer_type_t mode) {
         case RENDERER_TYPE_TUI: return "TUI";
         case RENDERER_TYPE_CLI: return "CLI";
         case RENDERER_TYPE_RAW: return "RAW";
+        case RENDERER_TYPE_CLACK: return "CLACK";
         default: return "UNKNOWN";
     }
 }

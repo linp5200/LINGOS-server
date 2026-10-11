@@ -373,6 +373,7 @@ CONFIG_CORE_SRCS = $(SRC_DIR)/config/config_core.c \
 
 CONFIG_RENDER_SRCS = $(SRC_DIR)/config/config_renderer.c \
                      $(TUI_RENDERER_SRCS) \
+                     $(SRC_DIR)/config/config_renderer_clack.c \
                      $(SRC_DIR)/config/config_renderer_cli.c \
                      $(SRC_DIR)/config/config_renderer_raw.c \
                      $(SRC_DIR)/config/config_debug.c

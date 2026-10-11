@@ -3,6 +3,42 @@
 版本线：发行版 0.4.3（server/app 统一——先生 2026-09-04 规范）· 内部 LN-0.4.3
 包名（新规范）：LINGOS_server_linux_v<版本>_<架构>_<allbin|sysbin|plugin>.tar.gz
 
+## [0.8.2-dev] - 2026-10-11（第 3 期 · 配置收官：Clack 风格向导落地）
+
+> 版本线：**仍为 0.8.0**（先生 2026-10-11 指示：未推送前不升版本号，等几乎全部完成后再统一推 CI）。
+> 本条目 = 第 3 期（配置收官）本批：声明式清单 16 字段（`eb04d6f`，已提交）+ Clack 渲染器落地。
+> 本地纪律：不编译（禁 make/链接），仅 `gcc -fsyntax-only -Wall -Wextra` 静态审核零警告。
+
+### 新增（Features）
+
+- **Clack 风格配置渲染器**（先生方案 A 定稿）：`src/config/config_renderer_clack.c` + `.h`
+  - 符号体系：`◆` 当前块 / `│` 引导线 / `└` 块结束 / `√` 完成 / `▲` 错误 / `●○` 选项
+  - 分隔符：`#` = 未确认块，`##` = 已确认块（绿色），**非层级**
+  - **无步骤编号、无"还剩几步"计数**（先生明确要求）
+  - 动画：标题打字机（每步只播一次）、呼吸光标、保存 spinner（非 TTY 自动关闭）
+  - 全量重绘（清块重画，不刷屏）；已确认块历史累积显示
+  - 交互：方向键 ↑/↓ 移动、数字键跳转、`^A/^L/^R/^Q` 与旧渲染器同语义、`Esc` 返回上一步
+  - 终端 raw 模式逐键读取；`atexit` + cleanup 双保险还原（退出后终端不残留无回显状态）
+  - 声明式字段呈现：`desc`（双语）/ `advanced` / `skippable` / `secret`（输入掩码）/
+    `restart_required` / `default`（默认项高亮 = 回车采用默认）
+  - 非 TTY / 管道：自动退化为纯文本行输入（无 ANSI、无动画），不阻塞向导
+- 渲染器类型新增 `RENDERER_TYPE_CLACK = 3`；工厂 / 字符串映射（`"clack"`）/ 调试显示同步
+- 质量链：`TUI(0) > CLACK(3) > CLI(1) > RAW(2)`——`renderer_type_next/prev` 改为显式链
+- 向导默认渲染器 = **CLACK**（`main.c` 启动路径与 `shell.c` `system configuration`）；
+  `LINGOS_WIZARD=clack|tui|cli|raw` 可强制；命令行 `--clack/--tui/--cli/--raw/--auto/--quick` 保留
+- 降级链改为 `TUI→CLACK→CLI→RAW`（任一环创建失败逐级回退，向导不会因渲染器不可用而中断）
+
+### 兼容（Compatibility）
+
+- 旧渲染器（TUI/CLI/RAW）**零改动**、保留可回退
+- 枚举只增不改：`CLACK = 3` 追加在末尾，既有 `0=TUI 1=CLI 2=RAW` 的数值语义与持久化含义不变
+- 空输入语义与 CLI 渲染器对齐（回车交回引擎"采用默认/提示尚未选择"，5 次空回车触发自动降级）
+
+### 验证（Verification）
+
+- 静态审核：6 个改动文件 + 新增文件 `gcc -fsyntax-only -Wall -Wextra`（全量 `-I`）**0 warning / 0 error**
+- 未编译、未链接、未推送、未触发 CI（遵守先生"几乎全部完成后再跑 CI"纪律）
+
 ---
 
 ## [0.8.0] - 2026-10-10（全量修复批次 + 版本载体落定）

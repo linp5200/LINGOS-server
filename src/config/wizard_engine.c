@@ -473,26 +473,34 @@ int wizard_engine_run_interactive(wizard_engine_ctx_t *ctx, int renderer_type, i
 
     renderer_ctx_t renderer;
 
-    /* ---- 创建渲染器（带降级链 TUI→CLI→RAW） ---- */
+    /* ---- 创建渲染器（【2026-10-11】降级链 TUI→CLACK→CLI→RAW，先生方案 A） ---- */
     int renderer_ret = -1;
     if (renderer_type == RENDERER_TYPE_TUI) {
         renderer_ret = renderer_tui_create(&renderer);
         if (renderer_ret != 0) {
-            uart_puts(tr("TUI not available, falling back to CLI.\n",
-                         "TUI 不可用，降级到 CLI。\n"));
-            renderer_type = RENDERER_TYPE_CLI;
-            renderer_ret = renderer_cli_create(&renderer);
+            uart_puts(tr("TUI not available, falling back to Clack.\n",
+                         "TUI 不可用，降级到 Clack。\n"));
+            renderer_type = RENDERER_TYPE_CLACK;
         }
-    } else if (renderer_type == RENDERER_TYPE_RAW) {
-        renderer_ret = renderer_raw_create(&renderer);
-    } else {
+    }
+    if (renderer_ret != 0 && renderer_type == RENDERER_TYPE_CLACK) {
+        renderer_ret = renderer_clack_create(&renderer);
+        if (renderer_ret != 0) {
+            uart_puts(tr("Clack not available, falling back to CLI.\n",
+                         "Clack 不可用，降级到 CLI。\n"));
+            renderer_type = RENDERER_TYPE_CLI;
+        }
+    }
+    if (renderer_ret != 0 && renderer_type == RENDERER_TYPE_CLI) {
         renderer_ret = renderer_cli_create(&renderer);
         if (renderer_ret != 0) {
             uart_puts(tr("CLI not available, falling back to RAW.\n",
                          "CLI 不可用，降级到 RAW。\n"));
             renderer_type = RENDERER_TYPE_RAW;
-            renderer_ret = renderer_raw_create(&renderer);
         }
+    }
+    if (renderer_ret != 0 && renderer_type == RENDERER_TYPE_RAW) {
+        renderer_ret = renderer_raw_create(&renderer);
     }
     if (renderer_ret != 0) {
         uart_puts(tr("Failed to create renderer.\n", "创建渲染器失败。\n"));

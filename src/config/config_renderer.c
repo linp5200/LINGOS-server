@@ -9,6 +9,7 @@
 #include "config_renderer_tui.h"
 #include "config_renderer_cli.h"
 #include "config_renderer_raw.h"
+#include "config_renderer_clack.h"
 #include "../common/safe_string.h"
 #include "../lib/log_extra.h"
 #include <string.h>
@@ -31,6 +32,9 @@ int renderer_create(renderer_type_t type, renderer_ctx_t *ctx) {
         case RENDERER_TYPE_RAW:
             safe_strncpy(ctx->name, "raw", sizeof(ctx->name));
             return renderer_raw_impl_create(ctx);
+        case RENDERER_TYPE_CLACK:
+            safe_strncpy(ctx->name, "clack", sizeof(ctx->name));
+            return renderer_clack_impl_create(ctx);
         default:
             LOG_ERROR_T("Renderer", "Create", "Invalid", "unknown type %d", type);
             return -1;
@@ -49,6 +53,10 @@ int renderer_raw_create(renderer_ctx_t *ctx) {
     return renderer_create(RENDERER_TYPE_RAW, ctx);
 }
 
+int renderer_clack_create(renderer_ctx_t *ctx) {
+    return renderer_create(RENDERER_TYPE_CLACK, ctx);
+}
+
 void renderer_destroy(renderer_ctx_t *ctx) {
     if (!ctx) return;
     if (ctx->cleanup) ctx->cleanup(ctx);
@@ -63,6 +71,7 @@ const char* renderer_type_to_string(renderer_type_t type) {
         case RENDERER_TYPE_TUI: return "tui";
         case RENDERER_TYPE_CLI: return "cli";
         case RENDERER_TYPE_RAW: return "raw";
+        case RENDERER_TYPE_CLACK: return "clack";
         default: return "unknown";
     }
 }
@@ -72,19 +81,28 @@ int renderer_type_from_string(const char *str) {
     if (strcmp(str, "tui") == 0) return RENDERER_TYPE_TUI;
     if (strcmp(str, "cli") == 0) return RENDERER_TYPE_CLI;
     if (strcmp(str, "raw") == 0) return RENDERER_TYPE_RAW;
+    if (strcmp(str, "clack") == 0) return RENDERER_TYPE_CLACK;
     return -1;
 }
 
+/* 【2026-10-11】质量链：TUI(0) > CLACK(3) > CLI(1) > RAW(2)
+ * next() = 降级（自动降级链 / 渲染异常兜底），prev() = 升级。数值不再线性递增。 */
 int renderer_type_next(renderer_type_t type) {
-    int next = (int)type + 1;
-    if (next >= RENDERER_TYPE_COUNT) return -1;
-    return next;
+    switch (type) {
+        case RENDERER_TYPE_TUI:   return RENDERER_TYPE_CLACK;
+        case RENDERER_TYPE_CLACK: return RENDERER_TYPE_CLI;
+        case RENDERER_TYPE_CLI:   return RENDERER_TYPE_RAW;
+        default: return -1;   /* RAW 已是最低级 */
+    }
 }
 
 int renderer_type_prev(renderer_type_t type) {
-    int prev = (int)type - 1;
-    if (prev < 0) return -1;
-    return prev;
+    switch (type) {
+        case RENDERER_TYPE_RAW:   return RENDERER_TYPE_CLI;
+        case RENDERER_TYPE_CLI:   return RENDERER_TYPE_CLACK;
+        case RENDERER_TYPE_CLACK: return RENDERER_TYPE_TUI;
+        default: return -1;   /* TUI 已是最高级 */
+    }
 }
 
 int renderer_type_valid(renderer_type_t type) {

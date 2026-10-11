@@ -1468,13 +1468,15 @@ static int handle_builtin_command(const char *cmd) {
         }
         const char *effective_args = clean_args;
 
-        /* ---- 渲染器类型判断 ---- */
-        int renderer_type = RENDERER_TYPE_TUI;
-        if (strcmp(effective_args, "--cli") == 0) renderer_type = RENDERER_TYPE_CLI;
+        /* ---- 渲染器类型判断（【2026-10-11】先生方案 A：默认 Clack 风格） ---- */
+        int renderer_type = RENDERER_TYPE_CLACK;
+        if (strcmp(effective_args, "--tui") == 0) renderer_type = RENDERER_TYPE_TUI;
+        else if (strcmp(effective_args, "--cli") == 0) renderer_type = RENDERER_TYPE_CLI;
         else if (strcmp(effective_args, "--raw") == 0) renderer_type = RENDERER_TYPE_RAW;
-        else if (strcmp(effective_args, "--auto") == 0) renderer_type = RENDERER_TYPE_CLI;
-        else if (strcmp(effective_args, "--quick") == 0 || strcmp(effective_args, "") == 0) renderer_type = RENDERER_TYPE_TUI;
-        else renderer_type = RENDERER_TYPE_TUI;
+        else if (strcmp(effective_args, "--clack") == 0) renderer_type = RENDERER_TYPE_CLACK;
+        else if (strcmp(effective_args, "--auto") == 0) renderer_type = RENDERER_TYPE_CLACK;
+        else if (strcmp(effective_args, "--quick") == 0 || strcmp(effective_args, "") == 0) renderer_type = RENDERER_TYPE_CLACK;
+        else renderer_type = RENDERER_TYPE_CLACK;   /* 含 --full：渲染器不因此降级 */
 
         /* 【先生要求】向导模式：默认快速（必要项）——--full 完整模式（所有可配置） */
         int wizard_full_mode = (strcmp(effective_args, "--full") == 0);
