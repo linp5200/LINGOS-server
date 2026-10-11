@@ -61,6 +61,18 @@
 - Makefile：新增 `lingosctl` 目标并纳入 `TARGETS`；`scripts/bundle.sh` 四处二进制清单同步（随包分发）
 - 观测闭环：`api.describe`（清单）→ `api.openapi`（文档）→ `lingosctl`（调用）→ `api.rely_status`/`system.events`（观测）
 
+### 新增（Features · 续 3：Python 假技能实装 + MCP 接工具表 + sub_ai_worker 补齐 —— P5）
+
+> 由 teammate `py-skill` 完成（会话中断前已落盘，Lead 复核后提交）。
+
+- `skill_handlers.py`：
+  - `typhoon_predict`：**去掉 random 编造** → 真读国家气象中心 NMC 官方预报（JSONP 双层括号解析），无台风时诚实返回"当前无台风活动"
+  - `rule_query` / `vision_locate` / `defense_mode` / `perm_set`：由硬编码/假读写改为真实数据源与真实状态读写
+- `mcp_client.py`：注册/列表/测试之外**接入工具表**（不再"有接口无入口"）
+- `sub_ai_scheduler.py` + 新增 `sub_ai_worker.py`：补上被依赖检查引用却**不存在的幽灵文件**，调度器接真实 worker
+- `ai_server.py`：命令面相应接线
+- 验证：`python3 -m py_compile src/python/*.py src/python/plugin/*.py` **全部通过**；无 random/占位假数据
+
 ### 验证（Verification · 事件总线）
 
 - 静态审核：`event_bus.c` / `config_core.c` / `function_registry_builtin.c` / `lingosd.c`

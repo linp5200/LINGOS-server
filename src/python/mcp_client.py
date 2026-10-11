@@ -11,6 +11,8 @@
   · ai_server.load_skill_schemas → mcp_tool_schemas() 合并进 AI 工具表
     （命名 mcp__<server>__<tool>）
   · ai_server 工具执行 → is_mcp_tool / call_mcp_tool 路由
+  · 认证头：cmd_mcp_add 存储的 auth_type/auth_token 由 _auth_headers 转成
+    Authorization/X-API-Key 随每次 JSON-RPC 发送（此前存而不用）
 """
 
 import json
@@ -24,9 +26,63 @@ _TIMEOUT = 10
 _sessions = {}   # url → Mcp-Session-Id（initialize 返回）
 
 
+def _auth_headers(info: dict) -> dict:
+    """按 MCP 服务器配置生成认证请求头（【P5】接线）
+
+    背景：cmd_mcp_add 保存了 auth_type/auth_token，但 _rpc 从不发送认证头 →
+    需要认证的 MCP 服务器永远握手失败（配置了却用不了 = 半成品）。
+    支持：bearer（默认）| api_key/apikey/x-api-key/header | basic | none
+    """
+    if not isinstance(info, dict):
+        return {}
+    token = str(info.get("auth_token") or "").strip()
+    atype = str(info.get("auth_type") or "none").strip().lower()
+    if not token or atype in ("", "none", "off", "no"):
+        return {}
+    if atype in ("bearer", "token", "oauth"):
+        return {"Authorization": "Bearer " + token}
+    if atype in ("api_key", "apikey", "x-api-key", "header"):
+        return {"X-API-Key": token}
+    if atype == "basic":
+        return {"Authorization": "Basic " + token}
+    logger.warning("unknown MCP auth_type '%s' → sent as Bearer", atype)
+    return {"Authorization": "Bearer " + token}
+
+
+def mcp_server_headers(server) -> dict:
+    """公开辅助：服务器名或配置 dict → 认证头（供 ai_server cmd_mcp_test 复用）"""
+    if isinstance(server, dict):
+        return _auth_headers(server)
+    if isinstance(server, str) and server:
+        info = load_mcp_config().get(server)
+        return _auth_headers(info if isinstance(info, dict) else {})
+    return {}
+
+
+def _split_mcp_name(full_name: str, cfg: dict):
+    """mcp__<server>__<tool> → (server, tool)
+
+    优先按已配置服务器名精确匹配（服务器名本身含 '__' 时 split('__',2) 会错位）；
+    未匹配则回退旧行为。
+    """
+    if not isinstance(full_name, str) or not full_name.startswith("mcp__"):
+        return "", ""
+    body = full_name[len("mcp__"):]
+    for s in sorted((cfg or {}).keys(), key=len, reverse=True):
+        if body.startswith(s + "__"):
+            return s, body[len(s) + 2:]
+    parts = full_name.split("__", 2)
+    if len(parts) == 3:
+        return parts[1], parts[2]
+    return "", ""
+
+
 def _rpc(url: str, method: str, params: dict = None, session: str = "",
-         req_id: int = 1) -> dict:
-    """发送一次 JSON-RPC 请求 → 返回 result dict；失败抛异常"""
+         req_id: int = 1, headers: dict = None) -> dict:
+    """发送一次 JSON-RPC 请求 → 返回 result dict；失败抛异常
+
+    headers：服务器配置生成的认证头（可选，保持旧调用兼容）
+    """
     body = {
         "jsonrpc": "2.0",
         "id": req_id,
@@ -39,6 +95,8 @@ def _rpc(url: str, method: str, params: dict = None, session: str = "",
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json, text/event-stream")
     req.add_header("User-Agent", "LINGOS-MCP/0.6.1")
+    for _hk, _hv in (headers or {}).items():
+        req.add_header(_hk, _hv)
     if session:
         req.add_header("Mcp-Session-Id", session)
     try:
@@ -62,46 +120,48 @@ def _rpc(url: str, method: str, params: dict = None, session: str = "",
     return resp.get("result", {})
 
 
-def mcp_initialize(url: str) -> dict:
-    """协议握手（记录会话）"""
+def mcp_initialize(url: str, headers: dict = None) -> dict:
+    """协议握手（记录会话）；headers = 认证头（可选）"""
     result = _rpc(url, "initialize", {
         "protocolVersion": "2024-11-05",
         "capabilities": {},
         "clientInfo": {"name": "lingos", "version": "0.6.1"},
-    })
+    }, headers=headers)
     # 通知 initialized（部分服务器要求）
     try:
-        _rpc(url, "notifications/initialized", None, _sessions.get(url, ""), req_id=2)
+        _rpc(url, "notifications/initialized", None, _sessions.get(url, ""),
+             req_id=2, headers=headers)
     except Exception:
         pass
     return result
 
 
-def mcp_tools_list(url: str) -> list:
-    """发现工具 → [{name, description, inputSchema}]"""
+def mcp_tools_list(url: str, headers: dict = None) -> list:
+    """发现工具 → [{name, description, inputSchema}]；headers = 认证头（可选）"""
     sid = _sessions.get(url, "")
     if not sid:
         try:
-            mcp_initialize(url)
+            mcp_initialize(url, headers=headers)
             sid = _sessions.get(url, "")
         except Exception as e:
             logger.warning("mcp initialize failed for %s: %s", url, e)
-    result = _rpc(url, "tools/list", {}, sid, req_id=3)
+    result = _rpc(url, "tools/list", {}, sid, req_id=3, headers=headers)
     tools = result.get("tools", [])
     return tools if isinstance(tools, list) else []
 
 
-def mcp_tool_call(url: str, tool_name: str, arguments: dict) -> dict:
-    """执行工具 → {"content": [...]}"""
+def mcp_tool_call(url: str, tool_name: str, arguments: dict, headers: dict = None) -> dict:
+    """执行工具 → {"content": [...]}；headers = 认证头（可选）"""
     sid = _sessions.get(url, "")
     if not sid:
         try:
-            mcp_initialize(url)
+            mcp_initialize(url, headers=headers)
             sid = _sessions.get(url, "")
         except Exception as e:
             return {"error": "initialize failed: %s" % e}
     try:
-        return _rpc(url, "tools/call", {"name": tool_name, "arguments": arguments or {}}, sid, req_id=4)
+        return _rpc(url, "tools/call", {"name": tool_name, "arguments": arguments or {}},
+                    sid, req_id=4, headers=headers)
     except Exception as e:
         return {"error": str(e)}
 
@@ -132,11 +192,13 @@ def mcp_tool_schemas() -> list:
     schemas = []
     cfg = load_mcp_config()
     for server, info in cfg.items():
-        url = (info or {}).get("url", "")
+        info = info if isinstance(info, dict) else {}
+        url = info.get("url", "")
         if not url:
             continue
+        headers = _auth_headers(info)
         try:
-            tools = mcp_tools_list(url)
+            tools = mcp_tools_list(url, headers=headers)
         except Exception as e:
             logger.warning("mcp tools/list failed (%s): %s", server, e)
             continue
@@ -166,16 +228,16 @@ def is_mcp_tool(name: str) -> bool:
 
 def call_mcp_tool(full_name: str, arguments: dict):
     """执行 MCP 工具（full_name = mcp__<server>__<tool>）→ (ok, text)"""
-    parts = full_name.split("__", 2)
-    if len(parts) != 3:
-        return False, "MCP 工具名格式错误: %s" % full_name
-    _, server, tool = parts
     cfg = load_mcp_config()
+    server, tool = _split_mcp_name(full_name, cfg)
+    if not server or not tool:
+        return False, "MCP 工具名格式错误: %s" % full_name
     info = cfg.get(server) or {}
+    info = info if isinstance(info, dict) else {}
     url = info.get("url", "")
     if not url:
         return False, "MCP 服务器未配置: %s" % server
-    result = mcp_tool_call(url, tool, arguments or {})
+    result = mcp_tool_call(url, tool, arguments or {}, headers=_auth_headers(info))
     if isinstance(result, dict) and result.get("error"):
         return False, "MCP 调用失败: %s" % result["error"]
     # 结果归一化：content 数组 → 文本

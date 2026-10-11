@@ -2105,11 +2105,17 @@ def execute_tool_calls(tool_calls: List[Dict], session_id: str = "default", conn
         if name == "sub_ai_dispatch":
             prompt = args.get("prompt", "")
             role = args.get("role", "general")
+            # 【P5】isolated=true → 独立 worker 进程执行（sub_ai_worker.py，崩溃不影响主进程）
+            _iso = args.get("isolated", args.get("detach", False))
+            if isinstance(_iso, str):
+                _iso = _iso.strip().lower() in ("1", "true", "yes", "on")
+            isolated = bool(_iso)
             try:
-                task_id = sub_ai_dispatch(prompt, role)
-                output = json.dumps({"task_id": task_id, "status": "pending"})
+                task_id = sub_ai_dispatch(prompt, role, isolated=isolated)
+                output = json.dumps({"task_id": task_id, "status": "pending",
+                                     "isolated": isolated})
                 success = True
-                logger.info(f"Sub-AI task dispatched: {task_id}")
+                logger.info(f"Sub-AI task dispatched: {task_id} (isolated={isolated})")
             except Exception as e:
                 output = t(f"Sub-AI dispatch failed: {e}", f"子AI分发失败：{e}")
                 success = False
@@ -5031,9 +5037,11 @@ def cmd_mcp_test(name: str = "") -> dict:
     info = data[name]
     url = info.get("url", "")
     try:
-        from mcp_client import mcp_initialize, mcp_tools_list
-        init = mcp_initialize(url)
-        tools = mcp_tools_list(url)
+        # 【P5】带上服务器配置的认证头（auth_type/auth_token——此前存而不用，认证服务器必失败）
+        from mcp_client import mcp_initialize, mcp_tools_list, mcp_server_headers
+        _hdrs = mcp_server_headers(info)
+        init = mcp_initialize(url, headers=_hdrs)
+        tools = mcp_tools_list(url, headers=_hdrs)
         info["status"] = "connected"
         info["tools"] = [{"name": t.get("name", ""), "description": str(t.get("description", ""))[:160]}
                          for t in tools if isinstance(t, dict)]

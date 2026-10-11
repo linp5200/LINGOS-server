@@ -18,6 +18,7 @@ import traceback
 import requests
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
+import subprocess
 import concurrent.futures
 
 # ========== 多语言支持 ==========
@@ -73,6 +74,15 @@ SUB_AI_CONF_PATH = "/LINGOS/system/config/sub_ai.conf"
 TASKS_STATE_PATH = "/LINGOS/state/tasks.json"
 CONFIG_PATH = "/LINGOS/system/config/ai_config.json"
 DEFAULT_TIMEOUT = 120
+
+# 【2026-10-11 P5】子AI worker 进程入口
+#   背景：src/core/dependency_check.c 要求 /LINGOS/bin/sub_ai_worker.py 存在、
+#   src/shell/system_info.c 在进程表中查找 sub_ai_worker.py、src/fs/sync_template.c
+#   指引查看 /LINGOS/Debug/sub_ai_worker_*.log——此前该文件缺失（幽灵引用）。
+WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sub_ai_worker.py")
+
+# react_loop 失败以文本返回（call_deepseek_nonstream 的错误前缀）
+_ERROR_PREFIXES = ("AI Error:", "Error:", "Maximum iterations reached")
 
 # ========== 技能和系统调用导入 ==========
 try:
@@ -181,14 +191,66 @@ def call_deepseek_nonstream(messages: List[Dict], tools: Optional[List[Dict]] = 
         return {"error": str(e)}
 
 def call_skill(skill_name: str, args: Dict) -> Tuple[bool, str]:
-    """执行技能（内部调用）"""
+    """执行技能（内部调用；【P5】过与主AI同一权限闸门 + 影子模式——子AI不是绕过审批的旁路）"""
     logger.debug("call_skill: Enter, skill='%s', args=%s", skill_name, args)
     if not SKILLS_AVAILABLE:
         return False, "Skill modules not available"
     if not skill_exists(skill_name):
         return False, f"Skill '{skill_name}' not found"
+    try:
+        from permission_gateway import (check_skill_permission, get_skill_risk,
+                                        is_shadow_skill, build_shadow_result)
+        _risk = get_skill_risk(skill_name)
+        _allowed, _reason = check_skill_permission(skill_name, _risk, args)
+        if not _allowed:
+            logger.warning("call_skill: '%s' blocked by permission gateway: %s", skill_name, _reason)
+            return False, _reason
+        if is_shadow_skill(skill_name, _risk):
+            logger.info("call_skill: '%s' shadowed → structurally valid empty result", skill_name)
+            return True, build_shadow_result(skill_name, args)
+    except Exception as _ge:
+        # 与 ai_server 同口径：网关模块自身异常不瘫痪技能执行（网关内部已有 fail-safe 语义）
+        logger.warning("call_skill: permission gateway skipped for '%s': %s", skill_name, _ge)
     args_json = json.dumps(args)
     return execute_skill(skill_name, args_json)
+
+
+def load_skill_tools() -> Optional[List[Dict]]:
+    """从内置技能注册表构建 OpenAI function 工具表（【P5】接线）
+
+    背景：react_loop 此前恒传 tools=None → 子AI**无法调用任何技能**，
+    execute_tool_calls 成为死代码，任务只能空谈。现与主AI同源生成工具表。
+    参数 schema 用宽松对象（权威 overrides 表在 ai_server._SKILL_PARAM_OVERRIDES；
+    导入 ai_server 会造成循环依赖），技能自身解析并校验参数。
+    """
+    try:
+        from skill_handlers import SKILL_REGISTRY
+    except Exception as e:
+        logger.warning("load_skill_tools: skill registry unavailable: %s", e)
+        return None
+    tools = []
+    for name, info in (SKILL_REGISTRY or {}).items():
+        if not name or not isinstance(info, dict):
+            continue
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": str(info.get("description") or name)[:200],
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+            },
+        })
+    if not tools:
+        return None
+    logger.info("load_skill_tools: %d skills available to sub-AI", len(tools))
+    return tools
+
+
+def _result_is_error(result: str) -> bool:
+    """react_loop 失败以文本返回——此前仅判 'Error:' 前缀，'AI Error:' 被误记为成功"""
+    if not isinstance(result, str):
+        return False
+    return result.strip().startswith(_ERROR_PREFIXES)
 
 def execute_tool_calls(tool_calls: List[Dict]) -> List[Dict]:
     """执行工具调用列表"""
@@ -227,7 +289,10 @@ def react_loop(prompt: str, max_iterations: int = 10, role: str = "general") -> 
     messages.append({"role": "user", "content": prompt})
 
     config = load_deepseek_config()
-    tools = None
+    # 【P5】真实技能工具表（此前恒 None → 子AI无工具可用）
+    tools = load_skill_tools()
+    if not tools:
+        logger.warning("react_loop: no skill tools available — running text-only")
 
     for iteration in range(max_iterations):
         logger.debug("react_loop: Iteration %d/%d", iteration+1, max_iterations)
@@ -279,6 +344,8 @@ class TaskInfo:
         self.completed_at = None
         self.retry_count = 0
         self.max_retries = 3
+        # 【P5】执行者 pid——孤儿任务回收依据（进程消失 = 任务悬挂）
+        self.owner_pid = None
 
     def to_dict(self) -> Dict:
         return {
@@ -292,7 +359,8 @@ class TaskInfo:
             "updated_at": self.updated_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
-            "retry_count": self.retry_count
+            "retry_count": self.retry_count,
+            "owner_pid": self.owner_pid
         }
 
     @classmethod
@@ -306,6 +374,7 @@ class TaskInfo:
         task.started_at = data.get("started_at")
         task.completed_at = data.get("completed_at")
         task.retry_count = data.get("retry_count", 0)
+        task.owner_pid = data.get("owner_pid")
         return task
 
 # ========== 持久化管理 ==========
@@ -394,6 +463,16 @@ class SubAIScheduler:
         if loaded:
             cleanup_old_tasks(loaded, self.task_ttl)
             self.tasks = loaded
+            # 【P5】孤儿任务回收（此前无任何回收点：进程崩溃后 running 任务永久悬挂）
+            #   本进程刚启动 → 凡 owner pid 已不存在的 running 任务均为上次遗留。
+            try:
+                import sub_ai_worker as _worker
+                _orphans = _worker.recover_orphaned_tasks(self.tasks, save_fn=save_tasks)
+                if _orphans:
+                    logger.warning("Recovered %d orphaned sub-AI task(s)", _orphans)
+                    save_tasks(self.tasks)
+            except Exception as _re:
+                logger.warning("orphan task recovery skipped: %s", _re)
             for task in self.tasks.values():
                 if task.status == TaskStatus.PENDING:
                     logger.info("Resuming pending task: %s", task.task_id)
@@ -430,6 +509,7 @@ class SubAIScheduler:
         def run():
             try:
                 task.status = TaskStatus.RUNNING
+                task.owner_pid = os.getpid()
                 task.started_at = time.time()
                 task.updated_at = time.time()
                 self._save_task(task)
@@ -439,7 +519,7 @@ class SubAIScheduler:
 
                 task.completed_at = time.time()
                 task.updated_at = time.time()
-                if result.startswith("Error:"):
+                if _result_is_error(result):
                     task.status = TaskStatus.FAILED
                     task.error = result
                     logger.warning("Task %s failed: %s", task.task_id, result)
@@ -474,16 +554,51 @@ class SubAIScheduler:
 
     # ========== 公共接口 ==========
 
-    def dispatch_task(self, prompt: str, role: str = "general") -> str:
-        logger.info("dispatch_task: prompt='%s', role='%s'", prompt[:50], role)
+    def dispatch_task(self, prompt: str, role: str = "general", isolated: bool = False) -> str:
+        """分发子AI任务；isolated=True → 独立 worker 进程执行（崩溃不影响主进程）"""
+        logger.info("dispatch_task: prompt='%s', role='%s', isolated=%s", prompt[:50], role, isolated)
         task_id = self._generate_task_id()
         task = TaskInfo(task_id, prompt, role)
         with self.task_lock:
             self.tasks[task_id] = task
             save_tasks(self.tasks)
-        self._submit_task(task)
+        if isolated:
+            self._spawn_worker(task)
+        else:
+            self._submit_task(task)
         logger.info("Task %s dispatched", task_id)
         return task_id
+
+    def _spawn_worker(self, task: TaskInfo) -> None:
+        """拉起 sub_ai_worker.py 独立进程执行单个任务（【P5】接线）
+
+        日志：/LINGOS/Debug/sub_ai_worker_<task_id>.log
+          （与 src/fs/sync_template.c 的排障指引同一命名）
+        拉起失败 → 任务诚实置 failed（不留下永远 pending 的假任务）。
+        """
+        try:
+            log_dir = "/LINGOS/Debug"
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, "sub_ai_worker_%s.log" % task.task_id)
+            with open(log_path, "ab") as lf:
+                proc = subprocess.Popen(
+                    [sys.executable or "python3", WORKER_SCRIPT, "--task-id", task.task_id],
+                    stdin=subprocess.DEVNULL, stdout=lf, stderr=lf,
+                    start_new_session=True, close_fds=True)
+            task.owner_pid = proc.pid
+            task.updated_at = time.time()
+            with self.task_lock:
+                save_tasks(self.tasks)
+            logger.info("Task %s spawned in worker pid=%d (log %s)",
+                        task.task_id, proc.pid, log_path)
+        except Exception as e:
+            task.status = TaskStatus.FAILED
+            task.error = "worker spawn failed: %s" % e
+            task.updated_at = time.time()
+            task.completed_at = time.time()
+            with self.task_lock:
+                save_tasks(self.tasks)
+            logger.error("Task %s worker spawn failed: %s", task.task_id, e)
 
     def get_task_status(self, task_id: str) -> Optional[Dict]:
         logger.debug("get_task_status: task_id=%s", task_id)
@@ -581,8 +696,9 @@ def get_scheduler() -> SubAIScheduler:
 
 # ========== 便捷函数 ==========
 
-def dispatch_task(prompt: str, role: str = "general") -> str:
-    return get_scheduler().dispatch_task(prompt, role)
+def dispatch_task(prompt: str, role: str = "general", isolated: bool = False) -> str:
+    """兼容旧签名（role 仍为第 2 位置参数）；isolated=True 走独立 worker 进程"""
+    return get_scheduler().dispatch_task(prompt, role, isolated=isolated)
 
 def get_task_status(task_id: str) -> Optional[Dict]:
     return get_scheduler().get_task_status(task_id)

@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import socket
 import hashlib
-import random
 from typing import Dict, Any, Tuple, Callable, Optional, List
 
 # ========== 多语言支持 ==========
@@ -1036,80 +1035,236 @@ register_skill("sys_command", sys_command, risk="critical", need_confirm=True)
 # 14. 安全与防御（完整）
 # =============================================================
 
+# =============================================================
+# 【2026-10-11 P5】安全配置真源（与 C security_config.c 同一 schema）
+#   security.json 为**嵌套**结构：
+#     {"version":..,"input_mode":"strict|balanced|permissive",
+#      "shadow_mode":{"enabled":bool,"permissions":[...]},
+#      "dark_mode":{"enabled":bool,"simulate_hardware_disable":bool,"blocked_features":[...]},
+#      "absolute_protect":{"enabled":bool,"trigger":str,"auto_close_check_interval":int},
+#      "behavior_monitoring":{"enabled":bool,"window_size":int,"threshold":int}}
+#   历史平铺键（shadow_enabled 等）仅作兜底读取。
+#   运行时**生效**状态由 C 守护 permission_list 上报（defense_mode/shadow_active）——
+#   本技能同时报告两者，不猜测、不假装。
+# =============================================================
+_SECURITY_CFG_PATH = "/LINGOS/system/config/security.json"
+_DEFENSE_USAGE = "system defense shadow|dark|absolute on|off"
+
+
+def _load_security_json() -> Tuple[Dict, str]:
+    """读 security.json → (dict, parse_error)；文件缺失返回 ({}, "")"""
+    if not os.path.exists(_SECURITY_CFG_PATH):
+        return {}, ""
+    try:
+        with open(_SECURITY_CFG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data, ""
+        return {}, "top-level JSON is not an object"
+    except Exception as e:
+        return {}, str(e)
+
+
+def _nested_flag(state: Dict, section: str, legacy_key: str) -> bool:
+    """嵌套段 enabled 优先，缺失回退历史平铺键"""
+    sec = state.get(section)
+    if isinstance(sec, dict) and "enabled" in sec:
+        return bool(sec.get("enabled"))
+    return bool(state.get(legacy_key, False))
+
+
+def _defense_runtime() -> Dict:
+    """C 守护运行时防御状态（syscall permission_list → defense_mode/shadow_active）
+
+    来源：src/daemon/syscall_handler.c:1480-1482。守护不可达 → available=False（诚实）。
+    """
+    try:
+        ok, res = call_syscall("permission_list", {}, timeout=5)
+    except Exception as e:
+        return {"available": False, "error": str(e)[:200]}
+    if not ok:
+        return {"available": False, "error": str(res)[:200]}
+    try:
+        data = json.loads(res) if isinstance(res, str) else res
+        inner = data.get("data", data) if isinstance(data, dict) else {}
+        if isinstance(inner, str):
+            inner = json.loads(inner or "{}")
+        if not isinstance(inner, dict):
+            return {"available": False, "error": "unexpected permission_list payload"}
+        return {
+            "available": True,
+            "defense_mode": inner.get("defense_mode", ""),
+            "shadow_active": bool(inner.get("shadow_active")),
+        }
+    except Exception as e:
+        return {"available": False, "error": str(e)[:200]}
+
+
 def defense_mode(args_json: str) -> Tuple[bool, str]:
-    """防御模式（【0.6.0】真实状态查询——读 /LINGOS/system/config/security.json；
-    切换引导至系统命令，不假装执行）"""
+    """防御模式（【P5】真实状态：C 守护运行时 + security.json 嵌套 schema；
+    切换由系统命令执行，此处不假装执行）"""
     try:
         args = json.loads(args_json or "{}")
         mode = args.get("mode")
         action = args.get("action")
 
-        cfg_path = "/LINGOS/system/config/security.json"
-        state = {}
-        try:
-            if os.path.exists(cfg_path):
-                with open(cfg_path, "r", encoding="utf-8") as f:
-                    state = json.load(f) or {}
-        except Exception:
-            state = {}
+        state, cfg_err = _load_security_json()
+        shadow = state.get("shadow_mode") if isinstance(state.get("shadow_mode"), dict) else {}
+        dark = state.get("dark_mode") if isinstance(state.get("dark_mode"), dict) else {}
+        absolute = state.get("absolute_protect") if isinstance(state.get("absolute_protect"), dict) else {}
+        behavior = state.get("behavior_monitoring") if isinstance(state.get("behavior_monitoring"), dict) else {}
 
-        if not mode and not action:
-            return True, json.dumps({
-                "status": "ok",
-                "shadow_enabled": bool(state.get("shadow_enabled", False)),
-                "dark_enabled": bool(state.get("dark_enabled", False)),
-                "absolute_enabled": bool(state.get("absolute_enabled", False)),
-                "input_mode": state.get("input_mode", ""),
-                "config": cfg_path,
-                "message": t("To switch defense modes use the system `defense` command "
-                             "(defense shadow|dark|absolute on|off) — switching requires the C core.",
-                             "切换防御模式请使用系统 `defense` 命令"
-                             "（defense shadow|dark|absolute on|off）——切换需 C 核心执行。"),
-            }, ensure_ascii=False)
-
-        return True, json.dumps({
+        result = {
             "status": "ok",
-            "requested": {"mode": mode, "action": action},
-            "executed": False,
-            "message": t("Defense mode switching is executed by the system command: "
-                         "`defense [shadow|dark|absolute] [on|off]`",
-                         "防御模式切换由系统命令执行：`defense [shadow|dark|absolute] [on|off]`"),
-        }, ensure_ascii=False)
+            "runtime": _defense_runtime(),
+            "config": {
+                "path": _SECURITY_CFG_PATH,
+                "present": os.path.exists(_SECURITY_CFG_PATH),
+                "parse_error": cfg_err,
+                "version": state.get("version", ""),
+                "input_mode": state.get("input_mode", ""),
+                "shadow_enabled": _nested_flag(state, "shadow_mode", "shadow_enabled"),
+                "shadow_permissions": list(shadow.get("permissions") or []),
+                "dark_enabled": _nested_flag(state, "dark_mode", "dark_enabled"),
+                "dark_blocked_features": list(dark.get("blocked_features") or []),
+                "absolute_enabled": _nested_flag(state, "absolute_protect", "absolute_enabled"),
+                "absolute_trigger": absolute.get("trigger", ""),
+                "behavior_enabled": _nested_flag(state, "behavior_monitoring", "behavior_enabled"),
+            },
+            "switch_command": _DEFENSE_USAGE,
+        }
+        if not mode and not action:
+            result["message"] = t(
+                "runtime = state in effect (C daemon); config = persisted security.json. "
+                "To switch use the system command: `%s` (requires the C core)." % _DEFENSE_USAGE,
+                "runtime = 生效中状态（C 守护）；config = 持久化 security.json。"
+                "切换请用系统命令：`%s`（需 C 核心执行）。" % _DEFENSE_USAGE)
+            return True, json.dumps(result, ensure_ascii=False)
+
+        result["requested"] = {"mode": mode, "action": action}
+        result["executed"] = False
+        result["message"] = t(
+            "Defense mode switching is executed by the system command: `%s`" % _DEFENSE_USAGE,
+            "防御模式切换由系统命令执行：`%s`（本技能只读状态，不假装执行）" % _DEFENSE_USAGE)
+        return True, json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return False, str(e)
 register_skill("defense_mode", defense_mode, risk="medium")
 
+# 【2026-10-11 P5】权限存储真源与合法集
+#   · 文件：/LINGOS/system/config/ai_permissions.json（App 设置→权限、C 守护
+#     syscall permission_list、permission_gateway 三处同一事实源）
+#   · 权限名 = ai_server.AI_PERMS 18 项（= permission_gateway.USER_PERMS）
+#     ——此前 perm_set 不校验：拼错的名字写进文件后无人读取 = 假成功。
+#   · 模式 = deny|allow_once|allow_while|allow_always|shadow（与 ai_server 一致）
+_AI_PERM_FILE = "/LINGOS/system/config/ai_permissions.json"
+_AI_PERM_NAMES = (
+    "location", "camera", "record_audio", "record_screen", "accelerometer",
+    "phone_state", "installed_apps", "external_storage", "network_control",
+    "bluetooth_control", "scan_bluetooth", "launch_app", "install_app",
+    "jump_app", "background_data", "background_task", "auto_start", "ha_control",
+)
+_AI_PERM_MODES = ("deny", "allow_once", "allow_while", "allow_always", "shadow")
+
+
+def _valid_perm_names() -> Tuple[str, ...]:
+    """合法权限名 = 内置 18 项 ∪ permission_gateway.USER_PERMS（延迟导入避免环）"""
+    names = list(_AI_PERM_NAMES)
+    try:
+        from permission_gateway import USER_PERMS as _UP
+        for p in _UP:
+            if p not in names:
+                names.append(p)
+    except Exception:
+        pass
+    return tuple(names)
+
+
+def _perm_store_update(perm: str, mode: str) -> Dict:
+    """读-改-写 ai_permissions.json：flock 串行化 + 0600 + 原子替换 + 回读校验"""
+    import tempfile
+    try:
+        import fcntl
+    except Exception:
+        fcntl = None
+
+    os.makedirs(os.path.dirname(_AI_PERM_FILE), exist_ok=True)
+    lock_path = _AI_PERM_FILE + ".lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        data = {}
+        if os.path.exists(_AI_PERM_FILE):
+            with open(_AI_PERM_FILE, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                data = raw
+        previous = data.get(perm)
+        data[perm] = mode
+
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_AI_PERM_FILE), prefix=".ai_perm_")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, _AI_PERM_FILE)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+            raise
+
+        with open(_AI_PERM_FILE, "r", encoding="utf-8") as f:
+            verify = json.load(f)
+        if not isinstance(verify, dict) or verify.get(perm) != mode:
+            raise RuntimeError("write verification failed for '%s'" % perm)
+        return {"previous": previous, "current": verify.get(perm), "total": len(verify)}
+    finally:
+        try:
+            os.close(lock_fd)
+        except Exception:
+            pass
+
+
 def perm_set(args_json: str) -> Tuple[bool, str]:
-    """权限设置（【0.6.0】真实写入 /LINGOS/system/config/ai_permissions.json——
-    与 App「设置→权限」及权限网关同一事实源）
+    """权限设置（【P5】真实写入 /LINGOS/system/config/ai_permissions.json——
+    与 App「设置→权限」、C 守护 permission_list、权限网关同一事实源；带合法名/模式校验）
     参数: {"perm": "location", "mode": "deny|allow_once|allow_while|allow_always|shadow"}"""
     try:
         args = json.loads(args_json or "{}")
         perm = str(args.get("perm", "") or "").strip()
         mode = str(args.get("mode", "") or "").strip()
+        valid_names = _valid_perm_names()
         if not perm or not mode:
             return False, t("Usage: {'perm': '<name>', 'mode': '<deny|allow_once|allow_while|allow_always|shadow>'}",
                             "用法：{\"perm\": \"<权限名>\", \"mode\": \"<deny|allow_once|allow_while|allow_always|shadow>\"}")
-        valid_modes = ("deny", "allow_once", "allow_while", "allow_always", "shadow")
-        if mode not in valid_modes:
-            return False, t(f"Invalid mode '{mode}' (valid: {', '.join(valid_modes)})",
-                            f"无效模式 '{mode}'（可选：{', '.join(valid_modes)}）")
-        perm_file = "/LINGOS/system/config/ai_permissions.json"
-        data = {}
+        if perm not in valid_names:
+            return False, t("Unknown permission '%s' (valid: %s)" % (perm, ", ".join(valid_names)),
+                            "未知权限 '%s'（可选：%s）" % (perm, "、".join(valid_names)))
+        if mode not in _AI_PERM_MODES:
+            return False, t("Invalid mode '%s' (valid: %s)" % (mode, ", ".join(_AI_PERM_MODES)),
+                            "无效模式 '%s'（可选：%s）" % (mode, "、".join(_AI_PERM_MODES)))
+
+        info = _perm_store_update(perm, mode)
+
+        gateway = {}
         try:
-            if os.path.exists(perm_file):
-                with open(perm_file, "r", encoding="utf-8") as f:
-                    data = json.load(f) or {}
-        except Exception:
-            data = {}
-        data[perm] = mode
-        os.makedirs(os.path.dirname(perm_file), exist_ok=True)
-        with open(perm_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            from permission_gateway import command_perm_gate
+            gateway = command_perm_gate(perm)
+        except Exception as e:
+            gateway = {"decision": "unknown", "message": str(e)[:120]}
+
         return True, json.dumps({
-            "status": "ok", "data": {perm: mode}, "file": perm_file,
-            "message": t("Permission updated — effective immediately (shared with the App and the permission gateway).",
-                         "权限已更新——立即生效（与 App 及权限网关共用同一存储）。"),
+            "status": "ok",
+            "data": {perm: info["current"]},
+            "previous": info["previous"],
+            "file": _AI_PERM_FILE,
+            "stored_total": info["total"],
+            "gateway_decision": gateway.get("decision", "unknown"),
+            "message": t("Permission updated and verified by read-back — effective immediately (shared with the App, the C daemon and the permission gateway).",
+                         "权限已更新并经回读校验——立即生效（与 App、C 守护、权限网关共用同一存储）。"),
         }, ensure_ascii=False)
     except Exception as e:
         return False, str(e)
@@ -1395,7 +1550,8 @@ register_skill("typhoon_predict", typhoon_predict, risk="low")
 # =============================================================
 
 def vision_locate(args_json: str) -> Tuple[bool, str]:
-    """定位物体位置（【0.6.0】真实数据——查询视觉记忆库 /LINGOS/data/vision/vision.db）"""
+    """定位物体位置（【P5】真实数据——视觉记忆库 /LINGOS/data/vision/vision.db，
+    表结构/写入方与 src/vision/vision_memory.c 一致；诚实标注未标定与过期数据）"""
     try:
         import sqlite3 as _sq
         args = json.loads(args_json or "{}")
@@ -1413,22 +1569,41 @@ def vision_locate(args_json: str) -> Tuple[bool, str]:
                              "请确认其已运行且检测已开启。"),
             }, ensure_ascii=False)
 
-        conn = _sq.connect(db_path)
-        conn.row_factory = _sq.Row
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT label, world_x, world_y, confidence, timestamp, track_id "
-            "FROM objects WHERE label = ? ORDER BY timestamp DESC LIMIT 1",
-            (object_name,))
-        row = cur.fetchone()
-        if not row:
-            # 模糊匹配（label 含关键词）
+        conn = None
+        try:
+            conn = _sq.connect(db_path)
+            conn.row_factory = _sq.Row
+            cur = conn.cursor()
+            has_table = cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='objects'"
+            ).fetchone()
+            if not has_table:
+                return True, json.dumps({
+                    "status": "ok", "object": object_name, "found": False,
+                    "message": t("Vision database exists but has no 'objects' table yet "
+                                 "(vision_memory has not initialized any detection).",
+                                 "视觉数据库已存在但尚无 objects 表"
+                                 "（视觉记忆尚未初始化任何检测记录）。"),
+                }, ensure_ascii=False)
+
             cur.execute(
                 "SELECT label, world_x, world_y, confidence, timestamp, track_id "
-                "FROM objects WHERE label LIKE ? ORDER BY timestamp DESC LIMIT 1",
-                ("%" + object_name + "%",))
+                "FROM objects WHERE label = ? ORDER BY timestamp DESC LIMIT 1",
+                (object_name,))
             row = cur.fetchone()
-        conn.close()
+            if not row:
+                # 模糊匹配（label 含关键词）
+                cur.execute(
+                    "SELECT label, world_x, world_y, confidence, timestamp, track_id "
+                    "FROM objects WHERE label LIKE ? ORDER BY timestamp DESC LIMIT 1",
+                    ("%" + object_name + "%",))
+                row = cur.fetchone()
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
         if not row:
             return True, json.dumps({
@@ -1437,13 +1612,39 @@ def vision_locate(args_json: str) -> Tuple[bool, str]:
                              "近期检测记录中未找到该物体"),
             }, ensure_ascii=False)
 
+        # timestamp = Unix 秒（C 侧 time(NULL)）
+        try:
+            ts = int(row["timestamp"])
+        except Exception:
+            ts = 0
+        age = (int(time.time()) - ts) if ts > 0 else -1
+        wx = float(row["world_x"] or 0.0)
+        wy = float(row["world_y"] or 0.0)
+        # C 语义（detection_engine.c / spatial_mapper.c）：无标定时 world_x/world_y 记 0
+        calibrated = not (wx == 0.0 and wy == 0.0)
+
         result = {
             "status": "ok", "object": row["label"], "found": True,
-            "world_x": row["world_x"], "world_y": row["world_y"],
-            "confidence": row["confidence"], "last_seen": row["timestamp"],
+            "world_x": wx, "world_y": wy,
+            "world_coords_calibrated": calibrated,
+            "confidence": row["confidence"],
+            "last_seen": ts,
+            "last_seen_iso": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts > 0 else "",
+            "age_seconds": age,
+            "stale": (age > 3600) if age >= 0 else None,
             "track_id": row["track_id"],
-            "source": "vision.db（实时检测数据）",
+            "source": "vision.db（lingos_visiond 实时检测写入）",
         }
+        notes = []
+        if not calibrated:
+            notes.append(t("world_x/world_y are 0 — camera not calibrated, so these are NOT real "
+                           "room coordinates (see spatial_mapper).",
+                           "world_x/world_y 为 0——相机未标定，这不是真实房间坐标（见 spatial_mapper）。"))
+        if result["stale"]:
+            notes.append(t("Last seen %d s ago — the record is stale." % age,
+                           "最近一次检测在 %d 秒前——记录已过期。" % age))
+        if notes:
+            result["note"] = " ".join(notes)
         return True, json.dumps(result, ensure_ascii=False)
 
     except Exception as e:
@@ -1525,7 +1726,12 @@ register_skill("voice_command", voice_command, risk="low")
 
 def rule_query(args_json: str) -> Tuple[bool, str]:
     """
-    查询规则状态（【0.6.0】真实数据——读规则引擎存储 /LINGOS/system/config/rules.json）
+    查询规则状态（【P5】真实字段——读 C 规则引擎存储 /LINGOS/system/config/rules.json；
+    schema 与 src/rules/rules_storage.c 一致：
+      {"rules":[{"name","condition","action_count","actions":[],"enabled",
+                 "created_at","last_triggered","trigger_count","is_custom"}],
+       "version":1,"count":N,"updated_at":ts}
+    历史 trigg/action 平铺字段仅作兜底）
     参数: {"rule_name": "（可选）按名过滤"}
     """
     try:
@@ -1534,24 +1740,36 @@ def rule_query(args_json: str) -> Tuple[bool, str]:
 
         rules_path = "/LINGOS/system/config/rules.json"
         rules = []
-        if os.path.exists(rules_path):
+        storage_present = os.path.exists(rules_path)
+        meta = {"version": None, "count": None, "updated_at": None}
+        if storage_present:
             try:
                 with open(rules_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                if isinstance(data, dict):
+                    for k in ("version", "count", "updated_at"):
+                        if k in data:
+                            meta[k] = data[k]
                 raw = data.get("rules", data) if isinstance(data, dict) else data
                 if isinstance(raw, list):
                     for r in raw:
                         if not isinstance(r, dict):
                             continue
+                        acts = r.get("actions")
+                        if not isinstance(acts, list):
+                            legacy = r.get("action", r.get("then", ""))
+                            acts = [legacy] if legacy else []
                         item = {
                             "name": r.get("name", ""),
-                            "enabled": r.get("enabled", True),
-                            "trigger": r.get("trigger", r.get("when", "")),
-                            "action": r.get("action", r.get("then", "")),
+                            "enabled": bool(r.get("enabled", True)),
+                            "condition": r.get("condition", r.get("trigger", r.get("when", ""))),
+                            "actions": acts,
+                            "action_count": r.get("action_count", len(acts)),
+                            "trigger_count": r.get("trigger_count", 0),
+                            "last_triggered": r.get("last_triggered", 0),
+                            "created_at": r.get("created_at", 0),
+                            "is_custom": bool(r.get("is_custom", False)),
                         }
-                        for k in ("trigger_count", "last_triggered", "last_run"):
-                            if k in r:
-                                item[k] = r[k]
                         rules.append(item)
             except Exception as e:
                 return False, t(f"rules.json parse error: {e}", f"规则存储解析失败：{e}")
@@ -1559,13 +1777,20 @@ def rule_query(args_json: str) -> Tuple[bool, str]:
         if rule_name:
             rules = [r for r in rules if rule_name in r.get("name", "")]
 
-        return True, json.dumps({
+        result = {
             "status": "ok",
             "query": rule_name,
             "count": len(rules),
             "rules": rules,
             "storage": rules_path,
-        }, ensure_ascii=False)
+            "storage_present": storage_present,
+            "storage_meta": meta,
+        }
+        if not storage_present:
+            result["message"] = t(
+                "No rule storage yet (rules.json absent) — no rules have been created/saved.",
+                "规则存储尚未创建（rules.json 不存在）——还没有规则被创建/保存。")
+        return True, json.dumps(result, ensure_ascii=False)
 
     except Exception as e:
         return False, str(e)
