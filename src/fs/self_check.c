@@ -65,8 +65,20 @@ int self_check_and_sync(void) {
     }
 
     // 运行快速检查
+    /* 【修复】原实现不检查返回值、summary 也未初始化：
+     *   run_quick 失败时 summary 是栈上垃圾值 → 可能被当成"全部通过"写进
+     *   init_cache（假成功），也可能报出随机失败。触发条件：检查项未注册/
+     *   内部错误返回非 0（check_manager.c:217 → run_checks）。 */
     check_summary_t summary;
+    memset(&summary, 0, sizeof(summary));
     int ret = check_manager_run_quick(&summary);
+    if (ret != 0) {
+        set_error("check_manager_run_quick failed (ret=%d)", ret);
+        LOG_ERROR_T("SelfCheck", "Result", "RunFail",
+                    "quick check did not complete (ret=%d) — result NOT cached", ret);
+        need_configuration = 0;
+        return -1;
+    }
 
     // 获取是否需要配置
     need_configuration = summary.need_configuration;

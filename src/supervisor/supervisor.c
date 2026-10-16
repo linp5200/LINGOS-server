@@ -82,6 +82,10 @@ static supervisor_config_t g_config = {
 };
 
 static pid_t g_child_pid = -1;
+/* 【修复】子进程是否仍然活着：主循环 waitpid 回收后清零。
+ *   心跳线程只允许在"确认活着"时 kill(g_child_pid)——
+ *   否则子进程已被回收、其 PID 可能被系统复用，会误杀无关进程。 */
+static volatile sig_atomic_t g_child_alive = 0;
 static volatile sig_atomic_t g_shutdown_requested = 0;
 static volatile sig_atomic_t g_user_initiated_exit = 0;
 static time_t g_restart_timestamps[60];
@@ -188,7 +192,12 @@ static void log_crash(pid_t pid, int status, int signal) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char time_str[32];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
+    if (tm) {
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm);
+    } else {
+        /* localtime 失败（极罕见）时不能把 NULL 交给 strftime（会崩溃） */
+        safe_snprintf(time_str, sizeof(time_str), "epoch:%ld", (long)now);
+    }
 
     fprintf(fp, "timestamp=%s pid=%d status=%d signal=%d\n", time_str, pid, status, signal);
     fclose(fp);
@@ -291,7 +300,11 @@ static void start_child(void) {
 
     pid_t pid = fork();
     if (pid == -1) {
+        /* 【修复】fork 失败必须清掉子进程状态：否则主循环会对已回收的旧 PID
+         *   waitpid → ECHILD → 监督者静默退出（设备无人看护） */
         LOG_ERROR_T("Supervisor", "StartChild", "ForkFail", "fork failed: %s", strerror(errno));
+        g_child_pid = -1;
+        g_child_alive = 0;
         return;
     }
 
@@ -307,6 +320,7 @@ static void start_child(void) {
     }
 
     g_child_pid = pid;
+    g_child_alive = 1;
     g_user_initiated_exit = 0;
     g_last_heartbeat = time(NULL);
     LOG_INFO_T("Supervisor", "StartChild", "OK", "child PID=%d", pid);
@@ -415,11 +429,19 @@ static void* heartbeat_thread_func(void *arg) {
         }
 
         time_t elapsed = now - g_last_heartbeat;
-        if (elapsed > g_config.heartbeat_timeout && g_child_pid > 0) {
+        /* 【修复】原实现 kill 后把 g_child_pid 置 -1 →
+         *   ① 主循环 waitpid(-1) 收到的不是 -1，崩溃分支不成立 → 不重启，设备停机；
+         *   ② 若主循环先回收，心跳线程再写 -1 → 追踪变量指向 -1，新子进程失管。
+         *   现交由主循环负责回收与重启：这里只杀进程，不动任何状态。
+         *   同时用 g_child_alive 防止对已回收 PID（可能已被复用）误杀。 */
+        if (elapsed > g_config.heartbeat_timeout && g_child_alive && g_child_pid > 0) {
+            pid_t victim = g_child_pid;
             LOG_WARN_T("Supervisor", "Heartbeat", "Timeout",
-                       "heartbeat timeout (%ld seconds), killing child", elapsed);
-            kill(g_child_pid, SIGKILL);
-            g_child_pid = -1;
+                       "heartbeat timeout (%ld seconds), killing child PID=%d", elapsed, (int)victim);
+            if (kill(victim, SIGKILL) != 0 && errno != ESRCH) {
+                LOG_WARN_T("Supervisor", "Heartbeat", "KillFail", "kill(%d) failed: %s",
+                           (int)victim, strerror(errno));
+            }
         }
     }
 
@@ -459,9 +481,31 @@ static void start_recovery_shell(void) {
         "您可以运行 'system configuration' 来设置您的系统。\n"
         "输入 'exit' 返回监督者并重试。\n"
     ));
-    execl("/bin/sh", "sh", (char*)NULL);
-    LOG_ERROR_T("Supervisor", "Recovery", "ExecFail", "failed to start shell: %s", strerror(errno));
-    _exit(1);
+    /* 【修复】原实现用 execl 直接替换监督者进程：
+     *   上面刚打印的"输入 exit 返回监督者并重试"永远不可能发生——
+     *   shell 一退出整机就没有监督者了，且 handle_crash 里 start_recovery_shell()
+     *   之后的 restart_child() 是死代码。改为 fork 子 shell 并等待：
+     *   shell 退出后监督者仍在，继续按策略重启主程序。 */
+    pid_t shell_pid = fork();
+    if (shell_pid < 0) {
+        LOG_ERROR_T("Supervisor", "Recovery", "ForkFail", "fork failed: %s", strerror(errno));
+        return;
+    }
+    if (shell_pid == 0) {
+        execl("/bin/sh", "sh", (char*)NULL);
+        LOG_ERROR_T("Supervisor", "Recovery", "ExecFail", "failed to start shell: %s", strerror(errno));
+        _exit(1);
+    }
+
+    int st = 0;
+    while (waitpid(shell_pid, &st, 0) < 0) {
+        if (errno != EINTR) {
+            LOG_WARN_T("Supervisor", "Recovery", "WaitFail", "waitpid failed: %s", strerror(errno));
+            break;
+        }
+    }
+    LOG_INFO_T("Supervisor", "Recovery", "Exit",
+               "recovery shell exited (status=%d), resuming supervision", st);
 }
 
 static int g_restart_streak = 0;   /* 【2026-09-24】连续快速重启计数（稳定运行 300s 后清零） */
@@ -582,6 +626,15 @@ int main(int argc, char **argv) {
 
     while (!g_shutdown_requested) {
         int status;
+
+        /* 【修复】追踪变量无效（fork 失败等）时不再用 waitpid(-1) 空转，
+         *   最终以 ECHILD 静默 break（设备无人看护却无明确错误） */
+        if (g_child_pid <= 0) {
+            LOG_ERROR_T("Supervisor", "Main", "NoChildTracked",
+                        "no child process tracked (fork failed?) — supervisor exiting");
+            break;
+        }
+
         pid_t ret = waitpid(g_child_pid, &status, WNOHANG);
 
         /* 【2026-09-24】退避复位：子进程稳定运行 >300s → 清空连续重启计数 */
@@ -593,6 +646,8 @@ int main(int argc, char **argv) {
         }
 
         if (ret == g_child_pid) {
+            /* 已被回收：心跳线程不得再对该 PID 发信号（PID 可能被复用） */
+            g_child_alive = 0;
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);
                 LOG_INFO_T("Supervisor", "Main", "ChildExited", "child exited with code %d", exit_code);
@@ -637,6 +692,7 @@ int main(int argc, char **argv) {
             }
         } else if (ret == -1) {
             if (errno == EINTR) continue;
+            g_child_alive = 0;
             LOG_ERROR_T("Supervisor", "Main", "WaitFail", "waitpid error: %s", strerror(errno));
             break;
         }

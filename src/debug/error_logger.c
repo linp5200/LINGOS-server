@@ -27,7 +27,12 @@ static const char* get_error_log_path(void) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char date_str[11];
-    strftime(date_str, sizeof(date_str), "%Y%m%d", tm);
+    if (!tm) {
+        /* localtime 失败时不能把 NULL 交给 strftime（会崩溃） */
+        safe_snprintf(date_str, sizeof(date_str), "unknown");
+    } else {
+        strftime(date_str, sizeof(date_str), "%Y%m%d", tm);
+    }
 
     if (strcmp(date_str, last_date) != 0) {
         const char *root = lingos_data_root();
@@ -58,15 +63,24 @@ void log_error_to_file_va(const char *tag, const char *fmt, va_list args) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char time_buf[32];
-    strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm);
+    if (!tm) {
+        safe_snprintf(time_buf, sizeof(time_buf), "epoch:%ld", (long)now);
+    } else {
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm);
+    }
     fprintf(fp, "[%s] [%s] ", time_buf, tag);
     vfprintf(fp, fmt, args);
     fprintf(fp, "\n");
     fclose(fp);
 
-    /* 同时记录到主日志系统 */
+    /* 【修复】va_list 只能消费一次：原实现把同一个 args 又传给 vsnprintf，
+     *   第二次读取已耗尽的 va_list 属未定义行为（x86_64 上 va_list 是数组，
+     *   会越过栈/读到垃圾 → 主日志里出现乱码甚至崩溃）。改用 va_copy 副本。 */
     char msg[2048];
-    vsnprintf(msg, sizeof(msg), fmt, args);
+    va_list args_copy;
+    va_copy(args_copy, args);
+    vsnprintf(msg, sizeof(msg), fmt, args_copy);
+    va_end(args_copy);
     LOG_ERROR_T("ErrorLogger", "Write", tag, "%s", msg);
 }
 

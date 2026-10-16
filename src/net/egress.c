@@ -19,6 +19,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <arpa/inet.h>   /* inet_pton：私网判定必须基于真实 IP 字面量 */
 
 /* options_get 弱符号（alertd 等不含 options 模块的二进制 → NULL → 默认开启） */
 extern int options_get(const char *key) __attribute__((weak));
@@ -99,8 +100,17 @@ static void egress_load_user_file(void) {
     if (en) {
         const char *colon = strchr(en, ':');
         if (colon) {
-            while (*colon && *colon != 't' && *colon != 'f') colon++;
-            if (colon[0] == 'f') g_user_disabled = 1;
+            const char *v = colon + 1;
+            while (*v == ' ' || *v == '\t' || *v == '\n' || *v == '\r') v++;
+            /* 【修复】原实现从 ':' 起一路向后找第一个 't'/'f'：
+             *   {"enabled": 1, "domains":["fast.com"]} 会命中域名里的 'f'
+             *   → 误判为 false → 整个出口白名单被关闭（数据外传控制失效）。
+             *   现只解析紧邻冒号的字面量；无法识别时保持白名单开启（fail-closed）。 */
+            if (strncmp(v, "false", 5) == 0 || *v == '0') {
+                g_user_disabled = 1;
+            } else if (strncmp(v, "true", 4) == 0 || *v == '1') {
+                g_user_disabled = 0;
+            }
         }
     }
 
@@ -159,19 +169,28 @@ static int is_loopback_or_lan(const char *host) {
     size_t hl = strlen(host);
     if (hl > 6 && strcasecmp(host + hl - 6, ".local") == 0) return 1;
 
-    /* 127.* / ::1 */
-    if (strncmp(host, "127.", 4) == 0) return 1;
-    if (strcmp(host, "::1") == 0) return 1;
-
-    /* 私有地址段 */
-    if (strncmp(host, "10.", 3) == 0) return 1;
-    if (strncmp(host, "192.168.", 8) == 0) return 1;
-    if (strncmp(host, "172.", 4) == 0) {
-        int second = atoi(host + 4);
-        if (second >= 16 && second <= 31) return 1;
+    /* 【修复】原实现用字符串前缀判定私网："10." / "192.168." / "172." / "fd" / "fe80"
+     *   → 形如 10.evil.com、192.168.evil.com、fd.evil.com、fe80.evil.com 的域名
+     *   都会被当作"内网"直接放行，绕过出口白名单（数据外传控制被绕过）。
+     *   现改为：只有真正的 IP 字面量落在私网/回环段才放行，域名一律走白名单。 */
+    struct in_addr v4;
+    if (inet_pton(AF_INET, host, &v4) == 1) {
+        uint32_t h = ntohl(v4.s_addr);
+        if ((h >> 24) == 127) return 1;              /* 127.0.0.0/8 */
+        if ((h >> 24) == 10) return 1;               /* 10.0.0.0/8 */
+        if ((h >> 20) == 0xAC1) return 1;            /* 172.16.0.0/12 */
+        if ((h >> 16) == 0xC0A8) return 1;           /* 192.168.0.0/16 */
+        return 0;
     }
-    if (strncasecmp(host, "fd", 2) == 0) return 1;       /* fd00::/8 ULA */
-    if (strncasecmp(host, "fe80", 4) == 0) return 1;     /* 链路本地 IPv6（内网） */
+
+    struct in6_addr v6;
+    if (inet_pton(AF_INET6, host, &v6) == 1) {
+        if (IN6_IS_ADDR_LOOPBACK(&v6)) return 1;     /* ::1 */
+        if (IN6_IS_ADDR_LINKLOCAL(&v6)) return 1;    /* fe80::/10 */
+        if ((v6.s6_addr[0] & 0xFE) == 0xFC) return 1;/* fc00::/7 ULA */
+        return 0;
+    }
+
     return 0;
 }
 
@@ -224,15 +243,41 @@ int egress_check(const char *host) {
 
 int egress_check_url(const char *url) {
     if (!url) return -1;
+
     const char *p = strstr(url, "://");
     if (!p) return -1;
     p += 3;
-    const char *end = p;
-    while (*end && *end != '/' && *end != '?' && *end != '#' && *end != ':') end++;
-    size_t hl = (size_t)(end - p);
-    if (hl == 0 || hl >= 256) return -1;
+
+    /* authority 段：到第一个 '/' '?' '#' 为止 */
+    const char *auth_end = p;
+    while (*auth_end && *auth_end != '/' && *auth_end != '?' && *auth_end != '#') auth_end++;
+
+    /* 【修复】userinfo 绕过：http://github.com:8080@evil.com/ 原实现取到
+     *   "github.com"（白名单命中）就放行，而 curl 实际连的是 evil.com
+     *   → 出口白名单可被绕过（数据外传控制失效）。按 curl 规则取最后一个 '@' 之后。 */
+    const char *host_start = p;
+    for (const char *q = p; q < auth_end; q++) {
+        if (*q == '@') host_start = q + 1;
+    }
+
+    /* IPv6 字面量 [::1]:port */
     char host[300];
-    memcpy(host, p, hl);
+    size_t hl = 0;
+    if (host_start < auth_end && *host_start == '[') {
+        const char *rb = host_start + 1;
+        while (rb < auth_end && *rb != ']') rb++;
+        if (rb >= auth_end) return -1;
+        hl = (size_t)(rb - (host_start + 1));
+        if (hl == 0 || hl >= sizeof(host)) return -1;
+        memcpy(host, host_start + 1, hl);
+    } else {
+        const char *end = host_start;
+        while (end < auth_end && *end != ':') end++;
+        hl = (size_t)(end - host_start);
+        if (hl == 0 || hl >= sizeof(host)) return -1;
+        memcpy(host, host_start, hl);
+    }
     host[hl] = '\0';
+
     return egress_check(host);
 }

@@ -29,6 +29,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <poll.h>
+#include <sys/wait.h>
 
 #define MAX_STRATEGIES 16
 #define HISTORY_FILE "/LINGOS/state/repair_history.json"
@@ -43,6 +44,68 @@ static repair_strategy_t g_strategies[MAX_STRATEGIES];
 static int g_strategy_count = 0;
 static int g_initialized = 0;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* ============================================================
+ * 内部辅助：真实执行 shell 命令并返回成败
+ *   【修复】原实现多处直接 system(...)，不校验退出码就对外报"已清理/已重启"，
+ *   属于假成功：修复告警被清、用户被误导（先生：禁假成功/静默失败）。
+ * ============================================================ */
+static int run_shell_ok(const char *cmd) {
+    if (!cmd || !*cmd) return 0;
+
+    int st = system(cmd);
+    if (st == -1) return 0;
+    if (WIFEXITED(st)) return WEXITSTATUS(st) == 0;
+    return 0;   /* 被信号终止 = 失败 */
+}
+
+/* JSON 字符串值转义：错误信息里常带引号/反斜杠/换行，直接拼进请求 JSON
+ *   会生成非法 JSON，Python 诊断引擎直接解析失败（静默降级）。
+ *   【修复】原实现 safe_snprintf(... "error":"%s" ...) 未做任何转义。 */
+static void json_escape_into(const char *src, char *dst, size_t dst_len) {
+    size_t di = 0;
+    if (!dst || dst_len == 0) return;
+
+    for (const char *p = src; p && *p && di + 2 < dst_len; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"' || c == '\\') {
+            dst[di++] = '\\';
+            dst[di++] = (char)c;
+        } else if (c == '\n') {
+            dst[di++] = '\\';
+            dst[di++] = 'n';
+        } else if (c == '\r') {
+            dst[di++] = '\\';
+            dst[di++] = 'r';
+        } else if (c == '\t') {
+            dst[di++] = '\\';
+            dst[di++] = 't';
+        } else if (c >= 0x20) {
+            dst[di++] = (char)c;   /* 其余控制字符直接丢弃 */
+        }
+    }
+    dst[di] = '\0';
+}
+
+/* 等待某个文件（socket）出现，最多 wait_ms 毫秒 */
+static int wait_for_path(const char *path, int wait_ms) {
+    for (int waited = 0; waited < wait_ms; waited += 200) {
+        if (access(path, F_OK) == 0) return 1;
+        usleep(200 * 1000);
+    }
+    return (access(path, F_OK) == 0) ? 1 : 0;
+}
+
+/* 等待某进程名出现（pgrep -x），最多 wait_ms 毫秒 */
+static int wait_for_process(const char *name, int wait_ms) {
+    char cmd[128];
+    safe_snprintf(cmd, sizeof(cmd), "pgrep -x '%s' >/dev/null 2>&1", name);
+    for (int waited = 0; waited < wait_ms; waited += 200) {
+        if (run_shell_ok(cmd)) return 1;
+        usleep(200 * 1000);
+    }
+    return run_shell_ok(cmd);
+}
 
 /* ============================================================
  * 内部辅助：连接 Python 修复引擎（带超时）
@@ -328,13 +391,20 @@ static int execute_action(const repair_action_t *action, char *out_msg, size_t o
             if (access(cache_dir, F_OK) == 0) {
                 char cmd[512];
                 safe_snprintf(cmd, sizeof(cmd), "rm -rf '%s'/* 2>/dev/null", cache_dir);
-                system(cmd);
-                LOG_INFO_T("ActiveRepair", "Execute", "Cache", "cache cleaned");
-                safe_snprintf(out_msg, out_len, tr("Cache cleaned", "缓存已清理"));
-            } else {
-                safe_snprintf(out_msg, out_len, tr("Cache directory not found", "缓存目录不存在"));
+                if (run_shell_ok(cmd)) {
+                    LOG_INFO_T("ActiveRepair", "Execute", "Cache", "cache cleaned");
+                    safe_snprintf(out_msg, out_len, tr("Cache cleaned", "缓存已清理"));
+                    return 0;
+                }
+                /* 【修复】rm 失败（权限/只读盘）原来仍报"缓存已清理"= 假成功 */
+                LOG_ERROR_T("ActiveRepair", "Execute", "CacheFail", "failed to clean %s", cache_dir);
+                safe_snprintf(out_msg, out_len,
+                              tr("Cache clean FAILED (see logs)", "缓存清理失败（见日志）"));
+                return -1;
             }
-            return 0;
+            LOG_WARN_T("ActiveRepair", "Execute", "CacheMissing", "%s not found", cache_dir);
+            safe_snprintf(out_msg, out_len, tr("Cache directory not found", "缓存目录不存在"));
+            return -1;
         }
 
         case ACTION_CLEAN_LOGS: {
@@ -344,13 +414,20 @@ static int execute_action(const repair_action_t *action, char *out_msg, size_t o
             if (access(log_dir, F_OK) == 0) {
                 char cmd[512];
                 safe_snprintf(cmd, sizeof(cmd), "find '%s' -name '*.log' -mtime +1 -delete 2>/dev/null", log_dir);
-                system(cmd);
-                LOG_INFO_T("ActiveRepair", "Execute", "Logs", "old logs cleaned");
-                safe_snprintf(out_msg, out_len, tr("Old logs cleaned", "旧日志已清理"));
-            } else {
-                safe_snprintf(out_msg, out_len, tr("Log directory not found", "日志目录不存在"));
+                if (run_shell_ok(cmd)) {
+                    LOG_INFO_T("ActiveRepair", "Execute", "Logs", "old logs cleaned");
+                    safe_snprintf(out_msg, out_len, tr("Old logs cleaned", "旧日志已清理"));
+                    return 0;
+                }
+                /* 【修复】find 失败原来仍报"旧日志已清理"= 假成功（磁盘告警不会解除） */
+                LOG_ERROR_T("ActiveRepair", "Execute", "LogsFail", "failed to clean logs in %s", log_dir);
+                safe_snprintf(out_msg, out_len,
+                              tr("Log clean FAILED (see logs)", "日志清理失败（见日志）"));
+                return -1;
             }
-            return 0;
+            LOG_WARN_T("ActiveRepair", "Execute", "LogDirMissing", "%s not found", log_dir);
+            safe_snprintf(out_msg, out_len, tr("Log directory not found", "日志目录不存在"));
+            return -1;
         }
 
         case ACTION_RESTART_AI_SERVER: {
@@ -409,19 +486,75 @@ static int execute_action(const repair_action_t *action, char *out_msg, size_t o
                 /* 全不行——最后尝试系统 python3 + 任一脚本（日志会暴露真实错） */
                 safe_snprintf(cmd, sizeof(cmd), "python3 %s &", script[ns-1]);
             }
-            system(cmd);
+            if (system(cmd) == -1) {
+                LOG_ERROR_T("ActiveRepair", "Execute", "AIServerSpawn", "system() failed for: %s", cmd);
+                safe_snprintf(out_msg, out_len,
+                              tr("AI server restart command failed to run", "AI 服务器重启命令执行失败"));
+                return -1;
+            }
             LOG_INFO_T("ActiveRepair", "Execute", "AIServer", "AI server restart cmd=%s", cmd);
-            safe_snprintf(out_msg, out_len, tr("AI server restarted", "AI 服务器已重启"));
-            return 0;
+
+            /* 【修复】原实现发完后台命令就报"已重启"（system 立即返回，服务可能根本没起来）
+             *   → 假成功。现真实等待 ai_server 的 socket 出现再判定。 */
+            char ai_sock[512];
+            safe_snprintf(ai_sock, sizeof(ai_sock), "%s/run/ai.sock", lingos_data_root());
+            if (wait_for_path(ai_sock, 3000)) {
+                safe_snprintf(out_msg, out_len, tr("AI server restarted", "AI 服务器已重启"));
+                return 0;
+            }
+            LOG_ERROR_T("ActiveRepair", "Execute", "AIServerDown",
+                        "AI socket %s not present after restart attempt", ai_sock);
+            safe_snprintf(out_msg, out_len,
+                          tr("AI server did NOT come up (restart command sent)",
+                             "AI 服务器未起来（已发送重启命令）"));
+            return -1;
         }
 
         case ACTION_RESTART_DAEMON: {
-            system("pkill lingosd || true");
-            usleep(500000);
-            system("./lingosd &");
-            LOG_INFO_T("ActiveRepair", "Execute", "Daemon", "daemon restarted");
-            safe_snprintf(out_msg, out_len, tr("Daemon restarted", "守护进程已重启"));
-            return 0;
+            /* 【修复】原为 system("./lingosd &")：相对路径依赖 cwd（脚本从别处启动
+             *   就找不到二进制），且不校验结果 → 守护进程没起来也报"已重启"。
+             *   后果：lingosd 崩溃场景下"修复成功"，实际整机无守护（生命线静默失败）。 */
+            static const char *daemon_candidates[] = {
+                "/LINGOS/bin/lingosd", "/LINGOS/lingosd", "./lingosd", NULL
+            };
+            char daemon_path[512] = "";
+
+            for (int i = 0; daemon_candidates[i]; i++) {
+                if (access(daemon_candidates[i], X_OK) == 0) {
+                    safe_strncpy(daemon_path, daemon_candidates[i], sizeof(daemon_path));
+                    break;
+                }
+            }
+            if (daemon_path[0] == '\0') {
+                LOG_ERROR_T("ActiveRepair", "Execute", "DaemonMissing",
+                            "no executable lingosd found (/LINGOS/bin/lingosd, /LINGOS/lingosd, ./lingosd)");
+                safe_snprintf(out_msg, out_len,
+                              tr("lingosd binary not found — cannot restart",
+                                 "未找到 lingosd 可执行文件——无法重启"));
+                return -1;
+            }
+
+            char cmd[640];
+            safe_snprintf(cmd, sizeof(cmd),
+                          "pkill -x lingosd 2>/dev/null; sleep 1; nohup '%s' >/dev/null 2>&1 &",
+                          daemon_path);
+            if (system(cmd) == -1) {
+                LOG_ERROR_T("ActiveRepair", "Execute", "DaemonSpawn", "system() failed for %s", daemon_path);
+                safe_snprintf(out_msg, out_len, tr("Daemon restart command failed", "守护进程重启命令执行失败"));
+                return -1;
+            }
+
+            if (wait_for_process("lingosd", 4000)) {
+                LOG_INFO_T("ActiveRepair", "Execute", "Daemon", "daemon restarted via %s", daemon_path);
+                safe_snprintf(out_msg, out_len, tr("Daemon restarted", "守护进程已重启"));
+                return 0;
+            }
+            LOG_ERROR_T("ActiveRepair", "Execute", "DaemonDown",
+                        "lingosd process not detected after restart attempt (%s)", daemon_path);
+            safe_snprintf(out_msg, out_len,
+                          tr("Daemon did NOT come up (restart attempted)",
+                             "守护进程未起来（已尝试重启）"));
+            return -1;
         }
 
         case ACTION_RESTART_SERVICE: {
@@ -454,20 +587,46 @@ static int execute_action(const repair_action_t *action, char *out_msg, size_t o
         }
 
         case ACTION_ROLLBACK: {
-            system("system rollback");
-            LOG_WARN_T("ActiveRepair", "Execute", "Rollback", "system rollback triggered");
-            safe_snprintf(out_msg, out_len, tr("System rollback triggered", "系统回滚已触发"));
-            return 0;
+            /* 【修复】"system rollback" 只是 TUI 内部命令（src/shell/shell.c:1637），
+             *   /bin/sh 下并无可执行文件 → 必然 127 失败；原实现不看退出码就
+             *   记录"系统回滚已触发"（审计里出现从未发生的回滚，假成功）。
+             *   此处如实判定：失败返回 -1，让策略引擎继续降级/通知用户。
+             *   真实回滚 API：update_rollback_apply(version)（需版本名，见 update_rollback.h）。 */
+            int st = system("system rollback");
+            if (st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+                LOG_WARN_T("ActiveRepair", "Execute", "Rollback", "system rollback triggered");
+                safe_snprintf(out_msg, out_len, tr("System rollback triggered", "系统回滚已触发"));
+                return 0;
+            }
+            LOG_ERROR_T("ActiveRepair", "Execute", "RollbackFail",
+                        "'system rollback' unavailable or failed (status=%d) — no rollback performed", st);
+            safe_snprintf(out_msg, out_len,
+                          tr("Rollback NOT performed (no rollback backend available)",
+                             "回滚未执行（无可用回滚后端）"));
+            return -1;
         }
 
         case ACTION_REPAIR_CONFIG: {
-            safe_snprintf(out_msg, out_len, tr("Config repair (stub)", "配置修复（占位）"));
-            return 0;
+            /* 【修复】原来是"占位"却返回 0：默认策略 repair_strategies.json:51
+             *   （config corrupt → repair_config, notify_user）会因此被判定"修复成功"
+             *   并 break，导致后面的 notify_user 永不执行——用户既没被修复也没被告知
+             *   （静默失败/假成功）。未实现的动作必须如实失败。 */
+            LOG_ERROR_T("ActiveRepair", "Execute", "NotImplemented",
+                        "ACTION_REPAIR_CONFIG has no implementation — reporting failure");
+            safe_snprintf(out_msg, out_len,
+                          tr("Config repair is not implemented — no action taken",
+                             "配置修复尚未实现——未执行任何操作"));
+            return -1;
         }
 
         case ACTION_REPAIR_PACK: {
-            safe_snprintf(out_msg, out_len, tr("Repair pack generation (stub)", "修复包生成（占位）"));
-            return 0;
+            /* 【修复】同 ACTION_REPAIR_CONFIG：占位动作不得冒充成功 */
+            LOG_ERROR_T("ActiveRepair", "Execute", "NotImplemented",
+                        "ACTION_REPAIR_PACK has no implementation — reporting failure");
+            safe_snprintf(out_msg, out_len,
+                          tr("Repair pack generation is not implemented — no action taken",
+                             "修复包生成尚未实现——未执行任何操作"));
+            return -1;
         }
 
         default: {
@@ -557,20 +716,43 @@ int active_repair_load_strategies(const char *path) {
         return -1;
     }
 
-    fseek(fp, 0, SEEK_END);
+    /* 【修复】原实现不校验 ftell 结果：ftell 返回 -1 时 size+1==0 →
+     *   malloc(0) 可能返回非 NULL，随后 fread(buf,1,(size_t)-1,...) 越界写、
+     *   buf[size] 写到 buf[-1]，直接堆破坏。同时 fread 结果也未校验。 */
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        LOG_ERROR_T("ActiveRepair", "LoadStrategies", "SeekFail", "fseek(END) failed: %s", strerror(errno));
+        fclose(fp);
+        return -1;
+    }
     long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+    if (size <= 0 || size > (long)(1024 * 1024)) {
+        LOG_ERROR_T("ActiveRepair", "LoadStrategies", "BadSize",
+                    "unreasonable strategy file size %ld (max 1MB)", size);
+        fclose(fp);
+        return -1;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        LOG_ERROR_T("ActiveRepair", "LoadStrategies", "SeekFail", "fseek(SET) failed: %s", strerror(errno));
+        fclose(fp);
+        return -1;
+    }
 
-    char *buf = malloc(size + 1);
+    char *buf = malloc((size_t)size + 1);
     if (!buf) {
         fclose(fp);
         LOG_ERROR_T("ActiveRepair", "LoadStrategies", "MallocFail", "malloc failed");
         return -1;
     }
 
-    fread(buf, 1, size, fp);
-    buf[size] = '\0';
+    size_t got = fread(buf, 1, (size_t)size, fp);
+    buf[got] = '\0';
     fclose(fp);
+    if (got != (size_t)size) {
+        LOG_ERROR_T("ActiveRepair", "LoadStrategies", "ShortRead",
+                    "read %zu of %ld bytes", got, size);
+        free(buf);
+        return -1;
+    }
 
     cJSON *root = cJSON_Parse(buf);
     free(buf);
@@ -636,10 +818,15 @@ int active_repair_trigger(const char *error_msg, const char *error_source, repai
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     /* ---- 1. 优先尝试 Socket 连接 Python 诊断引擎 ---- */
+    char esc_error[300];
+    char esc_source[80];
+    json_escape_into(error_msg, esc_error, sizeof(esc_error));
+    json_escape_into(error_source ? error_source : "unknown", esc_source, sizeof(esc_source));
+
     char cmd_json[512];
     safe_snprintf(cmd_json, sizeof(cmd_json),
                   "{\"cmd\":\"diagnose_and_repair\",\"error\":\"%s\",\"source\":\"%s\"}",
-                  error_msg, error_source ? error_source : "unknown");
+                  esc_error, esc_source);
 
     char resp_buf[2048];
     int socket_ret = send_repair_request(cmd_json, resp_buf, sizeof(resp_buf));
@@ -767,10 +954,20 @@ int active_repair_trigger(const char *error_msg, const char *error_source, repai
             if (strcmp(strategy->fallback, "rollback") == 0) {
                 char msg[256];
                 repair_action_t fb_action = {.type = ACTION_ROLLBACK};
-                execute_action(&fb_action, msg, sizeof(msg));
-                safe_strncpy(result->error_msg, tr("Fallback rollback triggered", "降级回滚已触发"),
-                             sizeof(result->error_msg));
-                record_history("fallback_rollback", msg, 1);
+                /* 【修复】原来忽略 execute_action 的返回值，无条件按 success=1
+                 *   记入历史/审计（回滚从未发生也记录成功）。现按真实结果记录。 */
+                int fb_ret = execute_action(&fb_action, msg, sizeof(msg));
+                if (fb_ret == 0) {
+                    safe_strncpy(result->error_msg, tr("Fallback rollback triggered", "降级回滚已触发"),
+                                 sizeof(result->error_msg));
+                } else {
+                    safe_strncpy(result->error_msg,
+                                 tr("Fallback rollback failed", "降级回滚失败"),
+                                 sizeof(result->error_msg));
+                }
+                record_history("fallback_rollback", msg, fb_ret == 0 ? 1 : 0);
+                audit_log("system", "active_repair", "repair", "fallback_rollback", msg,
+                          fb_ret == 0 ? 0 : -1, "high", fb_ret == 0 ? 1 : 0);
             }
         }
     }

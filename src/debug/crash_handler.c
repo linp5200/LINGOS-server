@@ -10,6 +10,7 @@
 #include "../common/data_path.h"
 #include "../common/safe_string.h"
 #include "../common/lang.h"
+#include "../lib/log_extra.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,8 +56,15 @@ static void safe_write_string(int fd, const char *str) {
 static void get_timestamp_safe(char *buf, size_t size) {
     time_t t = time(NULL);
     struct tm tm;
-    localtime_r(&t, &tm);
-    strftime(buf, size, "%Y%m%d_%H%M%S", &tm);
+    /* 【修复】localtime_r 失败时 tm 未初始化就被 strftime 读取（UB）。
+     *   信号处理路径必须绝对可靠，失败退化为 epoch 秒。 */
+    if (!localtime_r(&t, &tm)) {
+        safe_snprintf(buf, size, "epoch_%ld", (long)t);
+        return;
+    }
+    if (strftime(buf, size, "%Y%m%d_%H%M%S", &tm) == 0) {
+        safe_snprintf(buf, size, "epoch_%ld", (long)t);
+    }
 }
 
 /* ============================================================
@@ -168,7 +176,10 @@ void crash_handler_init(void) {
     char log_dir[512];
     safe_snprintf(log_dir, sizeof(log_dir), "%s/Debug/log", root);
 
-    mkdir(log_dir, 0755);
+    if (mkdir(log_dir, 0755) != 0 && errno != EEXIST) {
+        LOG_ERROR_T("CrashHandler", "Init", "MkdirFail", "cannot create %s: %s",
+                    log_dir, strerror(errno));
+    }
 
     char timestamp[32];
     get_timestamp_safe(timestamp, sizeof(timestamp));
@@ -176,6 +187,15 @@ void crash_handler_init(void) {
     safe_snprintf(log_path, sizeof(log_path), "%s/crash_%s_%d.log", log_dir, timestamp, getpid());
 
     crash_log_fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    /* 【修复】原来不检查 open 结果：目录不可写时崩溃日志/回溯被完全丢弃，
+     *   且没有任何提示（崩溃证据静默消失）。此处至少留下明确错误。 */
+    if (crash_log_fd < 0) {
+        LOG_ERROR_T("CrashHandler", "Init", "OpenFail",
+                    "cannot open crash log %s: %s — crash reports will NOT be written",
+                    log_path, strerror(errno));
+    } else {
+        LOG_INFO_T("CrashHandler", "Init", "OK", "crash log: %s", log_path);
+    }
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));

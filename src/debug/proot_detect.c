@@ -11,11 +11,21 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
 int is_in_proot(void) {
-    /* 检查 proot 特征文件 */
-    if (access("/proc/self/root", F_OK) == 0) {
-        /* proot 中 /proc/self/root 通常指向容器根目录 */
+    /* 【修复】原来只判断 /proc/self/root 是否存在——真实 Linux 上它必然存在
+     *   （指向 "/"），于是恒返回 1。受害方：crash_dump.c:205 因此永远走 proot
+     *   分支，用 /proc/version 代替 dmesg，真机崩溃转储丢失内核日志。
+     *   正确判据：proot 会把根伪装成别处（如 termux 的 rootfs 路径），
+     *   即 readlink(/proc/self/root) != "/"。 */
+    char root_link[512];
+    ssize_t n = readlink("/proc/self/root", root_link, sizeof(root_link) - 1);
+    if (n > 0) {
+        root_link[n] = '\0';
+        if (strcmp(root_link, "/") != 0) return 1;
+    } else if (access("/proc/self/root", F_OK) != 0) {
+        /* 连 /proc 都不可读：环境异常，按 proot/受限环境处理 */
         return 1;
     }
     /* 检查 Termux 特征（proot-distro 常用） */

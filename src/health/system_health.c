@@ -58,7 +58,9 @@ int check_python(void) {
 }
 
 int check_ai_backend(void) {
-    FILE *fp = popen("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080 2>/dev/null", "r");
+    /* 【修复】缺少超时：curl 无总超时，本机端口半开时会挂住整个看门狗线程
+     *   （健康检查是生命线，不能被一次网络调用卡死）。 */
+    FILE *fp = popen("curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 5 http://127.0.0.1:8080 2>/dev/null", "r");
     if (!fp) return 0;
     char code[4] = {0};
     if (fgets(code, sizeof(code), fp)) {
@@ -71,7 +73,8 @@ int check_ai_backend(void) {
 }
 
 int check_network(void) {
-    FILE *fp = popen("curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 https://api.deepseek.com/health 2>/dev/null", "r");
+    /* 【修复】只有 connect-timeout、没有总超时：TLS/响应阶段卡住会拖死看门狗线程 */
+    FILE *fp = popen("curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 8 https://api.deepseek.com/health 2>/dev/null", "r");
     if (!fp) return 0;
     char code[4] = {0};
     if (fgets(code, sizeof(code), fp)) {

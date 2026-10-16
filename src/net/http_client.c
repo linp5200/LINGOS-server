@@ -88,12 +88,37 @@ static int parse_url(const char *url, url_parts_t *out) {
     memcpy(hostport, hp, hl);
     hostport[hl] = '\0';
 
-    char *colon = strrchr(hostport, ':');
-    if (colon && strchr(hostport, '[') == NULL) {
-        *colon = '\0';
-        out->port = atoi(colon + 1);
+    /* 【修复】原实现直接对 "host:port" 取最后一个 ':'：
+     *   ① 带 userinfo 的 URL（http://user:pass@host/）会把 "user" 当主机、
+     *      "pass@host" 当端口 → 连接必然失败（合法 URL 无法使用）；
+     *   ② IPv6 字面量 http://[::1]:8080/ 保留方括号 → getaddrinfo 解析失败。
+     *   现与 curl/egress_check_url 语义对齐：先剥离 userinfo（最后一个 '@'），
+     *   再处理 [v6]:port 或 host:port。 */
+    char *at = strrchr(hostport, '@');
+    char *hp2 = at ? at + 1 : hostport;
+
+    char hostpart[300];
+    int port = 0;
+
+    if (hp2[0] == '[') {
+        char *rb = strchr(hp2, ']');
+        if (!rb) return -1;
+        size_t inner = (size_t)(rb - hp2 - 1);
+        if (inner == 0 || inner >= sizeof(hostpart)) return -1;
+        memcpy(hostpart, hp2 + 1, inner);
+        hostpart[inner] = '\0';
+        if (rb[1] == ':') port = atoi(rb + 2);
+    } else {
+        char *colon = strrchr(hp2, ':');
+        if (colon) {
+            *colon = '\0';
+            port = atoi(colon + 1);
+        }
+        safe_strncpy(hostpart, hp2, sizeof(hostpart));
     }
-    safe_strncpy(out->host, hostport, sizeof(out->host));
+
+    safe_strncpy(out->host, hostpart, sizeof(out->host));
+    out->port = port;
     if (out->port <= 0) out->port = out->is_https ? 443 : 80;
 
     if (slash) {

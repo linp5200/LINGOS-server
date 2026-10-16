@@ -94,9 +94,17 @@ int health_config_save(int interval) {
         return -1;
     }
 
-    fprintf(fp, "# Health watchdog configuration\n");
-    fprintf(fp, "check_interval = %d\n", interval);
-    fclose(fp);
+    /* 【修复】原实现不校验写盘结果：磁盘满/只读时仍报"已保存"（假成功），
+     *   重启后间隔回到旧值，用户以为设置生效。 */
+    int ok = (fprintf(fp, "# Health watchdog configuration\n") > 0) &&
+             (fprintf(fp, "check_interval = %d\n", interval) > 0);
+    if (fflush(fp) != 0) ok = 0;
+    if (fclose(fp) != 0) ok = 0;
+
+    if (!ok) {
+        LOG_ERROR_T("HealthWatchdog", "Save", "WriteFail", "failed to write %s", path);
+        return -1;
+    }
 
     LOG_INFO_T("HealthWatchdog", "Save", "OK", "health.conf saved, interval=%d", interval);
     return 0;
@@ -153,7 +161,25 @@ static void* watchdog_loop(void *arg) {
                 uart_puts(COLOR_RESET);
                 uart_puts("\n");
             } else if (ret == 0 && !result.success) {
+                /* 【修复】原来只写日志：自动修复失败时用户/运维完全看不到
+                 *   （生命线告警静默失败）。现同时输出到控制台（红字）。 */
                 LOG_WARN_T("HealthWatchdog", "Repair", "Fail", "repair failed: %s", result.error_msg);
+                uart_puts(COLOR_RED);
+                uart_puts(tr("[REPAIR] Auto-repair FAILED: ", "[修复] 自动修复失败："));
+                uart_puts(result.error_msg);
+                uart_puts(COLOR_RESET);
+                uart_puts("\n");
+            } else if (ret != 0) {
+                /* 【修复】repair 引擎本身返回错误（无匹配策略/内部错误）时原来什么都不做，
+                 *   故障被完全吞掉。按"宁误报不漏报"如实上报。 */
+                LOG_ERROR_T("HealthWatchdog", "Repair", "TriggerFail",
+                            "repair engine error (ret=%d) for: %s", ret, error_buf);
+                uart_puts(COLOR_RED);
+                uart_puts(tr("[REPAIR] Repair engine error, problem NOT fixed: ",
+                             "[修复] 修复引擎错误，问题未解决："));
+                uart_puts(error_buf);
+                uart_puts(COLOR_RESET);
+                uart_puts("\n");
             }
         }
     }
@@ -202,7 +228,14 @@ int health_watchdog_is_running(void) {
 int health_watchdog_set_interval(int seconds) {
     if (seconds < 60) seconds = 60;
     check_interval = seconds;
-    health_config_save(seconds);
+    /* 【修复】忽略 health_config_save 的返回值 → 保存失败也报 OK。
+     *   现在把真实结果透出（内存中的间隔仍然生效，但调用方知道未持久化）。 */
+    int save_ret = health_config_save(seconds);
+    if (save_ret != 0) {
+        LOG_WARN_T("HealthWatchdog", "SetInterval", "NotPersisted",
+                   "interval=%d applied in memory but NOT persisted to disk", check_interval);
+        return -1;
+    }
     LOG_INFO_T("HealthWatchdog", "SetInterval", "OK", "new interval=%d", check_interval);
     return 0;
 }

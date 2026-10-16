@@ -231,10 +231,25 @@ static privilege_rule_t* find_rule(const char *skill_name) {
  * ============================================================ */
 static privilege_cache_entry_t* find_cache(const char *skill_name) {
     if (!skill_name) return NULL;
+
+    time_t now = time(NULL);
     for (int i = 0; i < g_cache_count; i++) {
-        if (strcmp(g_cache[i].skill, skill_name) == 0 && g_cache[i].active) {
-            return &g_cache[i];
+        if (strcmp(g_cache[i].skill, skill_name) != 0 || !g_cache[i].active) continue;
+
+        /* 【修复·授权绕过】过期条目必须视为无效。
+         *   此前 find_cache 不检查 expires_at，而 clean_expired_cache() 只在
+         *   add_cache() 里被调用 → 限时授权（duration_sec > 0）到期后
+         *   ai_privilege_check() 仍返回"已授权"、ai_privilege_get_level() 仍返回
+         *   缓存等级 → 高影响/危险技能（L2/L3）被无限期放行。
+         *   触发条件：任何一次带时长的授权到期后，进程未再 grant 其它技能。
+         *   注：所有调用方均持有 g_privilege_lock，此处置 active=0 是安全的。 */
+        if (g_cache[i].expires_at > 0 && now >= g_cache[i].expires_at) {
+            g_cache[i].active = 0;
+            LOG_INFO_T("AI Privilege", "Cache", "Expired",
+                       "grant for skill '%s' expired — no longer authorized", g_cache[i].skill);
+            continue;
         }
+        return &g_cache[i];
     }
     return NULL;
 }

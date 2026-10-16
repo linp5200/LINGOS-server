@@ -63,6 +63,29 @@ static nook_personality_t nook_default = {
 };
 
 /* ============================================================
+ * 内部辅助：完整写入（处理短写 / EINTR）
+ *   【修复】原代码直接 write(fd, msg, strlen(msg))：
+ *   SOCK_STREAM 上 write 可能只写一部分（长提示词/长上下文超过发送缓冲时），
+ *   短写被当成成功 → 发给 AI 服务器的 JSON 被截断 → 解析失败/无响应，
+ *   用户只看到"AI 无响应"，真实原因被吞掉。
+ * ============================================================ */
+static int write_all(int fd, const char *buf, size_t len) {
+    size_t off = 0;
+    if (fd < 0 || (!buf && len > 0)) return -1;
+
+    while (off < len) {
+        ssize_t n = write(fd, buf + off, len - off);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1;
+        off += (size_t)n;
+    }
+    return 0;
+}
+
+/* ============================================================
  * 内部辅助：清理输入字符串（保留有效字符）
  * ============================================================ */
 static void clean_prompt(char *str) {
@@ -206,20 +229,15 @@ static int send_command_to_ai_server(const char *cmd_json, char *resp_buf, size_
         return -1;
     }
 
-    ssize_t written = write(fd, cmd_json, strlen(cmd_json));
-    if (written < 0) {
+    /* 【修复】短写检测（原仅判断 <0，截断的 JSON 会被当成发送成功） */
+    if (write_all(fd, cmd_json, strlen(cmd_json)) != 0 ||
+        write_all(fd, "\n", 1) != 0) {
         LOG_ERROR_T("Nook", "SendCmd", "WriteFail", "write error: %s (errno=%d)", strerror(errno), errno);
         close(fd);
         safe_snprintf(resp_buf, buf_len, tr("Error: Write failed", "错误：写入失败"));
         return -1;
     }
-    if (write(fd, "\n", 1) < 0) {
-        LOG_ERROR_T("Nook", "SendCmd", "NewlineFail", "write newline error: %s", strerror(errno));
-        close(fd);
-        safe_snprintf(resp_buf, buf_len, tr("Error: Write failed", "错误：写入失败"));
-        return -1;
-    }
-    LOG_DEBUG_T("Nook", "SendCmd", "Written", "sent %zd bytes", written);
+    LOG_DEBUG_T("Nook", "SendCmd", "Written", "sent %zu bytes", strlen(cmd_json));
 
     int ret = read_line_timeout(fd, resp_buf, buf_len, 10);
     close(fd);
@@ -743,23 +761,17 @@ int nook_ask_ollama(const char *prompt, const char *model, char *resp, uint32_t 
 
     LOG_DEBUG_T("Nook", "Ask", "Sending", "msg='%s'", msg);
 
-    ssize_t written = write(fd, msg, strlen(msg));
-    if (written < 0) {
+    /* 【修复】短写检测：长上下文请求被截断时原来静默失败（用户只看到无响应） */
+    size_t msg_len = strlen(msg);
+    if (write_all(fd, msg, msg_len) != 0 || write_all(fd, "\n", 1) != 0) {
         LOG_ERROR_T("Nook", "Ask", "SendFail", "write error: %s (errno=%d)", strerror(errno), errno);
         free(msg);
         close(fd);
         safe_snprintf(resp, len, tr("Send failed", "发送失败"));
         return -1;
     }
-    if (write(fd, "\n", 1) < 0) {
-        LOG_ERROR_T("Nook", "Ask", "NewlineFail", "write newline error: %s", strerror(errno));
-        free(msg);
-        close(fd);
-        safe_snprintf(resp, len, tr("Send failed", "发送失败"));
-        return -1;
-    }
     free(msg);
-    LOG_DEBUG_T("Nook", "Ask", "Sent", "sent %zd bytes", written);
+    LOG_DEBUG_T("Nook", "Ask", "Sent", "sent %zu bytes", msg_len);
 
     char line_buf[AI_RECV_BUF_SIZE];
     int ret = read_line_timeout(fd, line_buf, sizeof(line_buf), timeout);
@@ -882,7 +894,7 @@ static int nook_auth_pending(char *request_id, size_t id_len) {
         return 0;
     }
     const char *query = "{\"cmd\":\"pending\"}\n";
-    if (write(fd, query, strlen(query)) < 0) {
+    if (write_all(fd, query, strlen(query)) != 0) {
         close(fd);
         return 0;
     }
@@ -927,7 +939,14 @@ static void nook_auth_respond(const char *request_id, int approved) {
     char req[256];
     safe_snprintf(req, sizeof(req), "{\"cmd\":\"respond\",\"request_id\":\"%s\",\"decision\":\"%s\"}\n",
                   request_id, approved ? "approve" : "deny");
-    write(fd, req, strlen(req));
+    /* 【修复】原来完全不检查写入结果：用户的授权决定（批准/拒绝）可能根本没送到
+     *   ai_server，请求方一直挂起（静默失败，且发生在授权链路上）。
+     *   现在失败必留 ERROR 日志，便于定位"点了批准但没反应"。 */
+    if (write_all(fd, req, strlen(req)) != 0) {
+        LOG_ERROR_T("Nook", "AuthRespond", "WriteFail",
+                    "failed to deliver authorization decision '%s' for request '%s': %s",
+                    approved ? "approve" : "deny", request_id, strerror(errno));
+    }
     close(fd);
 }
 
@@ -940,8 +959,12 @@ static void display_agent_view(int index) {
 
     char req[64];
     safe_snprintf(req, sizeof(req), "{\"cmd\":\"agent_view\",\"index\":%d}", index);
-    write(vfd, req, strlen(req));
-    write(vfd, "\n", 1);
+    /* 【修复】原来忽略写入结果：短写/失败时子 AI 视图静默空白 */
+    if (write_all(vfd, req, strlen(req)) != 0 || write_all(vfd, "\n", 1) != 0) {
+        LOG_WARN_T("Nook", "AgentView", "WriteFail", "cannot send agent_view request: %s", strerror(errno));
+        close(vfd);
+        return;
+    }
 
     char resp[8192];
     if (read_line_timeout(vfd, resp, sizeof(resp), 5) > 0) {
@@ -1033,8 +1056,14 @@ int nook_ask_stream(const char *prompt, const char *model, char *resp, uint32_t 
     char *msg = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!msg) { close(fd); return -1; }
-    write(fd, msg, strlen(msg));
-    write(fd, "\n", 1);
+    /* 【修复】流式请求也必须检测短写：截断的 JSON 会导致整轮对话无输出 */
+    if (write_all(fd, msg, strlen(msg)) != 0 || write_all(fd, "\n", 1) != 0) {
+        LOG_ERROR_T("Nook", "AskStream", "SendFail", "write error: %s (errno=%d)", strerror(errno), errno);
+        free(msg);
+        close(fd);
+        safe_snprintf(resp, len, tr("Send failed", "发送失败"));
+        return -1;
+    }
     free(msg);
 
     /* 循环读取流式事件行（poll 双监听：ai.sock 事件 + stdin ^N 切换键） */

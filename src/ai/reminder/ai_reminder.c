@@ -31,6 +31,10 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
  * 内部辅助：获取提醒目录
  * ============================================================ */
 
+/* 【修复】调度器是否真的在跑：未跑 = 提醒只会被存储、永远不会触发（生命线漏报）。
+ *   原先只在 init 里 WARN 一句就继续，之后无人知晓。 */
+static int g_scheduler_ok = 0;
+
 static const char* get_reminder_dir(void) {
     static char path[512];
     if (path[0] == '\0') {
@@ -77,7 +81,12 @@ static char* generate_reminder_id(void) {
 
     char *buf = malloc(64);
     if (!buf) return NULL;
-    strftime(buf, 64, "reminder_%Y%m%d_%H%M%S", tm);
+    if (!tm) {
+        /* 【修复】localtime 失败时 tm 为 NULL，原实现直接交给 strftime → 崩溃 */
+        safe_snprintf(buf, 64, "reminder_%ld", (long)now);
+    } else {
+        strftime(buf, 64, "reminder_%Y%m%d_%H%M%S", tm);
+    }
     char suffix[16];
     safe_snprintf(suffix, sizeof(suffix), "_%03d", counter % 1000);
     strcat(buf, suffix);
@@ -109,7 +118,13 @@ int reminder_init(void) {
 
     /* 启动调度器 */
     if (reminder_scheduler_start() != 0) {
-        LOG_WARN_T("Reminder", "Init", "SchedulerFail", "scheduler start failed, continuing");
+        /* 【修复】调度器起不来 = 所有提醒永远不会触发（生命线漏报），
+         *   原来只是 WARN 后照常宣称"系统就绪"。现明确 ERROR 并记录状态。 */
+        g_scheduler_ok = 0;
+        LOG_ERROR_T("Reminder", "Init", "SchedulerFail",
+                    "scheduler failed to start — reminders will be STORED BUT NEVER FIRED");
+    } else {
+        g_scheduler_ok = 1;
     }
 
     g_initialized = 1;
@@ -168,8 +183,22 @@ int reminder_add(const char *content, time_t trigger_time,
     free(id);
 
     if (ret == 0) {
-        /* 添加到调度器 */
-        reminder_scheduler_add(&reminder);
+        /* 【修复】原来忽略 reminder_scheduler_add 的返回值：调度表满时提醒
+         *   只落盘不入调度 → 永远不会触发，却仍报"已添加"（生命线静默漏报）。 */
+        int sched_ret = reminder_scheduler_add(&reminder);
+        if (sched_ret != 0) {
+            if (!g_scheduler_ok && reminder_scheduler_start() == 0) {
+                g_scheduler_ok = 1;
+                sched_ret = reminder_scheduler_add(&reminder);
+            }
+            if (sched_ret != 0) {
+                LOG_ERROR_T("Reminder", "Add", "NotScheduled",
+                            "reminder '%s' saved but NOT scheduled (scheduler error) — it may never fire",
+                            reminder.id);
+                pthread_mutex_unlock(&g_lock);
+                return -1;
+            }
+        }
 
         if (out_id && out_id_len > 0) {
             safe_strncpy(out_id, reminder.id, out_id_len);
