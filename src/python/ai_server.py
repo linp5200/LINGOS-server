@@ -588,23 +588,12 @@ class StreamDisplay:
         g_events.append({"type": "final", "content": content})
 
 # ========== 多模型路由和向量检索接口 ==========
-# 多模型路由（已实现，由 model_router.c 提供）
-_model_router_available = True
-try:
-    # 注：C 端 model_router 通过 socket 通信，Python 端暂不直接导入
-    # 路由决策在 C 端完成，此处保留占位
-    pass
-except ImportError:
-    pass
-
-# 向量检索（已实现，由 memory_vector.c 提供）
-_vector_search_available = True
-try:
-    # 注：C 端 memory_vector 通过 socket 通信，Python 端暂不直接导入
-    # 向量检索通过 syscall_client 调用，此处保留占位
-    pass
-except ImportError:
-    pass
+# 【task-10 ②】原此处有 _model_router_available / _vector_search_available 两个
+#   恒为 True 的全局标志 + 空 try/pass 块；全仓库零读取点（write-only 死变量），
+#   却对外暗示"能力可用"。已删除：
+#   · 多模型路由：由 C 端 model_router.c 决策，Python 不直接导入
+#   · 向量检索：经 syscall_client → C 端 memory_vector.c 执行
+#   两条真实通道不变（本文件他处调用），仅移除误导性死标志。
 
 # ========== 授权服务自动启动 ==========
 def start_auth_service():
@@ -1061,7 +1050,7 @@ def count_tokens(messages: List[Dict]) -> int:
 # =============================================================
 
 def _generate_summary(old_messages: List[Dict]) -> Optional[str]:
-    """调用当前后端生成对话摘要；失败返回 None（触发占位降级）"""
+    """调用当前后端生成对话摘要；失败返回 None（调用方改为保留原文硬截断，不编造摘要）"""
     if not old_messages:
         return None
     try:
@@ -1117,14 +1106,21 @@ def truncate_messages(messages: List[Dict], max_tokens: int, strategy: str = "sl
             logger.debug(f"Truncated message: {removed.get('role')}: {removed.get('content', '')[:50]}...")
     elif strategy == "summary":
         if len(other_msgs) >= 4:
-            # 【批次2】真摘要：调用模型压缩旧消息（失败降级为占位文本）
+            # 【批次2】真摘要：调用模型压缩旧消息（失败降级为原文硬截断——不编造摘要）
             old_msgs = other_msgs[:2]
             summary_text = _generate_summary(old_msgs)
             if summary_text:
                 summary_content = "[Earlier conversation summary] " + summary_text
+                other_msgs = [{"role": "user", "content": summary_content}] + other_msgs[2:]
             else:
-                summary_content = f"Earlier conversation: {len(old_msgs)} messages summarized."
-            other_msgs = [{"role": "user", "content": summary_content}] + other_msgs[2:]
+                # 【task-10 ②】模型摘要失败 → 不再编造"已摘要 N 条"的假摘要（原文全丢），
+                #   改为保留原消息并按角色硬截断内容（信息保真 + 仍省 token）。
+                other_msgs = [
+                    {"role": _m.get("role", "user"),
+                     "content": (str(_m.get("content", ""))[:400] +
+                                 ("…" if len(str(_m.get("content", ""))) > 400 else ""))}
+                    for _m in old_msgs
+                ] + other_msgs[2:]
             while other_msgs and count_tokens([system_msg] + other_msgs) > max_tokens:
                 if len(other_msgs) <= 2:
                     break
@@ -4131,74 +4127,27 @@ def cmd_ha_search(query: str = "") -> dict:
         return {"status": "error", "msg": str(e)}
 
 def cmd_alert_query() -> dict:
-    """预警查询（真实记录——/LINGOS/data/alerts/ 分级 L0-L3——先生设计）"""
+    """预警查询（真实记录——/LINGOS/data/alerts/ 完整级别 info/L0-L5）
+
+    【task-10 ①】级别归一化与字段读取收敛到 alert_store（避免多处各写一份映射）。
+    """
     try:
-        records = []
-        base = "/LINGOS/data/alerts"
-        if os.path.isdir(base):
-            for d in sorted(os.listdir(base), reverse=True)[:14]:  # 最近 14 天
-                dp = os.path.join(base, d)
-                if not os.path.isdir(dp): continue
-                for fn in sorted(os.listdir(dp), reverse=True)[:30]:
-                    if not fn.endswith('.json'): continue
-                    try:
-                        with open(os.path.join(dp, fn), encoding='utf-8') as f:
-                            e = json.load(f)
-                        records.append({
-                            "title": e.get("title") or e.get("type") or "预警",
-                            "level": e.get("level", "info"),
-                            "content": e.get("content") or e.get("message") or "",
-                            "time": e.get("time") or e.get("ts") or (d + " " + fn[4:14]),
-                            "source": e.get("source", "alertd"),
-                        })
-                    except Exception: continue
-                    if len(records) >= 50: break
-                if len(records) >= 50: break
-        # 紧急目录（L0——紧急通道文件）
-        urgent_dir = os.path.join(base, "urgent")
-        if os.path.isdir(urgent_dir):
-            for fn in sorted(os.listdir(urgent_dir), reverse=True)[:10]:
-                if not fn.endswith('.json'): continue
-                try:
-                    with open(os.path.join(urgent_dir, fn), encoding='utf-8') as f:
-                        e = json.load(f)
-                    records.insert(0, {
-                        "title": e.get("title", "紧急"),
-                        "level": "L0",
-                        "content": e.get("content", ""),
-                        "time": e.get("time", fn[4:14]),
-                        "source": e.get("source", "urgent"),
-                    })
-                except Exception: continue
-        return {"status": "ok", "data": records}
+        from alert_store import load_records
+        return {"status": "ok", "data": load_records()}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
 
 def cmd_alert_summary() -> dict:
-    """【0.4.3】预警统计：级别分布/近 7 日趋势/源健康——Qt/Web 预警页图表数据源"""
+    """预警统计：级别分布（info/L0-L5 完整）/近 7 日趋势/源健康——Qt/Web 预警页图表数据源
+
+    【task-10 ①】修复：原级别桶只有 L0~L3+info，C 端 L4/L5 被计入 info
+    （App 把 L4/L5 生命线预警显示成提示级）。现由 alert_store.summarize 完整映射，
+    并新增 highest_level（当前最严重级别，供 App/Web 展示）。
+    """
     try:
-        q = cmd_alert_query()
-        records = q.get("data", []) if q.get("status") == "ok" else []
-        lv = {"L0": 0, "L1": 0, "L2": 0, "L3": 0, "info": 0}
-        src_health = {}
-        daily = {}
-        for r in records:
-            l = str(r.get("level") or "info").upper()
-            if l not in lv:
-                l = "info"
-            lv[l] = lv.get(l, 0) + 1
-            s = r.get("source", "unknown")
-            if s not in src_health:
-                src_health[s] = {"count": 0, "last": r.get("time", "")}
-            src_health[s]["count"] += 1
-            src_health[s]["last"] = r.get("time", src_health[s]["last"])
-            d = (r.get("time") or "")[:10]
-            if d:
-                daily[d] = daily.get(d, 0) + 1
-        trend = [{"date": d, "count": daily[d]} for d in sorted(daily.keys())[-7:]]
-        return {"status": "ok", "data": {"levels": lv, "sources": src_health,
-                                         "trend": trend, "total": len(records)}}
+        from alert_store import load_records, summarize
+        return {"status": "ok", "data": summarize(load_records())}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 

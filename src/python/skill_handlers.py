@@ -1408,11 +1408,14 @@ def update_knowledge_base(topic: str, content: str) -> None:
 
 def alert_query(args_json: str) -> Tuple[bool, str]:
     """
-    查询预警信息
+    查询预警信息（【task-10】真实数据源——/LINGOS/data/alerts/ 历史 JSON +
+    urgent 紧急通道，级别 info/L0-L5 完整；与命令面 cmd_alert_query 同源）
+    历史缺陷：原实现 `from alert_manager import alert_manager_query` 是幽灵引用
+    （alert_manager 只有 C 实现、无 Python 绑定）→ 技能恒返回"预警模块不可用"。
     参数: {"location": "广东", "type": "typhoon", "time_range": "24h"}
     """
     try:
-        args = json.loads(args_json)
+        args = json.loads(args_json or "{}")
         location = args.get("location", "")
         type_str = args.get("type", "")
         time_range = args.get("time_range", "24h")
@@ -1423,32 +1426,16 @@ def alert_query(args_json: str) -> Tuple[bool, str]:
         elif time_range.endswith('d'):
             hours = int(time_range[:-1]) * 24 if time_range[:-1].isdigit() else 24
 
-        # 调用 C 端预警查询
-        import sys
-        sys.path.insert(0, '/LINGOS/bin')
-        try:
-            from alert_manager import alert_manager_query
-        except ImportError:
-            return False, t("Alert module not available", "预警模块不可用")
-
-        events = alert_manager_query(location, type_str, hours, max_count=20)
-
-        if not events:
-            return True, json.dumps({"status": "ok", "count": 0, "events": []}, ensure_ascii=False)
-
-        result = []
-        for ev in events:
-            if isinstance(ev, dict):
-                result.append({
-                    "type": ev.get("type", 0),
-                    "level": ev.get("level", 0),
-                    "source": ev.get("source", ""),
-                    "location": ev.get("location", ""),
-                    "description": ev.get("description", ""),
-                    "timestamp": ev.get("timestamp", 0)
-                })
-
-        return True, json.dumps({"status": "ok", "count": len(result), "events": result}, ensure_ascii=False)
+        from alert_store import load_records, filter_records
+        events = filter_records(load_records(), location=location,
+                                type_str=type_str, hours=hours)[:20]
+        return True, json.dumps({
+            "status": "ok",
+            "count": len(events),
+            "events": events,
+            "query": {"location": location, "type": type_str, "hours": hours},
+            "source": "/LINGOS/data/alerts（alertd / alert_history.c 写入）",
+        }, ensure_ascii=False)
 
     except Exception as e:
         return False, str(e)
