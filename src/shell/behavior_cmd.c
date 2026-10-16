@@ -102,15 +102,26 @@ static void cmd_behavior_algorithm(const char *algo_name) {
  * ============================================================ */
 static void cmd_behavior_suggest(void) {
     int data_count = behavior_monitor_get_data_count("default");
+    /* 【2026-10-16 审计修正】原先 cfg 取得后未使用、阈值写死 500（文案与配置不符——
+     *   用户改了 behavior_window_size，建议却永远按 500 算）。现读真实配置；
+     *   未配置才用内置建议值并在输出中注明（不伪装成配置值）。 */
     const security_config_t *cfg = security_config_get();
-    int min_samples = 500;
+    int configured = (cfg && cfg->behavior_window_size > 0);
+    int min_samples = configured ? cfg->behavior_window_size : 500;
 
     uart_puts(tr("\n=== Behavior Monitoring Suggestions ===\n", "\n=== 行为监控建议 ===\n"));
 
-    char buf[128];
+    char buf[192];
     safe_snprintf(buf, sizeof(buf),
                   tr("Current data points: %d\n", "当前数据点：%d\n"),
                   data_count);
+    uart_puts(buf);
+    safe_snprintf(buf, sizeof(buf),
+                  tr("Required samples (window size): %d%s\n",
+                     "所需样本数（窗口大小）：%d%s\n"),
+                  min_samples,
+                  configured ? "" : tr("  [not configured -> built-in recommendation]",
+                                       "  [未配置 → 使用内置建议值]"));
     uart_puts(buf);
 
     if (data_count < min_samples) {

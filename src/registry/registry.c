@@ -131,7 +131,8 @@ int registry_init(void) {
 }
 
 int registry_register(const registry_entry_t *entry) {
-    LOG_INFO_T("Registry", "Register", "Enter", "id='%s', type=%d", entry ? entry->id : "(null)", entry ? entry->type : -1);
+    /* 【2026-10-16 审计修正】原三元表达式 entry->type : -1 触发 -Wsign-compare（int 与枚举符号性不一致） */
+    LOG_INFO_T("Registry", "Register", "Enter", "id='%s', type=%d", entry ? entry->id : "(null)", entry ? (int)entry->type : -1);
 
     if (!entry || !entry->id[0]) {
         LOG_ERROR_T("Registry", "Register", "Invalid", "entry or id is NULL");
@@ -411,7 +412,14 @@ int registry_load(void) {
     long len = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    char *buf = malloc(len + 1);
+    /* 【2026-10-16 审计修正】ftell 失败（-1）未判 → malloc(0) 后越界写 strlen 区；补显式失败 */
+    if (len < 0) {
+        fclose(fp);
+        LOG_ERROR_T("Registry", "Load", "TellFail", "ftell failed on %s", path);
+        return -1;
+    }
+
+    char *buf = malloc((size_t)len + 1);
     if (!buf) {
         fclose(fp);
         LOG_ERROR_T("Registry", "Load", "MallocFail", "malloc failed");
@@ -435,9 +443,11 @@ int registry_load(void) {
     if (sigsetjmp(g_timeout_env, 1) == 0) {
         LOG_DEBUG_T("Registry", "Load", "Timeout", "starting alarm (%d seconds)", REGISTRY_LOAD_TIMEOUT);
         alarm(REGISTRY_LOAD_TIMEOUT);
-        /* 实际读取操作 */
-        size_t read_len = fread(buf, 1, len, fp);
-        buf[len] = '\0';
+        /* 实际读取操作
+         * 【2026-10-16 审计修正】原先丢弃 fread 返回值并以 buf[len] 收尾——
+         * 短读时尾部为未初始化内存（cJSON_Parse 读脏数据）。现按实际读取长度收尾。 */
+        size_t read_len = fread(buf, 1, (size_t)len, fp);
+        buf[read_len] = '\0';
         alarm(0);
         sigaction(SIGALRM, &old_sa, NULL);
 

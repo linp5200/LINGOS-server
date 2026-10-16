@@ -649,8 +649,8 @@ static void show_help_topic(const char *topic) {
                      "│ 使用: help <主题> 查看详细帮助              │\n"));
         uart_puts(tr("│  Topics: basic ai system debug app cmd dotted │\n",
                      "│  主题: basic ai system debug app cmd dotted │\n"));
-        uart_puts(tr("│  More:   help control  (Control URL actions)  │\n",
-                     "│  更多:   help control  （Control URL 动作）   │\n"));
+        uart_puts(tr("│  More:   help control | help systems            │\n",
+                     "│  更多:   help control | help systems            │\n"));
         uart_puts("└─────────────────────────────────────────────┘\n");
         return;
     }
@@ -658,6 +658,22 @@ static void show_help_topic(const char *topic) {
     /* 【第 4 期】点分命令别名表（先生决策 5：新增用点分，旧命令保留别名） */
     if (strcmp(topic, "dotted") == 0) {
         dotted_cmd_list();
+        return;
+    }
+
+    /* 【2026-10-16】类目 ↔ 系统 ↔ 命令前缀 ↔ CLI 覆盖（含诚实缺口，不编造命令） */
+    if (strcmp(topic, "systems") == 0 || strcmp(topic, "categories") == 0) {
+        dotted_cmd_list_systems();
+        {
+            char rep[4096];
+            int v = dotted_cmd_consistency_report(rep, sizeof(rep));
+            if (v > 0) {
+                uart_puts(rep);
+            } else {
+                uart_puts(tr("Dotted-prefix consistency: PASS (full report: registry check)\n",
+                             "点分前缀一致性：通过（完整报告见 registry check）\n"));
+            }
+        }
         return;
     }
 
@@ -1789,6 +1805,16 @@ static int handle_builtin_command(const char *cmd) {
         const char *args = cmd + 7;
         while (*args == ' ') args++;
         reminder_dispatch(args);
+        return 1;
+    }
+
+    /* ----- alert（预警系统 = 生命线；【2026-10-16】接线：alert_dispatch 此前无调用者，
+     *   导致 alert status/config/history 在 CLI 完全不可达——造好没接线） ----- */
+    if (strncmp(cmd, "alert ", 6) == 0 || strcmp(cmd, "alert") == 0) {
+        extern void alert_dispatch(const char *args);
+        const char *alert_args = cmd + 5;
+        while (*alert_args == ' ') alert_args++;
+        alert_dispatch(alert_args);
         return 1;
     }
 

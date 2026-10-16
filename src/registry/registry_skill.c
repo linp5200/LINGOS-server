@@ -89,6 +89,24 @@ int registry_skill_load_from_dir(const char *dir) {
         cJSON *handler = cJSON_GetObjectItem(root_json, "handler");
         cJSON *description = cJSON_GetObjectItem(root_json, "description");
 
+        /* 【2026-10-16 审计修正】risk/handler/description 原先解析后即丢弃（-Wunused-variable）：
+         *   skill_store 安装写入的是 metadata.definition 形态，目录技能只有顶层字段 →
+         *   两种来源结构不一致，索引/App 端的描述与风险呈现不稳。
+         *   此处为缺 definition 的技能补一个（skill_schema_from_definition 优先读 definition）。
+         *   风险缺省用 "unknown" 而非 "low"——不伪造"低风险"结论（先生：不确定就诚实标注）。 */
+        if (!cJSON_GetObjectItem(root_json, "definition")) {
+            cJSON *def = cJSON_CreateObject();
+            if (def) {
+                cJSON_AddStringToObject(def, "handler",
+                                        (handler && cJSON_IsString(handler)) ? handler->valuestring : "python");
+                cJSON_AddStringToObject(def, "risk",
+                                        (risk && cJSON_IsString(risk)) ? risk->valuestring : "unknown");
+                cJSON_AddStringToObject(def, "description",
+                                        (description && cJSON_IsString(description)) ? description->valuestring : "");
+                cJSON_AddItemToObject(root_json, "definition", def);
+            }
+        }
+
         if (!name || !cJSON_IsString(name)) {
             cJSON_Delete(root_json);
             LOG_WARN_T("RegistrySkill", "LoadDir", "NoName", "skill missing 'name' in %s", entry->d_name);

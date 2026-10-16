@@ -187,6 +187,31 @@ int registry_selfcheck_run_module(const char *module);   /* 只跑某模块的�
 cJSON* registry_selfcheck_report(void);           /* 全量自检报告（新分配对象） */
 
 int registry_run_all_selfchecks(void);
+
+/* ============================================================
+ * 【2026-10-16 第 4 期收尾】类目 ↔ 系统 ↔ 命令前缀
+ *   单一事实源 = registry_builtin.c 的 BUILTIN 表（对齐
+ *   docs/ARCHITECTURE_系统类目.md：类目名=功能词，命令前缀=系统名）。
+ *   不做物理目录搬迁（先生令）——只落行为层一致性与可见性。
+ * ============================================================ */
+
+/** @brief 内置系统总数（文档 16 + 扩展） */
+int registry_builtin_system_count(void);
+
+/** @brief 取第 idx 个内置系统信息（任一输出参数可为 NULL）；0 成功，-1 越界 */
+int registry_builtin_system_at(int idx, const char **id, const char **name,
+                               const char **category, const char **prefix, const char **desc);
+
+/** @brief 命令前缀是否为已登记系统（点分命令一致性校验用）；1 是，0 否 */
+int registry_builtin_prefix_known(const char *prefix);
+
+/** @brief 系统名 → 类目（未登记返回 NULL） */
+const char* registry_builtin_category_of(const char *system_id);
+
+/** @brief 真实一致性校验（前缀=系统名/唯一性/类目合法/运行期注册完整/命令面前缀归属）
+ *  @return 违规项数（0 = 全部通过）；报告文本写入 out（含中英双语） */
+int registry_builtin_consistency_report(char *out, size_t out_size);
+
 #ifdef __cplusplus
 }
 #endif

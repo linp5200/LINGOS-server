@@ -15,6 +15,7 @@
 #include "../common/lang.h"
 #include "log_extra.h"
 #include "uart.h"
+#include "../common/safe_string.h"   /* 【2026-10-16】safe_snprintf / safe_strncpy */
 #include "../common/data_path.h"
 #include "../security/audit.h"
 #include <stdio.h>
@@ -23,6 +24,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <ctype.h>   /* 【2026-10-16】应用名白名单校验（防命令注入） */
 
 #define APPS_DIR "/apps"
 #define APPS_STATE_DIR "/state/apps"
@@ -45,11 +47,29 @@ static const char *get_apps_state_dir(void) {
     return path;
 }
 
+/* 【2026-10-16 审计修正】应用名白名单：原先 app uninstall 直接拼接 rm -rf '<path>'，
+ * 应用名含引号/分号即可命令注入（安全 > 一切）。此处在所有入口做同一校验。 */
+static int app_name_valid(const char *name) {
+    if (!name || !*name || strlen(name) >= 64) return 0;
+    for (const char *p = name; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (!(isalnum(c) || c == '_' || c == '-' || c == '.')) return 0;
+    }
+    return 1;
+}
+
 static void list_installed_apps(void) {
     const char *apps_root = get_apps_root();
     DIR *d = opendir(apps_root);
     if (!d) {
-        uart_puts(tr("No apps installed.\n", "没有已安装的应用。\n"));
+        /* 【2026-10-16 审计修正】原与"没有已安装的应用"同一文案（静默失败：
+         * 目录缺失/不可读被当成空态）→ 明确区分，避免用户误判。 */
+        char buf[640];
+        safe_snprintf(buf, sizeof(buf),
+                      tr("Apps directory unavailable: %s\n", "应用目录不可用：%s\n"), apps_root);
+        uart_puts(buf);
+        uart_puts(tr("  (this is NOT 'no apps installed' — the directory is missing or unreadable)\n",
+                     "  （这不等于「没有已安装的应用」——目录缺失或不可读）\n"));
         return;
     }
     struct dirent *entry;
@@ -132,6 +152,12 @@ void app_uninstall_command(const char *app_name) {
         uart_puts(tr("Usage: app uninstall <appname>\n", "用法：app uninstall <应用名>\n"));
         return;
     }
+    /* 【2026-10-16 审计修正】命令注入防护（下方 system("rm -rf '%s'") 用此名拼路径） */
+    if (!app_name_valid(app_name)) {
+        uart_puts(tr("Invalid app name (allowed: letters, digits, dot, underscore, hyphen).\n",
+                     "应用名非法（仅允许字母、数字、点、下划线、连字符）。\n"));
+        return;
+    }
     const char *apps_root = get_apps_root();
     char app_path[1024];
     snprintf(app_path, sizeof(app_path), "%s/%s", apps_root, app_name);
@@ -162,7 +188,8 @@ void app_run_command(const char *app_name) {
     }
     int sandbox = 0;
     char name_copy[128];
-    strncpy(name_copy, app_name, sizeof(name_copy)-1);
+    /* 【2026-10-16 审计修正】原 strncpy 未强制结尾（可能非终止字符串）→ safe_strncpy */
+    safe_strncpy(name_copy, app_name, sizeof(name_copy));
     char *arg = strstr(name_copy, " --sandbox");
     if (arg) {
         *arg = '\0';
