@@ -45,6 +45,13 @@ typedef struct {
 
     /* ---- 多路（预留：当前主实例单路采集，配置保留多路语义） ---- */
     int  multi_camera;
+
+    /* ---- OSD 叠加（monitor 侧真实绘制：时间戳 + 摄像头 ID） ---- */
+    int  osd_enabled;               /* 1=在未压缩帧上叠加（默认 1；JPEG 需解码→诚实跳过） */
+    int  osd_scale;                 /* 5x7 点阵放大倍数 1–4（默认 1） */
+
+    /* ---- 红外控制（真实 V4L2 控制面；驱动无 IR 项则诚实失败） ---- */
+    char ir_mode[16];               /* keep(默认，不干预) / off(白天) / on(夜晚) / auto */
 } monitor_config_t;
 
 void monitor_config_set_defaults(monitor_config_t *cfg);

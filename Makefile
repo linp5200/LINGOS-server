@@ -309,7 +309,9 @@ VISION_MAIN_SRCS = $(SRC_DIR)/vision/visiond.c
 # 【2026-10-10 监控系统拆分（先生 2026-09-05 裁决）】
 #   monitor    采集/预览/快照/录像（给人看）—— 独立进程
 #   ai_vision  检测/标定/追踪（给 AI 用）—— 独立进程，经帧通道消费 monitor 帧
-MONITOR_MAIN_SRCS = $(SRC_DIR)/monitor/monitord.c
+MONITOR_MAIN_SRCS = $(SRC_DIR)/monitor/monitord.c \
+$(SRC_DIR)/monitor/ir_control.c \
+$(SRC_DIR)/monitor/osd_overlay.c \
 MONITOR_CORE_SRCS = $(SRC_DIR)/monitor/camera_input.c                     $(SRC_DIR)/monitor/frame_channel.c                     $(SRC_DIR)/monitor/monitor_config.c
 
 AI_VISION_MAIN_SRCS = $(SRC_DIR)/vision/ai_visiond.c
@@ -389,6 +391,7 @@ CONFIG_RENDER_SRCS = $(SRC_DIR)/config/config_renderer.c \
 # 安装模块
 # ================================================================
 INSTALL_SRCS = $(SRC_DIR)/install/install_manager.c \
+$(SRC_DIR)/install/install_rootfs.c \
                $(SRC_DIR)/install/install_system.c \
                $(SRC_DIR)/install/install_python.c \
                $(SRC_DIR)/install/install_model.c \

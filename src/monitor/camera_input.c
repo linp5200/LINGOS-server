@@ -58,6 +58,11 @@ const char *camera_get_app_id(void) {
     return g_app_id;
 }
 
+/* 打开中的 V4L2 fd（IR 控制 ioctl 用）——所有权仍在 camera_input.c */
+int camera_get_fd(void) {
+    return g_camera_fd;   /* -1 = 未打开 / RTSP 模式 */
+}
+
 /* ============================================================
  * 初始化摄像头
  * ============================================================ */

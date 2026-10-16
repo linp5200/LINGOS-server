@@ -31,6 +31,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/time.h>
+#include <dlfcn.h>
 
 #define YOLO_SOCK_PATH          "/LINGOS/run/yolo.sock"
 #define YOLO_READ_TIMEOUT_S     15
@@ -64,6 +65,120 @@ static double g_conf_threshold = 0.5;
 static char g_model_path[256] = {0};
 
 /* ============================================================
+ * NCNN 后端（预留 C ABI shim —— 真实 dlopen；不存在则诚实不可用）
+ * ------------------------------------------------------------
+ * 诚实结论（2026-10-16 静态评估，同 detection_engine.h）：
+ *   ncnn 只有 C++ API；本仓库为纯 C 构建（Makefile 无 CXX 规则），
+ *   且环境无 ncnn 头/库（/usr/include/ncnn 缺失）——
+ *   故**不做假推理**：本文件仅提供 dlopen 加载 + 真实调用路径，
+ *   shim 缺席时如实报告并回退 yolo.sock（现状功能不减）。
+ * ============================================================ */
+static void       *g_ncnn_lib = NULL;
+static const lingos_ncnn_shim_t *g_ncnn_shim = NULL;
+static int         g_ncnn_tried = 0;
+static char        g_ncnn_status[256] = "NCNN: not probed";
+
+static int ncnn_shim_probe(void) {
+    if (g_ncnn_tried) return g_ncnn_shim != NULL;
+    g_ncnn_tried = 1;
+
+    g_ncnn_lib = dlopen(LINGOS_NCNN_SHIM_LIB, RTLD_LAZY | RTLD_LOCAL);
+    if (!g_ncnn_lib) {
+        const char *e = dlerror();
+        safe_snprintf(g_ncnn_status, sizeof(g_ncnn_status),
+                      "NCNN: shim '%s' not present (%s) — honest: in-process ncnn inference NOT wired "
+                      "(ncnn is C++-only; this build is pure C) — using yolo.sock backend",
+                      LINGOS_NCNN_SHIM_LIB, e ? e : "dlopen failed");
+        LOG_INFO_T("Detection", "Ncnn", "Unavailable", "%s", g_ncnn_status);
+        return 0;
+    }
+
+    lingos_ncnn_shim_get_fn get = (lingos_ncnn_shim_get_fn)dlsym(g_ncnn_lib, LINGOS_NCNN_SHIM_ENTRY);
+    if (!get) {
+        safe_snprintf(g_ncnn_status, sizeof(g_ncnn_status),
+                      "NCNN: '%s' loaded but entry '%s' missing — ABI contract not met",
+                      LINGOS_NCNN_SHIM_LIB, LINGOS_NCNN_SHIM_ENTRY);
+        LOG_WARN_T("Detection", "Ncnn", "NoEntry", "%s", g_ncnn_status);
+        dlclose(g_ncnn_lib);
+        g_ncnn_lib = NULL;
+        return 0;
+    }
+
+    const lingos_ncnn_shim_t *s = get();
+    if (!s || s->abi_version != LINGOS_NCNN_SHIM_ABI || !s->detect) {
+        safe_snprintf(g_ncnn_status, sizeof(g_ncnn_status),
+                      "NCNN: shim ABI mismatch (got %d, need %d) or missing detect() — refused",
+                      s ? s->abi_version : -1, LINGOS_NCNN_SHIM_ABI);
+        LOG_WARN_T("Detection", "Ncnn", "AbiMismatch", "%s", g_ncnn_status);
+        dlclose(g_ncnn_lib);
+        g_ncnn_lib = NULL;
+        return 0;
+    }
+
+    if (s->available && s->available() != 1) {
+        safe_snprintf(g_ncnn_status, sizeof(g_ncnn_status),
+                      "NCNN: shim loaded (abi=%d) but reports unavailable (model/runtime missing) — "
+                      "honest fallback to yolo.sock", s->abi_version);
+        LOG_WARN_T("Detection", "Ncnn", "SelfCheckFail", "%s", g_ncnn_status);
+        dlclose(g_ncnn_lib);
+        g_ncnn_lib = NULL;
+        return 0;
+    }
+
+    g_ncnn_shim = s;
+    safe_snprintf(g_ncnn_status, sizeof(g_ncnn_status),
+                  "NCNN: shim active (backend=%s, abi=%d) — real in-process inference",
+                  (s->name && s->name()) ? s->name() : "unnamed", s->abi_version);
+    LOG_INFO_T("Detection", "Ncnn", "Active", "%s", g_ncnn_status);
+    return 1;
+}
+
+int detection_ncnn_available(void) {
+    return ncnn_shim_probe();
+}
+
+const char* detection_ncnn_status(void) {
+    if (!g_ncnn_tried) ncnn_shim_probe();
+    return g_ncnn_status;
+}
+
+/* 模型目录（shim 侧加载 ncnn param/bin 模型用） */
+static void ncnn_model_dir(char *out, size_t out_sz) {
+    if (g_model_path[0]) {
+        safe_strncpy(out, g_model_path, out_sz);
+        char *slash = strrchr(out, '/');
+        if (slash) *slash = '\0';
+        else safe_strncpy(out, ".", out_sz);
+    } else {
+        safe_snprintf(out, out_sz, "%s/models", lingos_data_root());
+    }
+}
+
+/* 经 shim 真实推理；<0 = shim 失败（调用方回退） */
+static int ncnn_run(const camera_frame_t *frame, detection_result_t *results, int max_count) {
+    if (!g_ncnn_shim || !g_ncnn_shim->detect) return -1;
+
+    char mdir[256];
+    ncnn_model_dir(mdir, sizeof(mdir));
+
+    int n = g_ncnn_shim->detect(frame->data, frame->size, frame->width, frame->height,
+                                mdir, (float)g_conf_threshold, results, max_count);
+    if (n < 0) return n;
+    if (n > max_count) n = max_count;
+
+    for (int i = 0; i < n; i++) {
+        if (results[i].timestamp == 0) {
+            results[i].timestamp = frame->timestamp > 0 ? frame->timestamp : time(NULL);
+        }
+        if (results[i].label[0] == '\0' &&
+            results[i].class_id >= 0 && results[i].class_id < (int)CLASS_COUNT) {
+            safe_strncpy(results[i].label, g_class_names[results[i].class_id], sizeof(results[i].label));
+        }
+    }
+    return n;
+}
+
+/* ============================================================
  * 检测引擎初始化
  * ============================================================ */
 
@@ -84,7 +199,13 @@ int detection_init(const vision_config_t *config) {
     }
 
     g_initialized = 1;
-    LOG_INFO_T("Detection", "Init", "OK", "detection engine initialized (yolo.sock backend), threshold=%.2f",
+
+    /* NCNN（C 侧）自检：真实 dlopen 探测；缺席则如实记录（不假装已接入） */
+    LOG_INFO_T("Detection", "Init", "NcnnProbe", "%s", detection_ncnn_status());
+
+    LOG_INFO_T("Detection", "Init", "OK",
+               "detection engine initialized (backend=%s), threshold=%.2f",
+               detection_ncnn_available() ? "ncnn-shim+yolo.sock" : "yolo.sock",
                g_conf_threshold);
     return 0;
 }
@@ -289,6 +410,18 @@ int detection_run(const camera_frame_t *frame, detection_result_t *results, int 
         return 0;
     }
 
+    /* ① 首选：NCNN shim（若外部 liblingos_ncnn.so 就绪 —— 真实推理） */
+    if (detection_ncnn_available()) {
+        int ncnn_n = ncnn_run(frame, results, max_count);
+        if (ncnn_n >= 0) {
+            LOG_DEBUG_T("Detection", "Run", "Ncnn", "real ncnn detections: %d", ncnn_n);
+            return ncnn_n;
+        }
+        LOG_WARN_T("Detection", "Run", "NcnnFail",
+                   "ncnn shim returned %d — falling back to yolo.sock (honest)", ncnn_n);
+    }
+
+    /* ② 次选：yolo.sock（Python 侧真实推理） */
     int n = 0;
     int rc = yolo_socket_detect(frame, results, max_count, &n);
     if (rc == 0) {
@@ -324,5 +457,12 @@ const char* detection_get_class_name(int class_id) {
 
 void detection_cleanup(void) {
     g_initialized = 0;
+    if (g_ncnn_lib) {
+        dlclose(g_ncnn_lib);
+        g_ncnn_lib = NULL;
+    }
+    g_ncnn_shim = NULL;
+    g_ncnn_tried = 0;
+    safe_strncpy(g_ncnn_status, "NCNN: cleaned up", sizeof(g_ncnn_status));
     LOG_DEBUG_T("Detection", "Cleanup", "OK", "detection engine cleaned up");
 }

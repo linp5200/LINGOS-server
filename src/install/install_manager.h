@@ -73,6 +73,15 @@ int install_manager_run_python(install_summary_t *summary);
 int install_manager_run_models(install_summary_t *summary);
 
 /**
+ * @brief 按需安装 rootfs 沙箱（真实下载→校验→解压→登记）
+ *        请求来源：环境变量 LINGOS_ROOTFS_DISTRO（逗号分隔，如 "alpine,ubuntu"）
+ *        未设置 = 诚实 no-op（不下载、不伪造进度）；离线模式 = 明确失败记录
+ * @param summary 输出汇总结果（可为 NULL）
+ * @return 0 全部成功，-1 有失败
+ */
+int install_manager_run_rootfs(install_summary_t *summary);
+
+/**
  * @brief 检查是否所有依赖已安装
  * @return 1 全部已安装，0 有缺失
  */

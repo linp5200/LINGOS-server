@@ -9,6 +9,7 @@
 #include "install_system.h"
 #include "install_python.h"
 #include "install_model.h"
+#include "install_rootfs.h"    /* 【0.9.0】rootfs 真下载引擎 */
 #include "install_progress.h"
 #include "../common/safe_string.h"
 #include "../common/lang.h"
@@ -69,17 +70,33 @@ int install_manager_run_all(install_summary_t *summary) {
 
     install_progress_init(tr("Installing dependencies...", "正在安装依赖..."));
 
+    /* 【0.9.0】rootfs 沙箱按需（显式请求）执行——默认不下载，避免启动期数百 MB 传输。
+     * 请求方式：环境变量 LINGOS_ROOTFS_DISTRO=alpine,ubuntu（见 install_manager_run_rootfs） */
+    const char *rootfs_req = getenv("LINGOS_ROOTFS_DISTRO");
+    int want_rootfs = (rootfs_req && rootfs_req[0]) ? 1 : 0;
+    int stages = want_rootfs ? 4 : 3;
+
     // 1. 系统包
-    install_progress_set_stage(tr("System packages", "系统包"), 0, 3);
+    install_progress_set_stage(tr("System packages", "系统包"), 0, stages);
     int sys_ret = install_manager_run_system(summary);
 
     // 2. Python 包
-    install_progress_set_stage(tr("Python packages", "Python 包"), 1, 3);
+    install_progress_set_stage(tr("Python packages", "Python 包"), 1, stages);
     int py_ret = install_manager_run_python(summary);
 
     // 3. 模型下载
-    install_progress_set_stage(tr("Models", "模型"), 2, 3);
+    install_progress_set_stage(tr("Models", "模型"), 2, stages);
     int model_ret = install_manager_run_models(summary);
+
+    // 4. rootfs 沙箱（仅显式请求时）
+    if (want_rootfs) {
+        install_progress_set_stage(tr("Rootfs sandbox", "Rootfs 沙箱"), 3, stages);
+        install_manager_run_rootfs(summary);
+    }
+
+    (void)sys_ret;
+    (void)py_ret;
+    (void)model_ret;
 
     install_progress_finish(summary);
 
@@ -198,6 +215,73 @@ int install_manager_run_models(install_summary_t *summary) {
 
     LOG_INFO_T("InstallManager", "RunModels", "Complete", "failures=%d", total_failures);
     return (total_failures > 0) ? -1 : 0;
+}
+
+/* ============================================================
+ * 运行 rootfs 沙箱安装（按需 —— LINGOS_ROOTFS_DISTRO）
+ * ------------------------------------------------------------
+ * 真实调用链（接线）：
+ *   src/core/main.c:1469  install_manager_run_all()
+ *     └─ 本函数 ──> install_rootfs_install()（src/install/install_rootfs.c）
+ *                    真实 HTTP(S) 下载 + 大小/SHA-256 校验 + 原子替换 + 解压 + 登记
+ * 未设置 LINGOS_ROOTFS_DISTRO 时**不做任何事**（诚实 no-op；不伪造进度）
+ * 请求格式：逗号分隔发行版名，如 LINGOS_ROOTFS_DISTRO=alpine,ubuntu
+ * ============================================================ */
+int install_manager_run_rootfs(install_summary_t *summary) {
+    install_summary_t local_summary;
+    if (!summary) summary = &local_summary;
+
+    const char *req = getenv("LINGOS_ROOTFS_DISTRO");
+    if (!req || !req[0]) {
+        LOG_DEBUG_T("InstallManager", "RunRootfs", "NoRequest",
+                    "LINGOS_ROOTFS_DISTRO not set — rootfs provisioning not requested");
+        return 0;
+    }
+
+    LOG_INFO_T("InstallManager", "RunRootfs", "Start", "requested: %s", req);
+
+    if (g_offline_mode) {
+        record_result(summary, "rootfs", 0, "offline mode enabled — download skipped");
+        LOG_WARN_T("InstallManager", "RunRootfs", "Offline", "offline mode — no download attempted");
+        return -1;
+    }
+
+    char list[256];
+    safe_strncpy(list, req, sizeof(list));
+
+    int failures = 0;
+    int count = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(list, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        if (!*tok) continue;
+        count++;
+
+        char name[96];
+        safe_snprintf(name, sizeof(name), "rootfs:%s", tok);
+
+        LOG_INFO_T("InstallManager", "RunRootfs", "Item", "installing rootfs '%s' (%d)", tok, count);
+        int ret = install_rootfs_install(tok);
+        if (ret == ROOTFS_OK) {
+            record_result(summary, name, 1, NULL);
+            LOG_INFO_T("InstallManager", "RunRootfs", "OK", "%s installed (sha256=%s)",
+                       tok, install_rootfs_last_sha256()[0] ? install_rootfs_last_sha256() : "(unverified)");
+        } else {
+            record_result(summary, name, 0, install_rootfs_get_last_error());
+            failures++;
+            LOG_ERROR_T("InstallManager", "RunRootfs", "Fail", "%s rc=%d: %s",
+                        tok, ret, install_rootfs_get_last_error());
+        }
+    }
+
+    if (count == 0) {
+        LOG_WARN_T("InstallManager", "RunRootfs", "EmptyList",
+                   "LINGOS_ROOTFS_DISTRO set but no valid distro name found");
+        return 0;
+    }
+
+    LOG_INFO_T("InstallManager", "RunRootfs", "Complete", "count=%d failures=%d", count, failures);
+    return failures > 0 ? -1 : 0;
 }
 
 /* ============================================================

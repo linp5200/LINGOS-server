@@ -47,6 +47,11 @@ void monitor_config_set_defaults(monitor_config_t *cfg) {
     cfg->preview_port = 8891;
     cfg->preview_quality = 85;
     cfg->multi_camera = 0;
+
+    /* OSD 默认开（给人看的画面带时间戳）；IR 默认 keep = 不主动改硬件 */
+    cfg->osd_enabled = 1;
+    cfg->osd_scale = 1;
+    safe_strncpy(cfg->ir_mode, "keep", sizeof(cfg->ir_mode));
 }
 
 /* ============================================================
@@ -151,6 +156,19 @@ static void apply_monitor_json(monitor_config_t *cfg, const cJSON *root) {
         cfg->preview_quality = json_int(pv, "quality", cfg->preview_quality);
     }
 
+    /* OSD（时间戳叠加）：{"osd":{"enabled":true,"scale":1}} */
+    const cJSON *osd = cJSON_GetObjectItemCaseSensitive(root, "osd");
+    if (cJSON_IsObject(osd)) {
+        cfg->osd_enabled = json_bool(osd, "enabled", cfg->osd_enabled);
+        cfg->osd_scale   = json_int(osd, "scale", cfg->osd_scale);
+    }
+
+    /* 红外：{"ir":{"mode":"keep|off|on|auto"}} —— 仅真实 V4L2 控制面，无该项则诚实失败 */
+    const cJSON *ir = cJSON_GetObjectItemCaseSensitive(root, "ir");
+    if (cJSON_IsObject(ir)) {
+        safe_strncpy(cfg->ir_mode, json_str(ir, "mode", cfg->ir_mode), sizeof(cfg->ir_mode));
+    }
+
     /* 主摄像头 = cameras[] 中第一路 enabled（未标 enabled 视为启用）——多路为后续扩展 */
     const cJSON *cams = cJSON_GetObjectItemCaseSensitive(root, "cameras");
     if (cJSON_IsArray(cams)) {
@@ -213,6 +231,11 @@ int monitor_config_load(monitor_config_t *cfg) {
     if (cfg->fps <= 0 || cfg->fps > 60) cfg->fps = 10;
     if (cfg->frame_channel_max_clients <= 0 || cfg->frame_channel_max_clients > 8)
         cfg->frame_channel_max_clients = 4;
+    if (cfg->osd_scale < 1 || cfg->osd_scale > 4) cfg->osd_scale = 1;
+    if (strcmp(cfg->ir_mode, "off") != 0 && strcmp(cfg->ir_mode, "on") != 0 &&
+        strcmp(cfg->ir_mode, "auto") != 0) {
+        safe_strncpy(cfg->ir_mode, "keep", sizeof(cfg->ir_mode));   /* 未知值 → 不干预硬件 */
+    }
 
     LOG_INFO_T("MonitorConfig", "Load", "OK",
                "camera=%s source=%s %dx%d@%d frame_channel=%s control=%s",

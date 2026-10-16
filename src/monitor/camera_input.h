@@ -23,6 +23,12 @@
 void camera_set_app_id(const char *app_id);
 const char *camera_get_app_id(void);
 
+/**
+ * 打开中的 V4L2 设备 fd（IR 控制等 ioctl 面用；RTSP/未打开返回 -1）。
+ * 只读访问器——fd 生命周期仍归 camera_input.c 管理（调用方不得 close）。
+ */
+int camera_get_fd(void);
+
 int camera_init(const monitor_config_t *config);
 int camera_capture(camera_frame_t *frame);
 void camera_cleanup(void);

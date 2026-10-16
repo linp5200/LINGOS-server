@@ -23,6 +23,8 @@
 #include "camera_input.h"
 #include "frame_channel.h"
 #include "frame.h"
+#include "ir_control.h"      /* 【0.9.0】红外控制（真实 V4L2 ioctl） */
+#include "osd_overlay.h"     /* 【0.9.0】OSD 叠加（5x7 点阵真实绘制） */
 #include "../lib/log_extra.h"
 
 #define MONITOR_VERSION "LN-0.9.0"
@@ -111,6 +113,38 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* ③b 红外控制（真实 V4L2 控制面；驱动没有 IR 控制项 → 明确失败，不伪造） */
+    {
+        int v4l2_fd = camera_get_fd();
+        if (ir_control_init(v4l2_fd) == 0) {
+            char ctrls[1024];
+            if (ir_control_list_controls(ctrls, sizeof(ctrls)) > 0) {
+                LOG_DEBUG_T("Monitor", "Main", "IrControls", "enumerated V4L2 controls:\n%s", ctrls);
+            }
+            int want = IR_MODE_KEEP;
+            if (strcmp(cfg.ir_mode, "off") == 0)       want = IR_MODE_OFF;
+            else if (strcmp(cfg.ir_mode, "on") == 0)   want = IR_MODE_ON;
+            else if (strcmp(cfg.ir_mode, "auto") == 0) want = IR_MODE_AUTO;
+            if (want != IR_MODE_KEEP) {
+                if (ir_control_set_mode(want) != 0) {
+                    LOG_WARN_T("Monitor", "Main", "IrSetFail", "ir_mode=%s not applied: %s",
+                               cfg.ir_mode, ir_control_status());
+                } else {
+                    LOG_INFO_T("Monitor", "Main", "IrSetOK", "ir_mode=%s applied: %s",
+                               cfg.ir_mode, ir_control_status());
+                }
+            } else {
+                LOG_INFO_T("Monitor", "Main", "IrKeep", "ir_mode=keep — %s", ir_control_status());
+            }
+        } else {
+            LOG_WARN_T("Monitor", "Main", "IrUnavailable", "IR control unavailable: %s",
+                       ir_control_status());
+        }
+    }
+
+    /* ③c OSD 叠加（时间戳 + 摄像头 ID；仅未压缩帧可绘制——JPEG 诚实跳过） */
+    osd_overlay_init(cfg.osd_enabled, cfg.camera_id, cfg.osd_scale);
+
     /* ④ 帧通道（发布端） */
     const char *ch_path = cfg.frame_channel_path[0] ? cfg.frame_channel_path : FRAME_CHANNEL_DEFAULT_PATH;
     int max_clients = cfg.frame_channel_max_clients > 0 ? cfg.frame_channel_max_clients : FRAME_CHANNEL_MAX_CLIENTS;
@@ -128,7 +162,12 @@ int main(int argc, char **argv) {
     int interval_ms = cfg.fps > 0 ? (1000 / cfg.fps) : 100;
     if (interval_ms < 1) interval_ms = 1;
     unsigned long long frames = 0, publish_fail = 0;
+    unsigned long long osd_drawn = 0, osd_skipped = 0;
     time_t last_report = time(NULL);
+    /* OSD 私有帧副本：camera_capture 已在返回前把 V4L2 缓冲 QBUF 归还驱动，
+     * 直接在其上绘制会与驱动写帧竞争 → 只对私有副本绘制/发布（驱动缓冲只读） */
+    unsigned char *osd_buf = NULL;
+    int osd_buf_sz = 0;
 
     while (!g_stop) {
         camera_frame_t frame;
@@ -143,6 +182,27 @@ int main(int argc, char **argv) {
             strncpy(frame.camera_id, cfg.camera_id[0] ? cfg.camera_id : "cam0",
                     sizeof(frame.camera_id) - 1);
         }
+        /* OSD 叠加：先复制到私有缓冲，再真实绘制（返回码区分"已画/格式不支持/关闭"） */
+        if (frame.format == FRAME_FMT_YUYV && frame.data && frame.size > 0) {
+            if (frame.size > osd_buf_sz) {
+                unsigned char *nb = realloc(osd_buf, (size_t)frame.size);
+                if (nb) {
+                    osd_buf = nb;
+                    osd_buf_sz = frame.size;
+                } else {
+                    LOG_WARN_T("Monitor", "Osd", "CopyAllocFail",
+                               "cannot allocate %d bytes for OSD copy — drawing skipped", frame.size);
+                }
+            }
+            if (osd_buf && frame.size <= osd_buf_sz) {
+                memcpy(osd_buf, frame.data, (size_t)frame.size);
+                frame.data = osd_buf;
+            }
+        }
+        int osd_rc = osd_overlay_apply(&frame);
+        if (osd_rc == OSD_OK) osd_drawn++;
+        else if (osd_rc != OSD_SKIP_DISABLED) osd_skipped++;
+
         if (frame_channel_pub_publish(pub, &frame) != 0) {
             publish_fail++;
         }
@@ -152,15 +212,20 @@ int main(int argc, char **argv) {
             frame_channel_stats_t st;
             frame_channel_pub_stats(pub, &st);
             LOG_INFO_T("Monitor", "Stats", "Report",
-                       "frames=%llu fail=%llu clients=%d dropped=%llu bytes=%llu",
-                       frames, publish_fail, st.clients, st.dropped, st.bytes);
+                       "frames=%llu fail=%llu clients=%d dropped=%llu bytes=%llu "
+                       "osd_drawn=%llu osd_skipped=%llu (%s)",
+                       frames, publish_fail, st.clients, st.dropped, st.bytes,
+                       osd_drawn, osd_skipped, osd_overlay_status());
             last_report = now;
         }
         usleep((useconds_t)(interval_ms * 1000));
     }
 
     LOG_INFO_T("Monitor", "Main", "Stop", "signal received — shutting down (frames=%llu)", frames);
+    free(osd_buf);
     frame_channel_pub_close(pub);
+    ir_control_cleanup();   /* 只解绑，不改硬件状态 */
+    osd_overlay_cleanup();
     camera_cleanup();
     remove_pid_file();
     LOG_INFO_T("Monitor", "Main", "Bye", "lingos_monitor exited cleanly");
