@@ -3,6 +3,32 @@
 版本线：发行版 0.4.3（server/app 统一——先生 2026-09-04 规范）· 内部 LN-0.4.3
 包名（新规范）：LINGOS_server_linux_v<版本>_<架构>_<allbin|sysbin|plugin>.tar.gz
 
+## [0.9.5-dev] - 2026-10-16（第 4/5/6 期并行批次：架构收尾 + 功能完整性 + UI）
+
+> 三路 teammate 并行交付，Lead 复核 / Makefile 集成 / 提交（本地 4 个提交，均已推本地备用仓库）。
+> 版本仍 **0.8.0**、**未推 GitHub、未跑 CI**（先生纪律）。
+
+### 第 4 期收尾（p4-arch）
+- **点分命令**：`shell/dotted_cmd.c/.h`，28 条「系统.动作」别名（system.status / config.reload / security.perm_list…），**旧命令全部保留**
+- **Control URL**：`api/control_url.c/.h` —— `lingos://control/<系统.动作>?k=v` 统一寻址，三入口（HTTP /api/control、CLI、内部）共用一实现；此前 `api_call` 全仓零调用者；15 动作 = 14 真实 + scene.apply 诚实 501
+- **技能两级呈现**：`skill browse [分类]` / `skill search 关键词`；`api/skill_catalog.c` 读 4 个真实来源（原写死 15 条示例已清零）；`/api/skills/list` 接通（此前 api_routes.c 整体零调用）
+
+### 第 5 期收尾（p5-media）
+- **红外控制** `monitor/ir_control.c/.h`：v4l2 控制项枚举 + 菜单名匹配 + 写入 + 回读校验；驱动无 IR 项 → 明确失败不伪造
+- **OSD 叠加** `monitor/osd_overlay.c/.h`：内置 5x7 点阵，YUYV 逐像素绘制时间戳+摄像头 ID（私有帧副本，避免与驱动抢缓冲）；JPEG 帧诚实跳过
+- **rootfs 真下载引擎** `install/install_rootfs.c/.h`：真实 HTTP(S) + 字节数 + SHA-256 + rename 原子替换（失败回滚）+ tar 参数化解压（safe_exec）+ 目录原子切换 + 登记；镜像域需 egress 白名单
+- **YOLO NCNN 诚实结论**：ncnn 仅 C++、本仓库纯 C 构建 → 不内联假推理；预留 C ABI shim（liblingos_ncnn.so + lingos_ncnn_shim_get_v1），dlopen 命中即真调用，缺席回退 yolo.sock
+
+### 第 6 期 UI（p6-ui）
+- **App**（app 仓库 `885c51a`）：升级屏（真实 update_check）+ 插件屏（plugin_list/plugin_reload）接入设置；通知渠道接 notify_list/notify_dnd；图标体系+启动动画接入（原为零使用死代码）；+36 双语 key；删伪造「registry core 8 modules」
+- **WebUI**：index.html 1367→1721 行，写死示例清零 + 新增告警/记忆/人格三页（25 导航↔25 页对齐）+ `webui/DATA-SOURCES.md`（页面→命令→处理器 文件:行）
+
+### 验证与风险（诚实）
+- 静态审核：server 全部改动 .c `gcc -fsyntax-only -Wall -Wextra`（全量 -I）**0 warning / 0 error**；WebUI 内联 JS `node --check` + HTML 结构 + 117 id + 57 命令引用核对通过；App 无 Dart SDK → **未编译**
+- 未验证：运行时行为（遵令不编译/不运行）；`POST /api/skills/run` 未接 HTTP；`mqtt_sync_data` 5 个 send_* 无生产者；**`lingos_visiond` 目标疑似未链 monitor/camera_input.c（camera_init 未定义）待构建确认**
+
+---
+
 ## [0.9.0-dev] - 2026-10-11（第 4 期 · 架构落地：统一调用 API + rely 依赖控制）
 
 > 先生 2026-09-04 方案（camera_backend 20 章 §5「通用调用 API」）落地第一件：
