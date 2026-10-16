@@ -98,6 +98,12 @@ int alert_config_load(alert_config_t *cfg) {
             } else if (strcmp(key, "sound_enabled") == 0) {
                 cfg->sound_enabled = atoi(val);
             }
+            /* 【第9期·静默失败修复】R7 健康/安全阈值：原先只写不读（save 有 load 无）
+             *   → 用户改过的 CPU/内存/磁盘/登录失败阈值在每次重启后静默回退默认值。 */
+            else if (strcmp(key, "cpu_threshold") == 0) cfg->cpu_threshold = atoi(val);
+            else if (strcmp(key, "memory_threshold") == 0) cfg->memory_threshold = atoi(val);
+            else if (strcmp(key, "disk_threshold") == 0) cfg->disk_threshold = atoi(val);
+            else if (strcmp(key, "login_fail_threshold") == 0) cfg->login_fail_threshold = atoi(val);
         }
     }
     fclose(fp);
@@ -120,7 +126,35 @@ int alert_config_validate(alert_config_t *cfg) {
     if (cfg->rainfall_threshold < 1.0) cfg->rainfall_threshold = 50.0;
     if (cfg->max_restart_attempts < 1) cfg->max_restart_attempts = 3;
     if (cfg->restart_window_seconds < 10) cfg->restart_window_seconds = 60;
-    /* 新增字段无需验证范围 */
+
+    /* 【第9期·生命线】R7 阈值范围校验
+     *   原实现写"新增字段无需验证范围"——而 check_local_health 用 (threshold > 0) 做开关，
+     *   配置文件里一个 0/-1 就能让 CPU/内存/磁盘预警**静默关闭**（用户毫无提示）。
+     *   现：越界一律夹回默认值并打 WARN（预警能力不可被配置静默阉割）。 */
+    if (cfg->cpu_threshold < 10 || cfg->cpu_threshold > 100) {
+        LOG_WARN_T("AlertConfig", "Validate", "CpuThreshold",
+                   "cpu_threshold=%d out of range [10,100] — restored default 80 (health alert was about to be disabled)",
+                   cfg->cpu_threshold);
+        cfg->cpu_threshold = 80;
+    }
+    if (cfg->memory_threshold < 10 || cfg->memory_threshold > 100) {
+        LOG_WARN_T("AlertConfig", "Validate", "MemoryThreshold",
+                   "memory_threshold=%d out of range [10,100] — restored default 85", cfg->memory_threshold);
+        cfg->memory_threshold = 85;
+    }
+    if (cfg->disk_threshold < 10 || cfg->disk_threshold > 100) {
+        LOG_WARN_T("AlertConfig", "Validate", "DiskThreshold",
+                   "disk_threshold=%d out of range [10,100] — restored default 90", cfg->disk_threshold);
+        cfg->disk_threshold = 90;
+    }
+    if (cfg->login_fail_threshold < 1) {
+        LOG_WARN_T("AlertConfig", "Validate", "LoginFailThreshold",
+                   "login_fail_threshold=%d invalid — restored default 5", cfg->login_fail_threshold);
+        cfg->login_fail_threshold = 5;
+    }
+    /* 【第9期】生命线通道开关留痕：用户可关声音/MQTT，但排障时必须能区分"没关"与"被关了" */
+    LOG_INFO_T("AlertConfig", "Validate", "Channels", "sound_enabled=%d mqtt_enabled=%d city=%s",
+               cfg->sound_enabled, cfg->mqtt_enabled, cfg->city);
 
     LOG_INFO_T("AlertConfig", "Validate", "OK", "config validated");
     return 0;
@@ -161,6 +195,12 @@ int alert_config_save(const alert_config_t *cfg) {
     fprintf(fp, "city = %s\n", cfg->city);
     fprintf(fp, "mqtt_enabled = %d\n", cfg->mqtt_enabled);
     fprintf(fp, "sound_enabled = %d\n", cfg->sound_enabled);
+
+    /* 【第9期】R7 健康/安全阈值写盘（与 load 对称——消除"改了不生效/重启回退"） */
+    fprintf(fp, "cpu_threshold = %d\n", cfg->cpu_threshold);
+    fprintf(fp, "memory_threshold = %d\n", cfg->memory_threshold);
+    fprintf(fp, "disk_threshold = %d\n", cfg->disk_threshold);
+    fprintf(fp, "login_fail_threshold = %d\n", cfg->login_fail_threshold);
 
     fclose(fp);
     LOG_INFO_T("AlertConfig", "Save", "OK", "config saved");

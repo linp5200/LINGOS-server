@@ -27,6 +27,76 @@
 #include <ctype.h>
 
 /* ============================================================
+ * 【第9期·生命线守护】数据源健康计数
+ *   问题（原实现）：fetch_all 只返回事件数——"拉取真失败"与"诚实空（无灾害）"
+ *   不可区分；四个源全部不可达时 alert_manager_check_all 只打 DEBUG 后 return，
+ *   对用户完全静默 → 用户把「预警能力已失效」误读成「一切正常」（漏报）。
+ *   对策：记录 attempt/fail；全失败时合成一条 HEALTH 预警走强制通知通道
+ *   （先生铁律：预警=生命线，宁可误报不可漏报）。
+ * ============================================================ */
+
+static int g_src_attempt = 0;        /* 真正发起网络的源数（每轮重置） */
+static int g_src_fail = 0;           /* 其中真实失败（HTTP/解析）的源数 */
+static time_t g_src_last_fail = 0;
+
+/* 全源不可达态（状态机——首次立即报，持续期间每 30 分钟提醒一次，恢复即复位） */
+static int g_src_degraded = 0;
+static time_t g_src_degraded_since = 0;
+static time_t g_src_degraded_last_notice = 0;
+
+#define SRC_DEGRADED_REMIND_SEC 1800   /* 降级提醒间隔：30 分钟（避免刷屏又不静默） */
+
+static void src_attempt(void) { g_src_attempt++; }
+static void src_fail(void) { g_src_fail++; g_src_last_fail = time(NULL); }
+
+/* 供 alertd / 诊断读取（只读快照；任一参数可为 NULL） */
+void alert_sources_health(int *attempt, int *fail, time_t *last_fail) {
+    if (attempt) *attempt = g_src_attempt;
+    if (fail) *fail = g_src_fail;
+    if (last_fail) *last_fail = g_src_last_fail;
+}
+
+/* 全源不可达 → 是否本次需要上报降级预警（内部去抖：首次立即 + 每 30min 提醒） */
+int alert_sources_degraded_event(alert_event_t *out) {
+    if (!out) return 0;
+    if (g_src_attempt <= 0 || g_src_fail < g_src_attempt) return 0;   /* 未全挂 → 不报 */
+
+    time_t now = time(NULL);
+    if (!g_src_degraded) {
+        g_src_degraded = 1;
+        g_src_degraded_since = now;
+        g_src_degraded_last_notice = 0;
+    }
+    if (g_src_degraded_last_notice != 0 &&
+        now - g_src_degraded_last_notice < SRC_DEGRADED_REMIND_SEC) {
+        return 0;   /* 去抖：已提醒过，等下一个间隔（不静默——只是不刷屏） */
+    }
+    g_src_degraded_last_notice = now;
+
+    memset(out, 0, sizeof(*out));
+    out->type = ALERT_TYPE_HEALTH;
+    out->level = 3;                 /* 橙色：触发「绝对保护豁免」强制通知 */
+    safe_strncpy(out->source, "alert_sources", sizeof(out->source));
+    safe_snprintf(out->description, sizeof(out->description),
+                  tr("All %d alert sources unreachable — warning coverage DEGRADED (still checking)",
+                     "预警数据源全部不可达（%d 个）——预警能力已降级（仍在重试）"),
+                  g_src_attempt);
+    out->timestamp = now;
+    return 1;
+}
+
+/* 数据源恢复 → 记录并复位（供日志/诊断；返回值：1=本次由降级恢复） */
+int alert_sources_degraded_recover(void) {
+    if (!g_src_degraded) return 0;
+    LOG_WARN_T("AlertSources", "Health", "Recovered",
+               "alert sources reachable again (degraded for %ld s)", (long)(time(NULL) - g_src_degraded_since));
+    g_src_degraded = 0;
+    g_src_degraded_since = 0;
+    g_src_degraded_last_notice = 0;
+    return 1;
+}
+
+/* ============================================================
  * API 端点配置
  * ============================================================ */
 
@@ -53,6 +123,7 @@ static int fetch_earthquake_usgs(alert_event_t *events, int max_count) {
     /* 【2026-09-18】USGS 强制 https（http 返回 301——原实现在此静默失败）
      * 二段式：先验证证书（安全优先），失败降级不验证（生命线可用性优先）+ WARN */
     int code = 0;
+    src_attempt();   /* 【第9期】源健康计数：真实发起网络才算尝试 */
     char *body_json = https_get_alloc(USGS_API_URL, 512 * 1024, 12, 1, &code);
     if (!body_json) {
         LOG_WARN_T("AlertSources", "USGS", "TLSVerify", "verified fetch failed — retry unverified (lifeline availability)");
@@ -60,6 +131,7 @@ static int fetch_earthquake_usgs(alert_event_t *events, int max_count) {
     }
     if (!body_json || code != 200) {
         LOG_WARN_T("AlertSources", "USGS", "HTTPFail", "fetch failed (http=%d)", code);
+        src_fail();   /* 【第9期】真失败（区别于"无地震"的诚实空） */
         free(body_json);
         return 0;
     }
@@ -68,6 +140,7 @@ static int fetch_earthquake_usgs(alert_event_t *events, int max_count) {
     free(body_json);
     if (!root) {
         LOG_WARN_T("AlertSources", "USGS", "JSONFail", "invalid GeoJSON");
+        src_fail();   /* 【第9期】解析失败=源不可用 */
         return 0;
     }
 
@@ -159,12 +232,14 @@ static int fetch_eew_one(const eew_source_t *src, alert_event_t *events, int max
     if (max_count < 1) return 0;
 
     int code = 0;
+    src_attempt();   /* 【第9期】每个 EEW 源各计一次 */
     char *body = https_get_alloc(src->url, 64 * 1024, 8, 1, &code);
     if (!body) {
         body = https_get_alloc(src->url, 64 * 1024, 8, 0, &code);
     }
     if (!body || code != 200) {
         LOG_WARN_T("AlertSources", "EEW", src->source, "fetch failed (http=%d)", code);
+        src_fail();   /* 【第9期】 */
         free(body);
         return 0;
     }
@@ -268,9 +343,11 @@ static int fetch_typhoon_cma(alert_event_t *events, int max_count) {
 
     /* ---- 1) 活动台风列表 ---- */
     int code = 0;
+    src_attempt();   /* 【第9期】台风源：只按列表请求计一次尝试 */
     char *list_raw = https_get_alloc(NMC_LIST_URL, 256 * 1024, 10, 0, &code);
     if (!list_raw || code != 200) {
         LOG_WARN_T("AlertSources", "NMC", "ListFail", "fetch failed (http=%d)", code);
+        src_fail();   /* 【第9期】 */
         free(list_raw);
         return 0;
     }
@@ -278,6 +355,7 @@ static int fetch_typhoon_cma(alert_event_t *events, int max_count) {
     free(list_raw);
     if (!root) {
         LOG_WARN_T("AlertSources", "NMC", "ListParseFail", "invalid JSONP payload");
+        src_fail();   /* 【第9期】解析失败=源不可用 */
         return 0;
     }
 
@@ -317,6 +395,7 @@ static int fetch_typhoon_cma(alert_event_t *events, int max_count) {
     char *view_raw = https_get_alloc(url, 512 * 1024, 10, 0, &code);
     if (!view_raw || code != 200) {
         LOG_WARN_T("AlertSources", "NMC", "ViewFail", "fetch view_%s failed (http=%d)", active_id, code);
+        src_fail();   /* 【第9期】详情不可达=台风源不可用（同源不重复计 attempt） */
         free(view_raw);
         return 0;
     }
@@ -451,9 +530,11 @@ static int fetch_warning_cn(alert_event_t *events, int max_count) {
      * 现实现：拉取用户配置 URL → 解析标准 JSON 数组格式（下方），解析失败/格式不符 → 诚实返回空。
      * 标准格式：[{"title":"...","level":1-4,"location":"...","description":"...","lat":x,"lon":y}] */
     int code = 0;
+    src_attempt();   /* 【第9期】已配置 URL 才算一次尝试 */
     char *raw = https_get_alloc(url, 256 * 1024, 10, 0, &code);
     if (!raw || (code != 200 && code != 0)) {
         LOG_WARN_T("AlertSources", "CN_Warning", "FetchFail", "url fetch failed (http=%d) — honest empty", code);
+        src_fail();   /* 【第9期】 */
         free(raw);
         return 0;
     }
@@ -463,6 +544,7 @@ static int fetch_warning_cn(alert_event_t *events, int max_count) {
     if (!jroot) {
         LOG_WARN_T("AlertSources", "CN_Warning", "ParseFail",
                    "response not valid JSON (expected array of {title,level,location,description}) — honest empty");
+        src_fail();   /* 【第9期】解析失败=源不可用 */
         return 0;
     }
 
@@ -527,6 +609,10 @@ int alert_sources_fetch_all(alert_event_t *events, int max_count) {
         return 0;
     }
 
+    /* 【第9期】每轮重置源健康计数（attempt/fail 由各 fetch_* 填充） */
+    g_src_attempt = 0;
+    g_src_fail = 0;
+
     int count = 0;
 
     /* 【2026-09-18】EEW 秒级四源（生命线专项——地震秒级） */
@@ -545,6 +631,19 @@ int alert_sources_fetch_all(alert_event_t *events, int max_count) {
     n = fetch_warning_cn(events + count, max_count - count);
     count += n;
 
-    LOG_INFO_T("AlertSources", "FetchAll", "OK", "fetched %d events total", count);
+    LOG_INFO_T("AlertSources", "FetchAll", "OK", "fetched %d events total (sources: %d attempted / %d failed)",
+               count, g_src_attempt, g_src_fail);
+
+    /* 【第9期·生命线】全源不可达不再静默：
+     *   ① 失败可见性——WARN 之上再打一条 ERROR（默认日志级别即可见，不再只是 DEBUG）
+     *   ② 降级事件由 alert_manager_check_all 独立通道强制上报（不参与 merge/投票）
+     *   ③ 一旦恢复立即复位并记 WARN（用户能从日志看到"恢复"而非永远以为降级） */
+    if (g_src_attempt > 0 && g_src_fail >= g_src_attempt) {
+        LOG_ERROR_T("AlertSources", "FetchAll", "AllSourcesFail",
+                    "all %d alert source(s) unreachable — warning coverage DEGRADED (no data is NOT good news)",
+                    g_src_attempt);
+    } else {
+        alert_sources_degraded_recover();
+    }
     return count;
 }

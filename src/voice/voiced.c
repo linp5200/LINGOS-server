@@ -81,8 +81,12 @@ static void* voice_loop_thread(void *arg) {
         LOG_WARN_T("Voiced", "VoiceLoop", "WakewordInitFail", "wakeword_init failed (continuing in standby)");
     }
 
-    LOG_INFO_T("Voiced", "VoiceLoop", "Start", "voice monitoring started, wakeword='%s'",
-               g_config.wakeword[0] ? g_config.wakeword : tr("诺克", "Nook"));
+    /* 【第9期】用真实运行时值（wakeword_get_current）而非配置快照——wakeword_set 运行时改名也能反映 */
+    LOG_INFO_T("Voiced", "VoiceLoop", "Start", "voice monitoring started, wakeword='%s', mic_app_id='%s'",
+               wakeword_get_current(), audio_get_app_id());
+    /* 【第9期·隐私透明】麦克风行为必须对用户明示：只做本机唤醒检测，音频不出设备。 */
+    LOG_INFO_T("Voiced", "VoiceLoop", "Privacy",
+               "microphone capture is local-only (wakeword detection); no audio is uploaded");
 
     while (g_running) {
         audio_frame_t frame;
@@ -94,9 +98,20 @@ static void* voice_loop_thread(void *arg) {
 
         int detected = wakeword_detect(&frame);
         if (detected) {
-            LOG_INFO_T("Voiced", "VoiceLoop", "Wakeword", "wakeword detected!");
+            LOG_INFO_T("Voiced", "VoiceLoop", "Wakeword", "wakeword detected! (word='%s')",
+                       wakeword_get_current());
             audio_feedback_beep();
-            voice_cmd_execute("hello");
+            /* 【第9期·禁假成功/占位】原实现固定执行字面量 "hello"——用户说什么都一样，
+             *   看起来像"AI 已理解"实则只打一条横幅。现显式走"唤醒"语义，并把
+             *   "STT 未接线"这一事实告知用户（每进程一次，不刷屏）+ 给出可行动路径。 */
+            voice_cmd_execute("wake");
+            static int stt_hint_shown = 0;
+            if (!stt_hint_shown) {
+                stt_hint_shown = 1;
+                LOG_WARN_T("Voiced", "VoiceLoop", "SttNotWired",
+                           "语音识别(STT)未接线：唤醒仅本机提示，不解析用户语句；"
+                           "需要对话请在 App「AI 对话」输入（麦克风音频仅本机处理，不出设备）");
+            }
         }
 
         usleep(100000);

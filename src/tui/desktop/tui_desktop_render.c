@@ -5,9 +5,12 @@
  */
 
 #include "tui_desktop.h"
+#include "tui_desktop_window.h"   /* 【第9期】窗口重绘（tui_window_get_first/draw） */
 #include "../../lib/log_extra.h"
 #include "../../common/safe_string.h"
 #include "../../common/lang.h"
+#include "../../core/version.h"     /* 【第9期】真实版本号（原写死 vLN-B-4.2.0.0） */
+#include <stdio.h>                  /* 【第9期】/proc/meminfo 读取 */
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -45,6 +48,28 @@ static void get_time_str(char *buf, size_t size) {
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     strftime(buf, size, "%H:%M:%S", tm);
+}
+
+/* ============================================================
+ * 【第9期】真实内存占用率（/proc/meminfo）
+ *   原状态栏写死 "● Memory: N/A"（永久占位——用户永远看不到内存状态）。
+ *   现：读 MemTotal/MemAvailable 算真实占用；读不到返回 -1（界面显示 -- 不编数字）。
+ * ============================================================ */
+static int read_mem_used_pct(void) {
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (!fp) return -1;
+    char line[128];
+    unsigned long long total = 0, avail = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        if (strncmp(line, "MemTotal:", 9) == 0) {
+            if (sscanf(line, "MemTotal: %llu", &total) != 1) total = 0;
+        } else if (strncmp(line, "MemAvailable:", 13) == 0) {
+            if (sscanf(line, "MemAvailable: %llu", &avail) != 1) avail = 0;
+        }
+    }
+    fclose(fp);
+    if (total == 0 || avail > total) return -1;
+    return (int)((double)(total - avail) / (double)total * 100.0 + 0.5);
 }
 
 /* ============================================================
@@ -124,9 +149,9 @@ void tui_desktop_render_background(tui_desktop_state_t *state) {
         ncplane_set_fg_rgb(plane, 0x666688);
         ncplane_putstr(plane, sub);
 
-        /* 版本信息 */
-        char ver[32];
-        safe_snprintf(ver, sizeof(ver), "vLN-B-4.2.0.0");
+        /* 版本信息（【第9期】真实版本——原写死 vLN-B-4.2.0.0 与现役版本不符） */
+        char ver[64];
+        safe_snprintf(ver, sizeof(ver), "v%s", version_get());
         center_x = box_x + (box_w - strlen(ver)) / 2;
         ncplane_cursor_move_yx(plane, box_y + 4, center_x);
         ncplane_set_fg_rgb(plane, 0x444466);
@@ -137,7 +162,7 @@ void tui_desktop_render_background(tui_desktop_state_t *state) {
     if (height > 15) {
         ncplane_set_fg_rgb(plane, 0x333355);
         ncplane_cursor_move_yx(plane, height - 3, 2);
-        ncplane_putstr(plane, "Press Q to exit desktop");
+        ncplane_putstr(plane, tr("Press Q to exit desktop", "按 Q 退出桌面"));
     }
 
     LOG_DEBUG_T("TUIDesktopRender", "Background", "OK", "rendered background (%dx%d)", width, height);
@@ -169,11 +194,25 @@ void tui_desktop_render_statusbar(tui_desktop_state_t *state) {
     /* 左侧显示系统状态 */
     ncplane_putstr(plane, "🟢 LING OS");
 
-    /* 中间显示内存信息（简单占位） */
-    ncplane_set_fg_rgb(plane, 0x666688);
-    int mid = width / 2;
-    ncplane_cursor_move_yx(plane, 0, mid - 8);
-    ncplane_putstr(plane, "● Memory: N/A");
+    /* 中间显示内存信息（【第9期】真实 /proc/meminfo——原为永久占位 "Memory: N/A"）。
+     *   读不到时显示 --（不让用户看到编造数字）。 */
+    {
+        int mem_pct = read_mem_used_pct();
+        char mem_str[48];
+        if (mem_pct >= 0) {
+            safe_snprintf(mem_str, sizeof(mem_str), "● %s: %d%%",
+                          tr("Memory", "内存"), mem_pct);
+        } else {
+            safe_snprintf(mem_str, sizeof(mem_str), "● %s: --",
+                          tr("Memory", "内存"));
+        }
+        ncplane_set_fg_rgb(plane, 0x666688);
+        int mid = width / 2;
+        int mx = mid - (int)(strlen(mem_str) / 2);
+        if (mx < 2) mx = 2;
+        ncplane_cursor_move_yx(plane, 0, mx);
+        ncplane_putstr(plane, mem_str);
+    }
 
     /* 右侧显示时间 */
     char time_str[16];
@@ -210,8 +249,11 @@ void tui_desktop_render_taskbar(tui_desktop_state_t *state) {
     ncplane_set_fg_rgb(plane, COLOR_TEXT_TASKBAR);
     ncplane_putstr(plane, "📌 ");
 
-    /* 显示一些快捷入口（占位） */
-    const char *items[] = {"Term", "Chat", "Files", "Config", "Help"};
+    /* 快捷入口（【第9期】双语——原为纯英文标签，中文用户看不懂） */
+    const char *items[] = {
+        tr("Term", "终端"), tr("Chat", "对话"), tr("Files", "文件"),
+        tr("Config", "配置"), tr("Help", "帮助")
+    };
     int x = 6;
     for (int i = 0; i < 5; i++) {
         if (x + 10 > width) break;
@@ -229,7 +271,7 @@ void tui_desktop_render_taskbar(tui_desktop_state_t *state) {
     /* 右侧显示提示 */
     ncplane_set_fg_rgb(plane, 0x444466);
     ncplane_cursor_move_yx(plane, 0, width - 20);
-    ncplane_putstr(plane, "Q: exit  ↑↓: navigate");
+    ncplane_putstr(plane, tr("Q: exit  ↑↓: navigate", "Q: 退出  ↑↓: 导航"));
 
     LOG_DEBUG_T("TUIDesktopRender", "Taskbar", "OK", "rendered taskbar");
 }
@@ -242,8 +284,21 @@ void tui_desktop_render_icons(tui_desktop_state_t *state) {
 }
 
 void tui_desktop_render_windows(tui_desktop_state_t *state) {
-    /* 窗口渲染由 tui_desktop_window.c 实现（批次20） */
-    /* 此处为占位 */
+    if (!state) return;
+
+    /* 【第9期·接线】原为存根（"not implemented yet"）——而 tui_desktop_refresh() 每次
+     *   刷新都会调用它：背景重绘后窗口不重画 → 用户看到窗口闪烁/被覆盖。
+     *   现遍历窗口链表按 z 序重绘（tui_desktop_window.c 已实现 tui_window_draw）。
+     *   功能只增不减：无窗口时行为与原存根一致（仅日志）。 */
+    int n = 0;
+    for (tui_window_t *w = tui_window_get_first(); w; w = tui_window_get_next(w)) {
+        tui_window_draw(w);
+        n++;
+    }
+    if (n == 0) {
+        LOG_DEBUG_T("TUIDesktopRender", "Windows", "None", "no windows to redraw");
+    } else {
+        LOG_DEBUG_T("TUIDesktopRender", "Windows", "OK", "redrew %d window(s)", n);
+    }
     (void)state;
-    LOG_DEBUG_T("TUIDesktopRender", "Windows", "Stub", "window rendering not implemented yet");
 }

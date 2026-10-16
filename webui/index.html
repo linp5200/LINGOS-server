@@ -224,8 +224,10 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     <div class="chatstatus" style="display:flex;align-items:center;gap:8px">
       <span id="wsState">WS: 未连接</span>
       <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
-        <input id="wsToken" type="password" placeholder="访问令牌" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:inherit;font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:4px;width:150px"/>
+        <input id="wsToken" type="password" placeholder="访问令牌" autocomplete="off" style="background:transparent;border:1px solid rgba(255,255,255,.15);color:inherit;font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:4px;width:150px"/>
         <button onclick="wsConnect()" style="background:rgba(90,200,250,.1);border:1px solid rgba(90,200,250,.4);font-family:var(--mono);font-size:10px;padding:3px 10px;cursor:pointer;border-radius:4px">连接</button>
+        <!-- 【第9期·隐私】令牌会存本机浏览器（localStorage）——共用终端必须能一键清除 -->
+        <button onclick="wsForgetToken()" title="清除本机浏览器保存的访问令牌（公用终端请务必清除）" style="background:transparent;border:1px solid rgba(255,77,77,.4);color:var(--red);font-family:var(--mono);font-size:10px;padding:3px 10px;cursor:pointer;border-radius:4px">清除令牌</button>
       </span>
     </div>
   </div>
@@ -669,13 +671,22 @@ async function bindSysEvents(){
 /* 【0.6.1】ALERT 卡：真实预警计数 */
 async function bindAlertCount(){
   var a = await apiCmd('alert_query');
-  var list = (a && a.status==='ok' && Array.isArray(a.data))? a.data : [];
+  var ok = !!(a && a.status==='ok' && Array.isArray(a.data));
+  var list = ok ? a.data : [];
   var n = list.length;
+  /* 【第9期·禁假数据】原实现：查询失败时 list 为空 → 显示"0 条"，
+   *   用户会读成"没有预警=一切正常"（生命线最危险的误导）。
+   *   现：取不到一律 --，并明示"数据不可达"。 */
+  if(!ok){
+    setTxt('#alertCount', '--');
+    setTxt('#alertLv', '<span style="color:var(--amber)">数据不可达</span>');
+    return;
+  }
   var lv = {};
   list.forEach(function(x){ var l = x.level||''; lv[l]=(lv[l]||0)+1; });
   var lvStr = Object.keys(lv).slice(0,3).map(function(k){ return k+'×'+lv[k]; }).join(' ');
   setTxt('#alertCount', n+ '<span class="u">条</span>');
-  setTxt('#alertLv', lvStr||'--');
+  setTxt('#alertLv', lvStr||'0（暂无记录）');
 }
 /* ===== 会话 ===== */
 async function bindSessions(){
@@ -706,7 +717,7 @@ async function bindAlert(){
   var srcBox=document.getElementById('alSrc');
   if(box){
     if(!ok){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">预警读取失败（显示 -- 不模拟）</div></div></div>'; }
-    else if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">暂无预警 —— 系统正常</div></div></div>'; }
+    else if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">暂无预警记录</div><div class="s">注意：这不等于数据源正常——请对照右侧「数据源健康」；源全挂时系统会强制发一条降级预警</div></div></div>'; }
     else box.innerHTML = list.slice(0,10).map(function(e){
       var lv2=String(e.level||'info').toUpperCase();
       var rc = lv2==='L0'||lv2==='L1'?'var(--red)':(lv2==='L2'?'var(--amber)':'var(--blue)');
@@ -984,7 +995,12 @@ async function bindLog(){
   var box = $('#p-log .logview');
   if(!box) return;
   var txt = (lv&&lv.status==='ok')? String(lv.data||'') : '';
-  if(!txt){ box.innerHTML='<div style="color:var(--d);font-family:var(--mono);padding:10px">'+(lv&&lv.status==='error'?'日志读取失败':'暂无日志')+'</div>'; return; }
+  if(!txt){
+    box.innerHTML = (lv&&lv.status==='error')
+      ? '<div style="color:var(--amber);font-family:var(--mono);padding:10px">日志读取失败：服务端未运行或 /LINGOS/log/lingos.log 不可读<br><span style="color:var(--d)">下一步：在「系统与插件」确认服务端状态；本机可执行 tail -f /LINGOS/log/lingos.log</span></div>'
+      : '<div style="color:var(--d);font-family:var(--mono);padding:10px">日志为空（服务端可能刚启动）——稍后点「↻」重试</div>';
+    return;
+  }
   var lines = txt.split('\n').filter(Boolean).slice(-30).reverse();
   /* 【2026-10-02 修复】日志文件为 JSON 行格式——解析后渲染（原按纯文本匹配 [ERROR] 失效） */
   box.innerHTML = lines.map(function(l){
@@ -1655,6 +1671,16 @@ async function checkUpdate(){
 var wsChat = null, chatAuthed = false, curAi=null, curThink=null;
 (function(){ var t=localStorage.getItem('lingos_ws_token'); var el=document.getElementById('wsToken'); if(el&&t) el.value=t; })();
 function wsSetState(s){ var el=document.getElementById('wsState'); if(el) el.textContent='WS: '+s; }
+/* 【第9期·隐私】清除本机保存的访问令牌（localStorage）并断开——
+ *   原实现只写入不清除：共用终端上一个人的令牌会一直留在浏览器里。 */
+function wsForgetToken(){
+  try{ localStorage.removeItem('lingos_ws_token'); }catch(e){}
+  var el=document.getElementById('wsToken'); if(el) el.value='';
+  if(wsChat){ try{ wsChat.close(); }catch(e){} wsChat=null; }
+  chatAuthed=false;
+  wsSetState('已断开 · 本机令牌已清除');
+  var st=document.getElementById('chatState'); if(st) st.textContent='离线';
+}
 function chatScroll(){ var b=document.getElementById('chatMsgs'); if(b) b.scrollTop=b.scrollHeight; }
 function chatAppend(role, text, meta){
   var box=document.getElementById('chatMsgs'); if(!box) return null;

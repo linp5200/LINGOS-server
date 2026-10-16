@@ -7,10 +7,44 @@
 
 #include "alert_utils.h"
 #include "../common/safe_string.h"
+#include "../common/lang.h"
 #include "../lib/log_extra.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
+
+/* ============================================================
+ * 【第9期】预警类型/级别标签（App/Web/历史 JSON 共用——单一事实来源）
+ *   原实现：notify_shell 内联一份 type_names[]，历史 JSON 完全不写名称 →
+ *   App/Web 读到的 title 是整数 type、content 为空（生命线信息丢失）。
+ * ============================================================ */
+
+const char *alert_type_label(int type) {
+    switch (type) {
+        case 0:  return tr("Unknown", "未知");
+        case 1:  return tr("Typhoon", "台风");
+        case 2:  return tr("Earthquake", "地震");
+        case 3:  return tr("Rain", "暴雨");
+        case 4:  return tr("High Temp", "高温");
+        case 5:  return tr("Storm", "风暴");
+        case 6:  return tr("Fire", "火灾");
+        case 7:  return tr("System Health", "系统健康");
+        case 8:  return tr("Security", "安全威胁");
+        default: return tr("Unknown", "未知");
+    }
+}
+
+const char *alert_level_label(int level) {
+    switch (level) {
+        case 0:  return "info";
+        case 1:  return "L1";
+        case 2:  return "L2";
+        case 3:  return "L3";
+        case 4:  return "L4";
+        case 5:  return "L5";
+        default: return "info";
+    }
+}
 
 /* ============================================================
  * 距离计算（Haversine公式）

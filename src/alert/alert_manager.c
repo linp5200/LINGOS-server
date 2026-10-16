@@ -34,6 +34,10 @@ static int g_event_count = 0;
  * ============================================================ */
 
 static alert_event_t merge_events(alert_event_t *events, int count, const alert_config_t *config) {
+    /* 【第9期】当前合并策略（国家优先/多数投票/加权平均）不依赖 config；
+     *   参数保留以兼容既有调用与后续"可配置合并权重"，显式标注避免 -Wextra 噪音。 */
+    (void)config;
+
     alert_event_t result;
     memset(&result, 0, sizeof(result));
 
@@ -179,6 +183,27 @@ void alert_manager_check_all(const alert_config_t *config) {
         events[event_count++] = plugin_events[i];
     }
 
+    /* ============================================================
+     * 【第9期·生命线守护】"数据源全挂"独立上报通道
+     *   原行为：event_count==0 → 只打 DEBUG 后 return，用户侧完全静默
+     *           （把"预警能力失效"误读成"一切正常"——最危险的漏报形态）
+     *   现行为：全源不可达 → 合成 HEALTH level=3 事件，**不参与 merge/多数投票**
+     *           （避免被合并降级），直接走绝对保护豁免强制通知 → App/Qt/Web 可见；
+     *           首次立即报，持续期间每 30 分钟提醒一次，恢复自动复位。
+     * ============================================================ */
+    alert_event_t degraded;
+    if (alert_sources_degraded_event(&degraded)) {
+        LOG_ERROR_T("AlertManager", "CheckAll", "SourcesDegraded",
+                    "all alert sources unreachable — forcing degraded-coverage alert (source=%s)",
+                    degraded.source);
+        if (alert_history_save(&degraded) != 0) {
+            LOG_ERROR_T("AlertManager", "CheckAll", "HistoryWriteFail",
+                        "degraded-coverage alert could not be persisted (disk full / read-only?) — notifying anyway");
+        }
+        alert_notify_force_send(&degraded);
+        g_has_exception = 1;   /* 保持高频轮询——尽快发现恢复 */
+    }
+
     if (event_count == 0) {
         LOG_DEBUG_T("AlertManager", "CheckAll", "NoEvents", "no events from any source");
         return;
@@ -193,7 +218,12 @@ void alert_manager_check_all(const alert_config_t *config) {
         LOG_INFO_T("AlertManager", "CheckAll", "Exception", "alert triggered: type=%d, level=%d",
                    merged.type, merged.level);
 
-        alert_history_save(&merged);
+        /* 【第9期·不静默】历史写入失败必须可见（磁盘满/只读时预警无痕迹，排障会失去线索） */
+        if (alert_history_save(&merged) != 0) {
+            LOG_ERROR_T("AlertManager", "CheckAll", "HistoryWriteFail",
+                        "alert level=%d triggered but history write FAILED (disk full / read-only?) — notifying anyway",
+                        merged.level);
+        }
 
         /* 【修改】绝对保护豁免：level>=3 时强制通知 */
         if (merged.level >= 3) {

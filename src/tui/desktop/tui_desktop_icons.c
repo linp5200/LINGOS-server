@@ -130,7 +130,7 @@ void tui_desktop_icons_init(void) {
     int start_x = 4;
     int start_y = 10;
 
-    for (int i = 0; i < PRESET_COUNT; i++) {
+    for (size_t i = 0; i < PRESET_COUNT; i++) {   /* 【第9期】PRESET_COUNT 为 size_t——消除 -Wsign-compare */
         int col = i % cols;
         int row = i / cols;
         int x = start_x + col * spacing_x;

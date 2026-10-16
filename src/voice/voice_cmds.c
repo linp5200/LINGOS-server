@@ -28,11 +28,17 @@ int voice_cmd_execute(const char *cmd) {
     /* 阶段一：仅反馈（检测到唤醒词后播放提示音） */
     /* 实际可在后续阶段扩展为执行具体命令 */
 
+    /* 【第9期·双语/可行动】原横幅："🎤 Wakeword detected!" 只有英文（双语缺失），
+     *   且右边框空格是手写的 → 中文行必然错位；也没有告诉用户"下一步在哪"。
+     *   现：中英各一行（tr 成对）、文本行不画右边框（任何语言都不会错位）、
+     *   第三行给出可行动路径。 */
     uart_puts("\n");
     uart_puts(COLOR_CYAN);
     uart_puts("┌─────────────────────────────────────────────────────────────┐\n");
-    uart_puts("│  🎤  Wakeword detected!                                 │\n");
-    uart_puts("│  "); uart_puts(tr("I'm here.", "我在。")); uart_puts("                              │\n");
+    uart_puts("│  🎤  "); uart_puts(tr("Wakeword detected!", "检测到唤醒词！")); uart_puts("\n");
+    uart_puts("│  "); uart_puts(tr("I'm here.", "我在。")); uart_puts("\n");
+    uart_puts("│  "); uart_puts(tr("Say/type your request in the LING OS app chat.",
+                                "请在 LING OS App「AI 对话」里说/输入你的请求。")); uart_puts("\n");
     uart_puts("└─────────────────────────────────────────────────────────────┘\n");
     uart_puts(COLOR_RESET);
 

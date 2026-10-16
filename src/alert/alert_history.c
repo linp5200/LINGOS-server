@@ -6,6 +6,7 @@
  */
 
 #include "alert_history.h"
+#include "alert_utils.h"     /* 【第9期】alert_type_label / alert_level_label */
 #include "../common/safe_string.h"
 #include "../common/data_path.h"
 #include "../lib/log_extra.h"
@@ -19,6 +20,34 @@
 
 #define HISTORY_DIR "/data/alerts/"
 #define MAX_HISTORY_DAYS 30
+
+/* ============================================================
+ * 【第9期·生命线信息保真】JSON 转义
+ *   原实现把 source/location/description 直接 %s 进 JSON：描述里只要有一个
+ *  引号或反斜杠（真实震中地名/用户自定义预警标题常见）→ 整条记录 JSON 非法 →
+ *   Python cmd_alert_query 的 json.load 抛异常后被 except 静默 continue →
+ *   该预警在 App/Web 列表里**凭空消失**（生命线漏报）。
+ * ============================================================ */
+static void json_escape(const char *in, char *out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    if (!in) { out[0] = '\0'; return; }
+    size_t o = 0;
+    for (size_t i = 0; in[i] != '\0' && o + 7 < out_sz; i++) {
+        unsigned char c = (unsigned char)in[i];
+        switch (c) {
+            case '"':  out[o++] = '\\'; out[o++] = '"';  break;
+            case '\\': out[o++] = '\\'; out[o++] = '\\'; break;
+            case '\n': out[o++] = '\\'; out[o++] = 'n';  break;
+            case '\r': out[o++] = '\\'; out[o++] = 'r';  break;
+            case '\t': out[o++] = '\\'; out[o++] = 't';  break;
+            default:
+                if (c < 0x20) { out[o++] = ' '; }      /* 其余控制符 → 空格（保持合法 JSON） */
+                else          { out[o++] = (char)c; }
+                break;
+        }
+    }
+    out[o] = '\0';
+}
 
 static char g_history_dir[512] = {0};
 
@@ -57,12 +86,33 @@ int alert_history_save(const alert_event_t *event) {
         return -1;
     }
 
+    /* 【第9期】字段与 Python 读取端对齐（cmd_alert_query 读 title/content/time/ts/level）：
+     *   原实现只写 type(int)/level(int)/source/location/description →
+     *   App/Web 列表里 title 变成整数、content 恒为空、time 取文件名乱码切片（信息全丢）。
+     *   现补齐可读字段，同时保留原有字段（只增不减）+ 全部字符串转义。 */
+    char title_buf[64], loc_buf[256], desc_buf[512], src_buf[128], time_buf[32];
+    json_escape(alert_type_label(event->type), title_buf, sizeof(title_buf));
+    json_escape(event->location, loc_buf, sizeof(loc_buf));
+    json_escape(event->description, desc_buf, sizeof(desc_buf));
+    json_escape(event->source, src_buf, sizeof(src_buf));
+    {
+        struct tm tmv;
+        localtime_r(&now, &tmv);
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tmv);
+    }
+
     fprintf(fp, "{\n");
+    fprintf(fp, "  \"title\": \"%s\",\n", title_buf);
+    fprintf(fp, "  \"content\": \"%s\",\n", desc_buf);
+    fprintf(fp, "  \"time\": \"%s\",\n", time_buf);
+    fprintf(fp, "  \"ts\": %ld,\n", (long)now);
+    fprintf(fp, "  \"level\": \"%s\",\n", alert_level_label(event->level));
+    fprintf(fp, "  \"level_num\": %d,\n", event->level);
     fprintf(fp, "  \"type\": %d,\n", event->type);
-    fprintf(fp, "  \"level\": %d,\n", event->level);
-    fprintf(fp, "  \"source\": \"%s\",\n", event->source);
-    fprintf(fp, "  \"location\": \"%s\",\n", event->location);
-    fprintf(fp, "  \"description\": \"%s\",\n", event->description);
+    fprintf(fp, "  \"type_name\": \"%s\",\n", title_buf);
+    fprintf(fp, "  \"source\": \"%s\",\n", src_buf);
+    fprintf(fp, "  \"location\": \"%s\",\n", loc_buf);
+    fprintf(fp, "  \"description\": \"%s\",\n", desc_buf);
     fprintf(fp, "  \"latitude\": %.6f,\n", event->latitude);
     fprintf(fp, "  \"longitude\": %.6f,\n", event->longitude);
     fprintf(fp, "  \"distance_km\": %d,\n", event->distance_km);
@@ -128,8 +178,30 @@ int alert_history_query(const char *location, const char *type_str, int time_ran
                     if (sscanf(line, "  \"type\": %d,", &_t) == 1) {
                         ev.type = (alert_type_t)_t;
                     }
+                } else if (strstr(line, "\"level_label\"")) {
+                    /* 【第9期】新格式：L 级字符串（与 Python/App/Web 对齐） */
+                    char s[16] = {0};
+                    if (sscanf(line, "  \"level_label\": \"%15[^\"]\"", s) == 1) {
+                        if (strcmp(s, "info") == 0) ev.level = 0;
+                        else if (s[0] == 'L' || s[0] == 'l') ev.level = atoi(s + 1);
+                    }
+                } else if (strstr(line, "\"level_num\"")) {
+                    /* 【第9期】新格式：数值级别（旧读取端兼容锚点） */
+                    int _lv = 0;
+                    if (sscanf(line, "  \"level_num\": %d,", &_lv) == 1) ev.level = _lv;
                 } else if (strstr(line, "\"level\"")) {
-                    sscanf(line, "  \"level\": %d,", &ev.level);
+                    /* 向后兼容：旧文件只有整数 "level"；新文件该键为 "L2"/"info"
+                     * （已由上面的 level_label/level_num 覆盖，此处仅兜底旧格式） */
+                    int _lv2 = 0;
+                    if (sscanf(line, "  \"level\": %d,", &_lv2) == 1) {
+                        ev.level = _lv2;
+                    } else {
+                        char s2[16] = {0};
+                        if (sscanf(line, "  \"level\": \"%15[^\"]\"", s2) == 1) {
+                            if (strcmp(s2, "info") == 0) ev.level = 0;
+                            else if (s2[0] == 'L' || s2[0] == 'l') ev.level = atoi(s2 + 1);
+                        }
+                    }
                 } else if (strstr(line, "\"source\"")) {
                     char *p = strchr(line, '"');
                     if (p) {

@@ -41,10 +41,12 @@ static void render_chat(tui_window_t *win) {
 
     int y = 2;
     int start = g_chat.history_count > MAX_HISTORY ? g_chat.history_count - MAX_HISTORY : 0;
+    /* 【第9期】按窗口宽度裁剪（原 w 被计算却未使用 → 长消息溢出错位、边框被破坏） */
+    size_t clip = (w > 4) ? (size_t)(w - 4) : 1;
     for (int i = start; i < g_chat.history_count && y < h - 3; i++) {
         ncplane_cursor_move_yx(p, y, 2);
         ncplane_set_fg_rgb(p, 0x88ddff);
-        ncplane_putstr(p, g_chat.history[i]);
+        ncplane_putnstr(p, clip, g_chat.history[i]);
         y++;
     }
 
@@ -151,7 +153,7 @@ void widget_chat_keypress(int key) {
         return;
     }
 
-    if (key >= 32 && key <= 126 && g_chat.input_len < sizeof(g_chat.input_buf) - 1) {
+    if (key >= 32 && key <= 126 && g_chat.input_len < (int)sizeof(g_chat.input_buf) - 1) {
         g_chat.input_buf[g_chat.input_len++] = (char)key;
         g_chat.input_buf[g_chat.input_len] = '\0';
         render_chat(g_chat.window);

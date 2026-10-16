@@ -34,14 +34,18 @@ typedef struct {
 } event_state_t;
 
 static event_state_t g_events;
+/* 【第9期】最近一次悬停的图标——用于"仅在悬停目标变化时刷新"，避免鼠标移动即全屏重绘 */
+static tui_icon_t *g_last_hover_icon = NULL;
 
 static int is_in_desktop_area(tui_desktop_state_t *state, int x, int y) {
+    (void)x;   /* 【第9期】仅按 y 判定；显式标注避免 -Wextra 噪音 */
     if (!state) return 0;
     int taskbar_y = state->height - (state->config.show_taskbar ? 1 : 0);
     return (y < taskbar_y);
 }
 
 static void process_mouse_event(tui_desktop_state_t *state, int key) {
+    (void)key;   /* 【第9期】鼠标路径不消费按键码；显式标注避免 -Wextra 噪音 */
     int x = g_events.mouse_x;
     int y = g_events.mouse_y;
 
@@ -155,7 +159,16 @@ int tui_desktop_events_handle_mouse(tui_desktop_state_t *state, int key, ncinput
     if (x != g_events.mouse_x || y != g_events.mouse_y) {
         g_events.mouse_x = x;
         g_events.mouse_y = y;
-        tui_icon_t *icon = tui_desktop_icons_hit_test(x, y);
+        /* 【第9期·接线】原实现命中检测结果被丢弃（unused variable 'icon'）→
+         *   图标 hover 高亮（draw_icon 的 highlighted 分支 + icons 层的 setter）
+         *   永远不生效，用户不知道鼠标停在哪个图标上。
+         *   现：悬停目标变化时交给 icons 层更新并刷新一次（不随每次移动重绘）。 */
+        tui_icon_t *hover = tui_desktop_icons_hit_test(x, y);
+        if (hover != g_last_hover_icon) {
+            g_last_hover_icon = hover;
+            tui_desktop_icons_handle_mouse(0, x, y);   /* 0 = 悬停/释放：只更新高亮 */
+            tui_desktop_refresh(state);
+        }
     }
 
     if (input->evtype == NCEV_BUTTON_PRESS) {

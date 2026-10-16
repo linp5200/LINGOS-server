@@ -78,10 +78,12 @@ static void render_files(tui_window_t *win) {
 
     ncplane_erase(p);
 
+    /* 【第9期】按窗口宽度裁剪（原 w 未使用 → 长路径/长文件名溢出错位） */
+    size_t clip = (w > 6) ? (size_t)(w - 6) : 1;
     ncplane_set_fg_rgb(p, 0x88ddff);
     ncplane_cursor_move_yx(p, 1, 2);
     ncplane_putstr(p, tr("📁 ", "📁 "));
-    ncplane_putstr(p, g_files.current_path);
+    ncplane_putnstr(p, clip, g_files.current_path);
 
     int y = 3;
     for (int i = 0; i < g_files.file_count && y < h - 2; i++) {

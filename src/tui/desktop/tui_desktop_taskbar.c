@@ -112,7 +112,7 @@ void tui_desktop_taskbar_render(tui_desktop_state_t *state) {
     while (win && x < width - 25) {
         char label[32];
         safe_snprintf(label, sizeof(label), "[%s]", win->title);
-        if (x + strlen(label) > width - 25) break;
+        if (x + (int)strlen(label) > width - 25) break;   /* 【第9期】显式转换——消除 -Wsign-compare */
 
         ncplane_cursor_move_yx(plane, 0, x);
         ncplane_set_fg_rgb(plane, win->focused ? 0x00ccff : 0x666688);

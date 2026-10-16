@@ -14,6 +14,7 @@
 #include "../lib/log_extra.h"
 #include "../core/version.h"
 #include "alert_history.h"
+#include "alert_sources.h"   /* 【第9期】alert_sources_health —— 数据源健康快照 */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,6 +92,20 @@ static void main_loop(void) {
         if (now - last_check >= check_interval) {
             LOG_DEBUG_T("Alertd", "MainLoop", "Check", "performing alert check");
             alert_manager_check_all(&g_config);
+
+            /* 【第9期·生命线可观测】本轮有源失败时输出健康快照（attempt/fail/最后失败时刻）。
+             *   全源失败已由 alert_manager 独立通道强制上报；此处补"部分失败"的可见性——
+             *   原来只有各源自己的 WARN，用户看不出"4 个源里挂了 2 个"的整体态势。 */
+            {
+                int att = 0, fl = 0;
+                time_t last_fail = 0;
+                alert_sources_health(&att, &fl, &last_fail);
+                if (fl > 0) {
+                    LOG_WARN_T("Alertd", "MainLoop", "SourceHealth",
+                               "alert sources: %d attempted / %d failed (last fail at %ld)",
+                               att, fl, (long)last_fail);
+                }
+            }
             last_check = now;
 
             /* 根据是否检测到异常，动态调整轮询间隔 */
