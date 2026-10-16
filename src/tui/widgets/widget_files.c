@@ -177,7 +177,9 @@ void widget_files_open_selected(void) {
             }
         } else {
             char info[256];
-            safe_snprintf(info, sizeof(info), "File: %s (%lld bytes)", name, (long long)st.st_size);
+            /* 【第11期·双语】原为纯英文——中文界面显示英文 */
+            safe_snprintf(info, sizeof(info), tr("File: %s (%lld bytes)", "文件：%s（%lld 字节）"),
+                          name, (long long)st.st_size);
             struct ncplane *p = g_files.window->plane;
             ncplane_set_fg_rgb(p, 0x88ff88);
             ncplane_cursor_move_yx(p, 1, 40);

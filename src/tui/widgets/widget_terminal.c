@@ -5,6 +5,7 @@
  */
 
 #include "widget_terminal.h"
+#include "../../common/lang.h"          /* 【第11期】tr —— 终端提示双语 */
 #include "../desktop/tui_desktop.h"
 #include "../desktop/tui_desktop_window.h"
 #include "../../lib/log_extra.h"
@@ -155,9 +156,11 @@ void widget_terminal_create(void) {
     if (p) {
         ncplane_set_fg_rgb(p, 0x88dd88);
         ncplane_cursor_move_yx(p, 1, 2);
-        ncplane_putstr(p, "LING OS Terminal (type commands, Enter to execute)");
+        /* 【第11期·双语】原为纯英文提示——中文用户看不懂（双语缺失） */
+        ncplane_putstr(p, tr("LING OS Terminal (type commands, Enter to execute)",
+                             "LING OS 终端（输入命令，Enter 执行）"));
         ncplane_cursor_move_yx(p, 3, 2);
-        ncplane_putstr(p, "Type 'exit' to close.");
+        ncplane_putstr(p, tr("Type 'exit' to close.", "输入 'exit' 关闭。"));
     }
 
     tui_desktop_refresh(tui_desktop_get_state());

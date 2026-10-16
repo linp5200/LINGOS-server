@@ -427,7 +427,8 @@ static void handle_token_command(const char *args) {
             char *code = strtok_r(NULL, " ", &saveptr);
             if (code) {
                 connection_pending_set(code, NULL, 60);
-                uart_puts(tr("等待 App 输入验证码（60 秒有效）...\n", "等待 App 输入验证码（60 秒有效）...\n"));
+                uart_puts(tr("Waiting for the App to submit the verification code (valid for 60s)...\n",
+                             "等待 App 输入验证码（60 秒有效）...\n"));
             } else {
                 uart_puts(tr("缺少验证码：token login again <code>\n", "缺少验证码：token login again <验证码>\n"));
             }
@@ -447,12 +448,18 @@ static void handle_token_command(const char *args) {
             }
             if (reverify) {
                 connection_no_verify_remove(ip);
-                uart_puts(tr("已移除登录验证（重新验证）\n", "已移除登录验证（重新验证）\n"));
+                uart_puts(tr("Login verification removed (re-verification required)\n",
+                             "已移除登录验证（重新验证）\n"));
             } else {
                 connection_no_verify_set(ip, time_str, permanent);
-                char msg[128];
-                safe_snprintf(msg, sizeof(msg), "已设置 %s 免登录验证（受限模式——危险操作拒绝）\n", ip);
-                uart_puts(tr(msg, msg));
+                /* 【第11期·双语清扫】原先拼中文后 tr(msg, msg)——英文界面同样显示中文。
+                 * 现中英文各拼一份，交给 tr 选择（含 %s 的句子不能只翻译一次）。 */
+                char msg_en[192], msg_zh[192];
+                safe_snprintf(msg_en, sizeof(msg_en),
+                              "No-login verification set for %s (restricted mode — dangerous operations refused)\n", ip);
+                safe_snprintf(msg_zh, sizeof(msg_zh),
+                              "已设置 %s 免登录验证（受限模式——危险操作拒绝）\n", ip);
+                uart_puts(tr(msg_en, msg_zh));
             }
         } else {
             uart_puts(tr("token login again <code> | token remove login <ip> [time]\n", "token login again <验证码> | token remove login <ip> [时间]\n"));
@@ -467,22 +474,22 @@ static void handle_token_command(const char *args) {
         if (arg2) {
             /* token add <ip/uid> <token> */
             connection_token_add(arg2, arg1, arg1, 2592000);
-            uart_puts(tr("令牌已添加\n", "令牌已添加\n"));
+            uart_puts(tr("Token added\n", "令牌已添加\n"));
         } else {
             /* token add <token>（或 <ip/uid>——无 token——自动生成并绑定） */
             connection_token_add(NULL, arg1, arg1, 2592000);
-            uart_puts(tr("令牌已添加（自动生成）\n", "令牌已添加（自动生成）\n"));
+            uart_puts(tr("Token added (auto-generated)\n", "令牌已添加（自动生成）\n"));
         }
     } else if (strcmp(sub, "remove") == 0) {
         char *arg1 = strtok_r(NULL, " ", &saveptr);
         if (arg1) {
             connection_token_remove(arg1);
-            uart_puts(tr("令牌已移除\n", "令牌已移除\n"));
+            uart_puts(tr("Token removed\n", "令牌已移除\n"));
         } else {
             uart_puts(tr("token remove <ip/uid/token>\n", "token remove <ip/uid/令牌>\n"));
         }
     } else {
-        uart_puts(tr("未知 token 子命令\n", "未知 token 子命令\n"));
+        uart_puts(tr("Unknown token subcommand\n", "未知 token 子命令\n"));
     }
 }
 
@@ -2471,7 +2478,8 @@ void shell_run(void) {
                 }
             } else if (c == 0x0C) {   /* ^L：清屏（【0.7.0 P2-B】dev.prevent_clear → 防清屏） */
                 if (options_get("dev.prevent_clear") == 1) {
-                    uart_puts(tr("\r\n[防清屏] ^L 已禁用（dev.prevent_clear 开启——日志不丢失）\r\n",
+                    /* 【第11期·双语清扫】原先中英两槽都是中文——英文界面显示中文 */
+                    uart_puts(tr("\r\n[Anti-clear] ^L disabled (dev.prevent_clear is on — logs are preserved)\r\n",
                                  "\r\n[防清屏] ^L 已禁用（dev.prevent_clear 开启——日志不丢失）\r\n"));
                     uart_puts(prompt);
                 } else {

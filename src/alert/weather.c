@@ -6,6 +6,7 @@
 
 #include "weather.h"
 #include "../common/data_path.h"
+#include "../common/lang.h"          /* 【第11期】tr —— 天气文案双语 */
 #include "../common/safe_string.h"   /* 【0.7.0-hf2】safe_snprintf */
 #include "log_extra.h"
 #include "../net/tcp_client.h"
@@ -76,13 +77,14 @@ char *weather_get_alert(void) {
         return strdup("Failed to get weather data.");
     }
     char *body = strstr(response, "\r\n\r\n");
-    if (!body) return strdup("Invalid response.");
+    if (!body) return strdup(tr("Invalid response.", "响应无效。"));
     body += 4;
     /* 去除末尾换行 */
     char *nl = strchr(body, '\n');
     if (nl) *nl = '\0';
     char *result = malloc(strlen(body) + strlen(current_city) + 64);   /* 【0.7.0-hf2】原 +64 未计 city 长度——城市名超长会溢出 */
-    if (!result) return strdup("No memory.");
-    safe_snprintf(result, strlen(body) + strlen(current_city) + 64, "Weather in %s: %s", current_city, body);
+    if (!result) return strdup(tr("No memory.", "内存不足。"));
+    safe_snprintf(result, strlen(body) + strlen(current_city) + 64,
+                  tr("Weather in %s: %s", "%s 天气：%s"), current_city, body);
     return result;
 }

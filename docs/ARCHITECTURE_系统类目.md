@@ -52,3 +52,24 @@ AI 识别引擎 ai_vision（给 AI 用，非人看）
 - 默认监控实时画面 = 干净（AI 不打扰人）
 - 高级设置 →「AI 识别引擎叠加画面」开：检测框/类别/置信度/坐标叠加监控画面
 - 底层始终：monitor 帧 → ai_vision 分析；叠加只是"是否把结果画上监控画面"
+
+---
+
+## 五、脚本核对事实（2026-10-16 · 第11期自动清扫）
+
+> 复跑：`python3 docs/i18n_consistency_scan.py`；明细见 `docs/双语与文档一致性报告.md`。
+> **本节只记录事实，不改动第一~四节的设计权威结论**；带「待确认」的条目需类目负责人裁决后再动代码/文档。
+
+- **命令前缀↔类目**：`src/shell/dotted_cmd.c` 现有 86 条 `系统.动作` 命令，覆盖前缀
+  `core system comm voice config data plugin security home alert ai skill comm rules
+  registry log memory health repair install snapshot remind/reminder control ui update`。
+  - 文档第一节点名、但命令表中**暂无** `前缀.*` 命令的系统：`ai_vision` `monitor` `notify` `ocr` `weather`
+    ——待确认：这些系统是否只经 registry/Python 面暴露（若是，本节补注即可；若应有命令面，则需补命令）。
+  - 命令表存在、但第一节类目表未列的前缀：`control` `health` `install` `log` `memory` `registry`
+    `remind`/`reminder` `repair` `rules` `snapshot` `system` `ui` `update`
+    ——待确认：应归入现有类目（如 log/memory→data，system/update→core）还是新增类目。
+- **二进制**：第一节提到的 `lingos-monitor` / `lingos-ai-vision` 等 0 缺失（Makefile 中均存在）。
+- **双语（第11期清扫后）**：`tr(中文,中文)` 真缺失 **0** 处、未包 `tr()` 的用户可见中/英文句 **0** 处；
+  本轮修掉 6 处"同串假双语"+ 1 处"拼中文再 tr(msg,msg)"+ 6 处单语提示（shell.c / weather.c /
+  widget_terminal.c / widget_files.c）。`webui/` 为**设计单语**（无 i18n 机制），382 处中文仅登记不强制改。
+- **文档覆盖**：86 条命令中 68 条未在本节之前的文档中被提及（明细见报告中 F 节）。
