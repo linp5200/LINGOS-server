@@ -263,11 +263,16 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 <!-- 预警（原「技能」页误挂的假「数据源健康」块移入本页，改真实 alert_query/alert_summary） -->
 <div class="page" id="p-alert">
   <div class="phead"><div class="l"><div class="k">▍ALERTS</div><h1>预警</h1></div><div class="r" id="alertHead">加载中…</div></div>
+  <!-- 【追加修正】完整级别卡 info/L0–L5（原只有 L0–L3，且把 L4/L5 并入 info）
+       语义与 C 端 src/alert/alert_utils.c:alert_level_label 一致；L3+ 为高危（红/橙加粗） -->
   <div class="grid g4" id="alLevels">
-    <div class="card"><div class="ct"><span>L0 极重</span></div><span class="big al-lv" data-lv="L0">--</span></div>
-    <div class="card"><div class="ct"><span>L1 严重</span></div><span class="big al-lv" data-lv="L1">--</span></div>
-    <div class="card"><div class="ct"><span>L2 中等</span></div><span class="big al-lv" data-lv="L2">--</span></div>
-    <div class="card"><div class="ct"><span>L3 轻微 / info</span></div><span class="big al-lv" data-lv="L3">--</span></div>
+    <div class="card"><div class="ct"><span>info 信息</span></div><span class="big al-lv" data-lv="info">--</span></div>
+    <div class="card"><div class="ct"><span>L0 紧急（urgent）</span></div><span class="big al-lv" data-lv="L0">--</span></div>
+    <div class="card"><div class="ct"><span>L1 蓝</span></div><span class="big al-lv" data-lv="L1">--</span></div>
+    <div class="card"><div class="ct"><span>L2 黄</span></div><span class="big al-lv" data-lv="L2">--</span></div>
+    <div class="card"><div class="ct"><span>L3 橙 · 高危</span></div><span class="big al-lv" data-lv="L3">--</span></div>
+    <div class="card"><div class="ct"><span>L4 红 · 高危</span></div><span class="big al-lv" data-lv="L4">--</span></div>
+    <div class="card"><div class="ct"><span>L5 危急 · 最高</span></div><span class="big al-lv" data-lv="L5">--</span></div>
   </div>
   <div class="cols" style="margin-top:10px">
     <div class="listwrap" id="alList">
@@ -668,6 +673,24 @@ async function bindSysEvents(){
   }).join('');
   setTxt('#evtBadge', String(list.length));
 }
+/* 【追加修正】预警级别归一/配色/高危判定——单一事实来源，与 C 端 alert_utils.c 对齐
+ *   alert_level_label(): 0 → "info"，1..5 → "L1".."L5"（旧历史记录里是整数级别，同样归一）
+ *   高危 = L0(urgent) / L3(橙) / L4(红) / L5(危急) —— 必须醒目，不得并入 info */
+function normLevel(v){
+  var s = String(v===undefined||v===null?'':v).trim().toUpperCase();
+  if(s==='' || s==='INFO' || s==='0') return 'info';
+  if(/^[1-5]$/.test(s)) return 'L'+s;    /* 旧格式整数级别 → L 级 */
+  return s;
+}
+function lvColor(k){
+  if(k==='L0'||k==='L4'||k==='L5') return 'var(--red)';
+  if(k==='L3') return '#FF9F45';         /* 橙 = 高危起点 */
+  if(k==='L2') return 'var(--amber)';
+  if(k==='L1') return 'var(--blue)';
+  return 'var(--d)';
+}
+function lvHigh(k){ return k==='L0'||k==='L3'||k==='L4'||k==='L5'; }
+
 /* 【0.6.1】ALERT 卡：真实预警计数 */
 async function bindAlertCount(){
   var a = await apiCmd('alert_query');
@@ -683,10 +706,14 @@ async function bindAlertCount(){
     return;
   }
   var lv = {};
-  list.forEach(function(x){ var l = x.level||''; lv[l]=(lv[l]||0)+1; });
-  var lvStr = Object.keys(lv).slice(0,3).map(function(k){ return k+'×'+lv[k]; }).join(' ');
+  list.forEach(function(x){ var l = normLevel(x.level); lv[l]=(lv[l]||0)+1; });
+  var lvStr = Object.keys(lv).sort(function(a,b){ return lv[b]-lv[a]; }).slice(0,3)
+                .map(function(k){ return k+'×'+lv[k]; }).join(' ');
+  var high = (lv.L0||0)+(lv.L3||0)+(lv.L4||0)+(lv.L5||0);
   setTxt('#alertCount', n+ '<span class="u">条</span>');
   setTxt('#alertLv', lvStr||'0（暂无记录）');
+  /* 高危必须显眼（原实现只显示计数，无高危提示） */
+  if(high > 0) setTxt('#alertLv', '<span style="color:var(--red);font-weight:700">高危 '+high+' · </span>'+lvStr);
 }
 /* ===== 会话 ===== */
 async function bindSessions(){
@@ -704,25 +731,36 @@ async function bindAlert(){
   var a = await apiCmd('alert_query');
   var ok = !!(a && a.status==='ok');
   var list = (ok && Array.isArray(a.data))? a.data : [];
-  var lv={L0:0,L1:0,L2:0,L3:0,info:0};
-  list.forEach(function(e){ var l=String(e.level||'info').toUpperCase(); if(l in lv)lv[l]++; else lv.info++; });
-  // 级别卡（L3 卡合并 info——与 alert_summary.levels 对齐）
+  /* 【追加修正】完整级别映射 info/L0–L5（原实现 L4/L5 落进 info 桶——与 C 端级别标签不一致，
+   *   等于把"红/危急"级预警在计数卡上显示成信息级）。未知级别仍归 info（不丢计数）。 */
+  var lv={info:0,L0:0,L1:0,L2:0,L3:0,L4:0,L5:0};
+  list.forEach(function(e){ var l=normLevel(e.level); if(l in lv) lv[l]++; else lv.info++; });
   document.querySelectorAll('.al-lv').forEach(function(el){
     var k = el.getAttribute('data-lv');
-    if(!ok){ el.textContent='--'; return; }
-    el.textContent = (k==='L3') ? (lv.L3 + lv.info) : (lv[k]||0);
+    if(!ok){ el.textContent='--'; el.style.color='var(--d)'; el.style.fontWeight='400'; return; }
+    el.textContent = lv[k]||0;
+    el.style.color = lvColor(k);
+    el.style.fontWeight = lvHigh(k) ? '700' : '400';   /* 高危醒目 */
   });
-  setTxt('#alertHead', ok ? ('共 <b>'+list.length+'</b> 条 · alert_query') : '预警不可达<br>显示 -- 不模拟');
+  var highN = lv.L0 + lv.L3 + lv.L4 + lv.L5;
+  setTxt('#alertHead', ok
+    ? ('共 <b>'+list.length+'</b> 条 · 高危 <b style="color:var(--red)">'+highN+'</b> · alert_query')
+    : '预警不可达<br>显示 -- 不模拟');
   var box=document.getElementById('alList');
   var srcBox=document.getElementById('alSrc');
   if(box){
     if(!ok){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">预警读取失败（显示 -- 不模拟）</div></div></div>'; }
     else if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">暂无预警记录</div><div class="s">注意：这不等于数据源正常——请对照右侧「数据源健康」；源全挂时系统会强制发一条降级预警</div></div></div>'; }
     else box.innerHTML = list.slice(0,10).map(function(e){
-      var lv2=String(e.level||'info').toUpperCase();
-      var rc = lv2==='L0'||lv2==='L1'?'var(--red)':(lv2==='L2'?'var(--amber)':'var(--blue)');
-      return '<div class="lrow"><div class="t"><div class="n">'+(e.title||'预警')+'</div><div class="s">'+(e.content||e.description||'')+' · '+(e.source||'')+'</div></div>'
-        +'<span class="tag" style="border-color:'+rc+';color:'+rc+'">'+lv2+'</span></div>';
+      var lv2 = normLevel(e.level);
+      var rc = lvColor(lv2);
+      var hi = lvHigh(lv2);
+      /* 【追加修正】原配色 L0/L1 红、L2 琥珀、其余（含真正的 L3/L4/L5 高危）一律蓝 →
+       * 红级预警在列表里最不显眼。现按 C 端语义配色，L3+ 加左边框与加粗（生命线醒目）。 */
+      return '<div class="lrow"'+(hi?(' style="border-left:2px solid '+rc+'"'):'')+'>'
+        +'<div class="t"><div class="n"'+(hi?(' style="color:'+rc+'"'):'')+'>'+(e.title||'预警')+'</div>'
+        +'<div class="s">'+(e.content||e.description||'')+' · '+(e.source||'')+'</div></div>'
+        +'<span class="tag" style="border-color:'+rc+';color:'+rc+';'+(hi?'font-weight:700':'')+'">'+lv2+'</span></div>';
     }).join('');
   }
   // 【第6期】数据源健康：真实 alert_summary.sources（替代原写死 USGS/CMA 行）
