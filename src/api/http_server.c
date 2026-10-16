@@ -26,6 +26,9 @@
 #include "system_health.h"
 #include "connection_handler.h"
 #include "port_config.h"
+#include "api_routes.h"      /* 【第 4 期】技能路由（此前 api_routes.c 全模块零调用者） */
+#include "control_url.h"     /* 【第 4 期】Control URL 统一控制入口 */
+#include "../lib/cJSON/cJSON.h"
 #include "../ai/ai_server_protocol.h"
 #include <pthread.h>
 #include <string.h>
@@ -243,12 +246,96 @@ static int handle_files_delete(struct MHD_Connection *connection, const char *pa
     return MHD_YES;
 }
 
+/* ============================================================
+ * 【第 4 期】Control URL —— 统一控制入口（GET/POST /api/control）
+ *   先生创意出处（IntentCP 借鉴）：lingos://control/<系统.动作>?k=v
+ *   "意图 → 标准执行面"；与 CLI（shell 命令 control）、内部入口
+ *   （api_call("control", ...)）共用 src/api/control_url.c 同一实现。
+ *   安全：与 /api/cmd 同级（限流 + 公网 Bearer token）。
+ * ============================================================ */
+static int control_http_authorize(struct MHD_Connection *connection) {
+    const char *cip = http_client_ip(connection);
+    if (!access_rate_allow(cip)) {
+        send_json_response(connection, MHD_HTTP_TOO_MANY_REQUESTS,
+                           "{\"status\":\"error\",\"code\":\"rate_limited\"}");
+        return -1;
+    }
+    const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
+    int has_token = (auth && strncmp(auth, "Bearer ", 7) == 0);
+    if (access_needs_token(cip, has_token)) {
+        if (!has_token || !connection_verify_token(auth + 7)) {
+            send_json_response(connection, MHD_HTTP_UNAUTHORIZED,
+                               "{\"status\":\"error\",\"code\":\"unauthorized\"}");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* 执行并回包（resp 由 control_url.c 填标准信封 JSON） */
+static void control_http_reply(struct MHD_Connection *connection,
+                               const char *url, const char *action,
+                               const char *args_json, const char *id) {
+    char resp[8192];
+    int rc;
+    if (url && *url) {
+        rc = control_url_execute(url, (id && *id) ? id : NULL, resp, sizeof(resp));
+    } else if (action && *action) {
+        rc = control_url_execute_action(action, args_json, (id && *id) ? id : NULL, resp, sizeof(resp));
+    } else {
+        send_json_response(connection, MHD_HTTP_BAD_REQUEST,
+                           "{\"code\":400,\"message\":\"missing url or command\"}");
+        return;
+    }
+    if (rc != 0) {
+        /* 参数非法/缓冲过小 —— 诚实失败，不伪装成功 */
+        send_json_response(connection, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                           "{\"code\":500,\"message\":\"control execution failed\"}");
+        return;
+    }
+    send_json_response(connection, MHD_HTTP_OK, resp);
+}
+
+/* POST body：{"url":"lingos://control/.."} 或 {"command":"system.status","args":{..}}；
+ * 非 JSON 文本按裸 Control URL 处理（与 CLI 一致） */
+static void control_http_post_body(struct MHD_Connection *connection, const char *body) {
+    char url[512] = {0};
+    char action[128] = {0};
+    char id[64] = {0};
+    char *args = NULL;
+    cJSON *root = cJSON_Parse(body);
+    if (root) {
+        const cJSON *v = cJSON_GetObjectItem(root, "url");
+        if (cJSON_IsString(v)) safe_strncpy(url, v->valuestring, sizeof(url));
+        v = cJSON_GetObjectItem(root, "command");
+        if (cJSON_IsString(v)) safe_strncpy(action, v->valuestring, sizeof(action));
+        v = cJSON_GetObjectItem(root, "id");
+        if (cJSON_IsString(v)) safe_strncpy(id, v->valuestring, sizeof(id));
+        v = cJSON_GetObjectItem(root, "args");
+        if (v) {
+            if (!cJSON_IsObject(v)) {
+                cJSON_Delete(root);
+                send_json_response(connection, MHD_HTTP_BAD_REQUEST,
+                                   "{\"code\":400,\"message\":\"args must be a JSON object\"}");
+                return;
+            }
+            args = cJSON_PrintUnformatted(v);
+        }
+        cJSON_Delete(root);
+    } else if (body && *body) {
+        safe_strncpy(url, body, sizeof(url));
+    }
+    control_http_reply(connection, url, action, args, id);
+    if (args) free(args);
+}
+
 /* ---- upload/命令状态机（MHD 分块回调） ---- */
 struct upload_ctx {
     FILE *fp;
     char path[MAX_FILE_PATH];
     int failed;
-    int mode;              /* 0=文件上传 1=/api/cmd 命令代理 2=/api/webhook 外部触发 */
+    int mode;              /* 0=文件上传 1=/api/cmd 命令代理 2=/api/webhook 外部触发
+                            * 3=/api/control Control URL 统一控制入口（【第 4 期】） */
     char *buf;             /* mode>=1: 累积请求体 */
     size_t buf_len;
     size_t buf_cap;
@@ -434,6 +521,18 @@ static enum MHD_Result upload_handler(struct MHD_Connection *connection,
             *con_cls = NULL;
             return MHD_YES;
         }
+        if (ctx->mode == 3) {
+            /* 【第 4 期】Control URL：累积 body → 统一控制入口执行 */
+            if (ctx->failed || !ctx->buf || !ctx->buf_len) {
+                send_json_response(connection, MHD_HTTP_BAD_REQUEST,
+                                   "{\"code\":400,\"message\":\"empty control body\"}");
+            } else {
+                control_http_post_body(connection, ctx->buf);
+            }
+            free_upload_ctx(ctx);
+            *con_cls = NULL;
+            return MHD_YES;
+        }
         if (ctx->mode == 2) {
             /* 【2026-09-18】Webhook 外部触发：组装 webhook_trigger 命令 → ai.sock
              * body 为 JSON（{ 或 [ 开头）时内联 payload（≤4KB）；否则仅触发 */
@@ -562,6 +661,18 @@ static enum MHD_Result request_handler(void *cls,
         return MHD_YES;
     }
 
+    /* 【第 4 期】POST /api/control —— Control URL 统一控制入口
+     *   body: {"url":"lingos://control/system.status?k=v"}
+     *     或 {"command":"system.status","args":{...}}；非 JSON 文本按裸 URL 处理 */
+    if (strcmp(url, "/api/control") == 0 && strcmp(method, "POST") == 0) {
+        if (control_http_authorize(connection) != 0) return MHD_YES;
+        struct upload_ctx *ctx = calloc(1, sizeof(struct upload_ctx));
+        if (!ctx) return MHD_NO;
+        ctx->mode = 3;
+        *con_cls = ctx;
+        return MHD_YES;
+    }
+
     /* 【2026-09-18 接线】POST /api/webhook/<id> —— 外部系统触发（此前只有注册表无路由）
      * 流程：URL 提取 id → 累积 body → 转发 ai.sock（webhook_trigger → home_ext 执行绑定动作）
      * 安全：id 字符过滤（防注入）+ 限流 + 公网需 Bearer token（局域网按 S9 策略免 token） */
@@ -658,6 +769,23 @@ static enum MHD_Result request_handler(void *cls,
         return handle_ui_page(connection);
     } else if (strcmp(url, "/system/health") == 0) {
         return handle_health(connection);
+    } else if (strcmp(url, "/api/control") == 0) {
+        /* 【第 4 期】GET /api/control?url=<Control URL>[&id=..]
+         *             或 ?command=<动作>[&args=<JSON>][&id=..]（只读动作宜用 GET；
+         *             有副作用的动作请用 POST，两项均与 /api/cmd 同级鉴权） */
+        if (control_http_authorize(connection) != 0) return MHD_YES;
+        const char *curl = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "url");
+        const char *ccmd = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "command");
+        const char *cargs = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "args");
+        const char *cid = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "id");
+        control_http_reply(connection, curl, ccmd, cargs, cid);
+        return MHD_YES;
+    } else if (strcmp(url, "/api/skills/list") == 0) {
+        /* 【第 4 期】接线：/api/skills/list → api_route_skills("list")
+         *   此前 api_routes.c 整个模块**无任何调用者**（头文件与 mhd_compat 类型冲突
+         *   导致无法被 http_server.c 包含）——现返回真实技能目录。 */
+        if (control_http_authorize(connection) != 0) return MHD_YES;
+        return api_route_skills(connection, "list", method, NULL);
     } else if (strcmp(url, "/nook/ask") == 0) {
         /* 【0.7.0 S18】补限流 */
         if (!access_rate_allow(http_client_ip(connection))) {

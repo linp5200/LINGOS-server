@@ -12,6 +12,8 @@
 #include "app_cmds.h"
 #include "config_loader.h"
 #include "skill_store.h"
+#include "dotted_cmd.h"   /* 【第 4 期】点分命令（系统.动作）别名层 */
+#include "control_url.h"  /* 【第 4 期】Control URL 统一控制入口（CLI 入口） */
 #include "syswatch.h"
 #include "commands.h"
 #include "chat_terminal.h"
@@ -645,9 +647,39 @@ static void show_help_topic(const char *topic) {
                      COLOR_BOLD COLOR_CYAN "┌─────────────── LING OS 帮助 ───────────────┐\n" COLOR_RESET));
         uart_puts(tr("│ Use: help <topic> to view detailed help       │\n",
                      "│ 使用: help <主题> 查看详细帮助              │\n"));
-        uart_puts(tr("│  Topics: basic  ai  system  debug  app  cmd   │\n",
-                     "│  主题: basic  ai  system  debug  app  cmd   │\n"));
+        uart_puts(tr("│  Topics: basic ai system debug app cmd dotted │\n",
+                     "│  主题: basic ai system debug app cmd dotted │\n"));
+        uart_puts(tr("│  More:   help control  (Control URL actions)  │\n",
+                     "│  更多:   help control  （Control URL 动作）   │\n"));
         uart_puts("└─────────────────────────────────────────────┘\n");
+        return;
+    }
+
+    /* 【第 4 期】点分命令别名表（先生决策 5：新增用点分，旧命令保留别名） */
+    if (strcmp(topic, "dotted") == 0) {
+        dotted_cmd_list();
+        return;
+    }
+
+    /* 【第 4 期】Control URL 统一控制入口：列出真实动作（表内标注是否已实现） */
+    if (strcmp(topic, "control") == 0) {
+        uart_puts(tr("Control URL (unified control entry; same impl as HTTP /api/control):\n",
+                     "Control URL（统一控制入口；与 HTTP /api/control 同一实现）：\n"));
+        char actions[4096];
+        int n = control_url_list_actions(actions, sizeof(actions));
+        if (n > 0) {
+            uart_puts(actions);
+            uart_puts("\n");
+            char buf[64];
+            safe_snprintf(buf, sizeof(buf), "%s: %d\n", tr("Actions", "动作数"), n);
+            uart_puts(buf);
+        } else {
+            uart_puts(tr("action list unavailable\n", "动作列表不可用\n"));
+        }
+        uart_puts(tr("Usage: control lingos://control/system.status\n"
+                     "       control skills.list?keyword=file\n",
+                     "用法：control lingos://control/system.status\n"
+                     "      control skills.list?keyword=file\n"));
         return;
     }
 
@@ -1386,6 +1418,19 @@ static int handle_builtin_command(const char *cmd) {
     LOG_DEBUG_T("Shell", "BuiltinCmd", "Enter", "cmd='%s'", cmd ? cmd : "(null)");
     if (!cmd || !*cmd) return 0;
 
+    /* ----- 【第 4 期·先生决策 5】点分命令（系统.动作）别名层 -----
+     *   翻译后仍走本函数既有分发链——新旧两种写法落到同一实现：
+     *     system.status      -> system status
+     *     config.reload      -> config reload
+     *     security.perm_list -> list permission
+     *   未收录的点分命令原样透传（不破坏既有行为）。 */
+    {
+        char dotted_buf[INPUT_BUF_SIZE];
+        if (dotted_cmd_translate(cmd, dotted_buf, sizeof(dotted_buf))) {
+            cmd = dotted_buf;
+        }
+    }
+
     /* ----- 【2026-08-22 定稿】动词子命令翻译层（list/view/show/query/model/session/...） ----- */
     if (handle_verb_command(cmd)) return 1;
 
@@ -1824,6 +1869,32 @@ static int handle_builtin_command(const char *cmd) {
         return 1;
     }
 
+    /* ----- control（【第 4 期】Control URL 统一控制入口——CLI 入口）
+     *   与 HTTP /api/control、内部 api_call("control",..) 共用 src/api/control_url.c；
+     *   点分写法 control.run 由点分层翻译为同一条命令。 ----- */
+    if (strncmp(cmd, "control ", 8) == 0 || strcmp(cmd, "control") == 0) {
+        const char *curl_args = cmd + 7;
+        while (*curl_args == ' ') curl_args++;
+        if (!*curl_args) {
+            uart_puts(tr("Usage: control <lingos://control/system.action?k=v> | control <action>?k=v\n"
+                         "       help control  - list available actions\n",
+                         "用法：control <lingos://control/系统.动作?k=v> | control <动作>?k=v\n"
+                         "      help control  - 列出可用动作\n"));
+            return 1;
+        }
+        char control_resp[8192];
+        int crc = control_url_execute(curl_args, NULL, control_resp, sizeof(control_resp));
+        if (crc != 0) {
+            /* 诚实失败：参数非法或响应缓冲不足（绝不打印假成功） */
+            uart_puts(tr("control: execution failed (invalid url or response too large)\n",
+                         "control：执行失败（URL 非法或响应过大）\n"));
+            return 1;
+        }
+        uart_puts(control_resp);
+        uart_puts("\n");
+        return 1;
+    }
+
     /* ----- alias ----- */
     if (strncmp(cmd, "alias", 5) == 0) {
         char *arg = (char*)cmd + 5;
@@ -2072,7 +2143,16 @@ static int handle_builtin_command(const char *cmd) {
         } else if (strncmp(sub, "uninstall ", 10) == 0) {
             skill_store_uninstall(sub + 10);
         } else if (strncmp(sub, "search ", 7) == 0) {
-            skill_store_list(sub + 7);
+            /* 【第 4 期】关键词搜索（名称/描述/分类，合并真实来源；空态诚实） */
+            skill_store_search(sub + 7);
+        } else if (strcmp(sub, "browse") == 0 || strcmp(sub, "categories") == 0) {
+            /* 【第 4 期】技能两级呈现·一级：分类浏览 */
+            skill_store_browse(NULL);
+        } else if (strncmp(sub, "browse ", 7) == 0) {
+            /* 【第 4 期】技能两级呈现·二级：分类内明细 */
+            skill_store_browse(sub + 7);
+        } else if (strncmp(sub, "category ", 9) == 0) {
+            skill_store_browse(sub + 9);
         } else if (strcmp(sub, "list") == 0 || *sub == '\0') {
             skill_store_list(NULL);
         } else if (strncmp(sub, "create ", 7) == 0) {
@@ -2106,8 +2186,8 @@ static int handle_builtin_command(const char *cmd) {
                           lingos_data_root(), safe_arg);
             (void)system(cmdline);
         } else {
-            uart_puts(tr("skill: install <name> | enable <name> | disable <name> | uninstall <name> | list | search <kw>\n",
-                         "skill: install <名称> | enable <名称> | disable <名称> | uninstall <名称> | list | search <关键词>\n"));
+            uart_puts(tr("skill: browse [<category>] | search <kw> | list | install <name> | enable <name> | disable <name> | uninstall <name>\n",
+                         "skill: browse [<分类>] | search <关键词> | list | install <名称> | enable <名称> | disable <名称> | uninstall <名称>\n"));
         }
         return 1;
     }

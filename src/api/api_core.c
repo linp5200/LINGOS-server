@@ -12,6 +12,9 @@
 #include "../lib/platform.h"
 #include "api_core.h"
 #include "api_routes.h"
+#include "control_url.h"     /* 【第 4 期】Control URL 统一控制入口 */
+#include "skill_catalog.h"   /* 【第 4 期】真实技能目录（清零假数据） */
+#include "../lib/cJSON/cJSON.h"
 #include "websocket_server.h"
 #include "http_server.h"
 #include "../common/string_no_sys.h"
@@ -27,6 +30,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <string.h>
+#include <stdlib.h>   /* 【第 4 期】cJSON_PrintUnformatted 结果需 free */
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -86,6 +90,11 @@ static int api_handle_system_status(const char *req, char *resp, uint32_t len);
 static int api_handle_system_metrics(const char *req, char *resp, uint32_t len);
 static int api_handle_ai_status(const char *req, char *resp, uint32_t len);
 static int api_handle_skills_list(const char *req, char *resp, uint32_t len);
+static int api_handle_skills_categories(const char *req, char *resp, uint32_t len);
+static int api_handle_control(const char *req, char *resp, uint32_t len);
+
+/* 【第 4 期】从请求 JSON 取字符串字段（不存在则保持空串） */
+static void api_req_str(const char *req, const char *key, char *out, size_t out_size);
 
 /* ============================================================
  * API 核心初始化（包含 WebSocket 和 HTTP 服务器）
@@ -105,7 +114,11 @@ void api_core_init(int force_network) {
     api_register("ai.status", api_handle_ai_status);
     api_register("skills.list", api_handle_skills_list);
 
-    LOG_INFO_T("API", "Init", "OK", "API framework initialized (7 endpoints)");
+    /* 【第 4 期】真实技能分类端点 + Control URL 统一控制入口（同一实现三入口共用） */
+    api_register("skills.categories", api_handle_skills_categories);
+    api_register("control", api_handle_control);
+
+    LOG_INFO_T("API", "Init", "OK", "API framework initialized (%d endpoints)", cnt);
 
     /* 【修复】主程序跳过：若 lingosd 已运行（WS/HTTP 已由其独占），仅注册端点不重复启动 */
     /* 【0.5.2】跳过前实测端口——lingosd 在但端口没起 → 兜底自起（防「无人监听」） */
@@ -143,8 +156,8 @@ void api_core_init(int force_network) {
     {
         char ready_msg[128];
         safe_snprintf(ready_msg, sizeof(ready_msg),
-                      "[API] Ready (7 endpoints, WS on %d, HTTP on %d).\n",
-                      port_config_get(PORT_WS), port_config_get(PORT_HTTP));
+                      "[API] Ready (%d endpoints, WS on %d, HTTP on %d).\n",
+                      cnt, port_config_get(PORT_WS), port_config_get(PORT_HTTP));
         uart_puts(ready_msg);
     }
 }
@@ -259,14 +272,84 @@ static int api_handle_ai_status(const char *req, char *resp, uint32_t len) {
     return 0;
 }
 
+/* 【第 4 期】请求字段提取（cJSON 解析；非 JSON / 字段缺失 → 空串） */
+static void api_req_str(const char *req, const char *key, char *out, size_t out_size) {
+    if (!out || out_size == 0) return;
+    out[0] = '\0';
+    if (!req || !key) return;
+    cJSON *j = cJSON_Parse(req);
+    if (!j) return;
+    const cJSON *v = cJSON_GetObjectItem(j, key);
+    if (v && cJSON_IsString(v)) safe_strncpy(out, v->valuestring, out_size);
+    else if (v && cJSON_IsNumber(v)) safe_snprintf(out, out_size, "%d", v->valueint);
+    cJSON_Delete(j);
+}
+
+/* 【第 4 期】技能目录端点：清零假数据
+ *   此前返回写死的 15 条示例技能名（file_read/system_info/... 与真实注册表无关）；
+ *   现读真实来源（registry 索引 / registry.json / 技能市场 / 已启用目录）。
+ *   req 可带 {"category":"...","keyword":"..."}（两级：分类浏览 + 关键词搜索）
+ *   输出：{"skills":[...],"count":N[,"category":..][,"keyword":..]}（空目录 → count=0，诚实空态） */
 static int api_handle_skills_list(const char *req, char *resp, uint32_t len) {
-    (void)req;
-    if (len < 512) return -1;
-    safe_strncpy(resp,
-        "{\"skills\":[\"file_read\",\"file_write\",\"file_delete\",\"file_list\","
-        "\"system_info\",\"system_memory\",\"system_disk\",\"system_cpu\","
-        "\"net_ping\",\"net_status\",\"process_list\",\"package_list\","
-        "\"memory_read\",\"memory_write\",\"memory_search\"]}",
-        len);
+    if (!resp || len < 64) return -1;
+    char category[128], keyword[128];
+    api_req_str(req, "category", category, sizeof(category));
+    api_req_str(req, "keyword", keyword, sizeof(keyword));
+
+    char arr[4096];
+    int n = skill_catalog_json(arr, sizeof(arr),
+                               category[0] ? category : NULL,
+                               keyword[0] ? keyword : NULL);
+    if (n < 0) {
+        LOG_WARN_T("API", "SkillsList", "Fail", "real skill catalog serialization failed");
+        safe_strncpy(resp, "{\"error\":\"skill catalog unavailable (serialization failed)\"}", len);
+        return -1;
+    }
+    cJSON *skills = cJSON_Parse(arr);
+    cJSON *out = cJSON_CreateObject();
+    if (!out) { if (skills) cJSON_Delete(skills); return -1; }
+    cJSON_AddItemToObject(out, "skills", skills ? skills : cJSON_CreateArray());
+    cJSON_AddNumberToObject(out, "count", n);
+    if (category[0]) cJSON_AddStringToObject(out, "category", category);
+    if (keyword[0]) cJSON_AddStringToObject(out, "keyword", keyword);
+    char *s = cJSON_PrintUnformatted(out);
+    cJSON_Delete(out);
+    if (!s) return -1;
+    size_t sl = strlen(s);
+    if (sl + 1 > (size_t)len) { free(s); return -1; }
+    memcpy(resp, s, sl + 1);
+    free(s);
+    LOG_DEBUG_T("API", "SkillsList", "OK", "count=%d category='%s' keyword='%s'", n, category, keyword);
     return 0;
+}
+
+/* 【第 4 期】技能分类端点（两级呈现的一级数据源，真实数据） */
+static int api_handle_skills_categories(const char *req, char *resp, uint32_t len) {
+    (void)req;
+    if (!resp || len < 64) return -1;
+    char arr[2048];
+    int n = skill_catalog_categories_json(arr, sizeof(arr));
+    if (n < 0) {
+        safe_strncpy(resp, "{\"error\":\"skill catalog unavailable\"}", len);
+        return -1;
+    }
+    int w = safe_snprintf(resp, len, "{\"categories\":%s,\"count\":%d,\"total\":%d}",
+                          arr, n, skill_catalog_total());
+    if (w < 0 || (uint32_t)w >= len) return -1;   /* 截断会损坏 JSON → 明确失败 */
+    return 0;
+}
+
+/* 【第 4 期】Control URL 内部入口（与 HTTP/CLI 入口共用同一实现）
+ *   req 为 {"url":"lingos://control/<系统.动作>?k=v"} 或裸 URL 文本 */
+static int api_handle_control(const char *req, char *resp, uint32_t len) {
+    if (!resp || len < 64) return -1;
+    char url[512], id[64];
+    api_req_str(req, "url", url, sizeof(url));
+    api_req_str(req, "id", id, sizeof(id));
+    if (!url[0] && req && *req && req[0] != '{') safe_strncpy(url, req, sizeof(url));
+    if (!url[0]) {
+        safe_strncpy(resp, "{\"code\":400,\"message\":\"missing control url\"}", len);
+        return -1;
+    }
+    return control_url_execute(url, id[0] ? id : NULL, resp, len);
 }

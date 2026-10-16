@@ -23,6 +23,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <time.h>
+#include <ctype.h>   /* 【第 4 期】技能关键词搜索大小写无关匹配 */
 
 #define SKILLS_MARKET   "/skills/market"     /* 技能市场（全部可用技能包） */
 #define SKILLS_ENABLED  "/skills/enabled"    /* 已启用技能（实现文件存放处） */
@@ -523,3 +524,339 @@ int skill_store_uninstall(const char *name) {
     uart_puts("\n");
     return 0;
 }
+
+/* ============================================================
+ * 【第 4 期】技能两级呈现：分类浏览（一级）+ 关键词搜索（二级）
+ * ------------------------------------------------------------
+ * 数据源（全部真实文件，禁止假数据/示例数据）：
+ *   ① $ROOT/registry/skills/index.json       —— registry 导出的技能索引
+ *   ② $ROOT/registry/core/registry.json      —— type=4 技能条目（含 metadata.definition）
+ *   ③ $ROOT/skills/market/<name>/skill.json  —— 本地技能市场
+ *   ④ $ROOT/skills/enabled/<name>/           —— 已启用技能目录
+ * 分类口径：
+ *   · skill.json 顶层 category 或 metadata.definition.category（技能自己声明的分类）
+ *   · 未声明 → 退回真实来源标签（index/registry/market/enabled），不编造分类
+ *   同名技能按来源优先级去重（index > registry > market > enabled）。
+ * ============================================================ */
+
+#define SKILLS_INDEX_FILE "/registry/skills/index.json"
+
+/* 读取文本文件（调用者 free） */
+static char* read_text_file(const char *path, long *out_len) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) return NULL;
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return NULL; }
+    long len = ftell(fp);
+    if (len < 0 || len > (16 * 1024 * 1024)) { fclose(fp); return NULL; }
+    if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return NULL; }
+    char *buf = malloc((size_t)len + 1);
+    if (!buf) { fclose(fp); return NULL; }
+    size_t rl = fread(buf, 1, (size_t)len, fp);
+    buf[rl] = '\0';
+    fclose(fp);
+    if (out_len) *out_len = (long)rl;
+    return buf;
+}
+
+/* JSON 字符串字段取值（不存在/非字符串 → NULL） */
+static const char* json_field(const cJSON *obj, const char *key) {
+    if (!obj || !key) return NULL;
+    const cJSON *v = cJSON_GetObjectItem(obj, key);
+    return (v && cJSON_IsString(v)) ? v->valuestring : NULL;
+}
+
+/* 追加技能条目（按 name 去重——先到优先） */
+static void catalog_add(cJSON *arr, const char *name, const char *desc,
+                        const char *risk, const char *category, const char *source) {
+    if (!arr || !name || !*name) return;
+    int n = cJSON_GetArraySize(arr);
+    for (int i = 0; i < n; i++) {
+        cJSON *it = cJSON_GetArrayItem(arr, i);
+        const char *nm = json_field(it, "name");
+        if (nm && strcmp(nm, name) == 0) return;
+    }
+    cJSON *item = cJSON_CreateObject();
+    if (!item) return;
+    cJSON_AddStringToObject(item, "name", name);
+    cJSON_AddStringToObject(item, "description", desc ? desc : "");
+    cJSON_AddStringToObject(item, "risk", (risk && *risk) ? risk : "unknown");
+    /* 分类：技能自声明优先；否则用真实来源标签（不编造） */
+    cJSON_AddStringToObject(item, "category",
+                            (category && *category) ? category : (source ? source : "unknown"));
+    cJSON_AddStringToObject(item, "source", source ? source : "unknown");
+    cJSON_AddItemToArray(arr, item);
+}
+
+/* ① registry 导出的技能索引 */
+static void catalog_load_index(cJSON *arr) {
+    char path[512];
+    skills_path(path, sizeof(path), SKILLS_INDEX_FILE);
+    char *txt = read_text_file(path, NULL);
+    if (!txt) return;
+    cJSON *j = cJSON_Parse(txt);
+    free(txt);
+    if (!j) return;
+    if (cJSON_IsArray(j)) {
+        int n = cJSON_GetArraySize(j);
+        for (int i = 0; i < n; i++) {
+            cJSON *it = cJSON_GetArrayItem(j, i);
+            catalog_add(arr, json_field(it, "name"), json_field(it, "description"),
+                        json_field(it, "risk"), json_field(it, "category"), "index");
+        }
+    }
+    cJSON_Delete(j);
+}
+
+/* ② registry.json 中 type=4 的技能条目 */
+static void catalog_load_registry(cJSON *arr) {
+    cJSON *root_json = load_registry_entries();
+    if (!root_json) return;
+    cJSON *entries = cJSON_GetObjectItem(root_json, "entries");
+    int n = cJSON_GetArraySize(entries);
+    for (int i = 0; i < n; i++) {
+        cJSON *e = cJSON_GetArrayItem(entries, i);
+        const cJSON *t = cJSON_GetObjectItem(e, "type");
+        if (!cJSON_IsNumber(t) || t->valueint != 4) continue;   /* REG_TYPE_SKILL */
+        cJSON *meta = cJSON_GetObjectItem(e, "metadata");
+        cJSON *def = meta ? cJSON_GetObjectItem(meta, "definition") : NULL;
+        const char *cat = json_field(def, "category");
+        if (!cat) cat = json_field(meta, "category");
+        catalog_add(arr, json_field(e, "name"),
+                    json_field(def, "description"), json_field(def, "risk"),
+                    cat, "registry");
+    }
+    cJSON_Delete(root_json);
+}
+
+/* ③ 本地技能市场：$ROOT/skills/market/<name>/skill.json */
+static void catalog_load_market(cJSON *arr) {
+    char market_dir[512];
+    skills_path(market_dir, sizeof(market_dir), SKILLS_MARKET);
+    DIR *d = opendir(market_dir);
+    if (!d) return;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        char sj[640];
+        safe_snprintf(sj, sizeof(sj), "%s/%s/skill.json", market_dir, ent->d_name);
+        char *txt = read_text_file(sj, NULL);
+        if (!txt) {
+            /* 目录存在但无 skill.json —— 如实登记（来源=market，描述留空） */
+            catalog_add(arr, ent->d_name, NULL, NULL, NULL, "market");
+            continue;
+        }
+        cJSON *j = cJSON_Parse(txt);
+        free(txt);
+        if (!j) {
+            catalog_add(arr, ent->d_name, NULL, NULL, NULL, "market");
+            continue;
+        }
+        const char *name = json_field(j, "name");
+        if (!name || !*name) name = ent->d_name;
+        cJSON *meta = cJSON_GetObjectItem(j, "metadata");
+        cJSON *def = meta ? cJSON_GetObjectItem(meta, "definition") : NULL;
+        const char *desc = json_field(def, "description");
+        if (!desc) desc = json_field(j, "description");
+        const char *risk = json_field(j, "risk");
+        if (!risk) risk = json_field(def, "risk");
+        const char *cat = json_field(j, "category");
+        if (!cat) cat = json_field(def, "category");
+        catalog_add(arr, name, desc, risk, cat, "market");
+        cJSON_Delete(j);
+    }
+    closedir(d);
+}
+
+/* ④ 已启用技能目录：$ROOT/skills/enabled/<name>/ */
+static void catalog_load_enabled(cJSON *arr) {
+    char enabled_dir[512];
+    skills_path(enabled_dir, sizeof(enabled_dir), SKILLS_ENABLED);
+    DIR *d = opendir(enabled_dir);
+    if (!d) return;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        catalog_add(arr, ent->d_name, NULL, NULL, NULL, "enabled");
+    }
+    closedir(d);
+}
+
+/* 合并四个真实来源 */
+static cJSON* load_skill_catalog(void) {
+    cJSON *arr = cJSON_CreateArray();
+    if (!arr) return NULL;
+    catalog_load_index(arr);
+    catalog_load_registry(arr);
+    catalog_load_market(arr);
+    catalog_load_enabled(arr);
+    return arr;
+}
+
+/* 来源标签本地化 */
+static const char* catalog_source_label(const char *source) {
+    if (!source) return tr("unknown", "未知");
+    if (strcmp(source, "index") == 0)    return tr("registry index", "注册表索引");
+    if (strcmp(source, "registry") == 0) return tr("registry entry", "注册表条目");
+    if (strcmp(source, "market") == 0)   return tr("skill market", "技能市场");
+    if (strcmp(source, "enabled") == 0)  return tr("enabled dir", "已启用目录");
+    return source;
+}
+
+/* ASCII 大小写无关子串匹配（关键词搜索用） */
+static int contains_ci(const char *hay, const char *needle) {
+    if (!hay || !needle || !*needle) return 0;
+    size_t nl = strlen(needle);
+    for (const char *p = hay; *p; p++) {
+        size_t i = 0;
+        while (i < nl && p[i] &&
+               tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) i++;
+        if (i == nl) return 1;
+    }
+    return 0;
+}
+
+/* 打印单条技能（真实字段，缺描述如实标注） */
+static void print_skill_item(const cJSON *it) {
+    char buf[512];
+    const char *name = json_field(it, "name");
+    const char *desc = json_field(it, "description");
+    const char *risk = json_field(it, "risk");
+    const char *source = json_field(it, "source");
+    safe_snprintf(buf, sizeof(buf), "  • %s  [%s]  %s\n",
+                  name ? name : "?", risk ? risk : "unknown",
+                  (desc && *desc) ? desc : tr("(no description)", "（无描述）"));
+    uart_puts(buf);
+    safe_snprintf(buf, sizeof(buf), "      %s: %s\n",
+                  tr("source", "来源"), catalog_source_label(source));
+    uart_puts(buf);
+}
+
+/* ============================================================
+ * 一级：分类浏览（category 为空）；二级：分类内明细（category 给定）
+ * ============================================================ */
+void skill_store_browse(const char *category) {
+    cJSON *catalog = load_skill_catalog();
+    if (!catalog) {
+        uart_puts(tr("Skill catalog unavailable.\n", "技能目录不可用。\n"));
+        return;
+    }
+    int n = cJSON_GetArraySize(catalog);
+    if (n == 0) {
+        uart_puts(tr("Skill catalog is empty (no local skills registered).\n",
+                     "技能目录为空（本地无已注册技能）。\n"));
+        uart_puts(tr("Checked: registry/skills/index.json, registry/core/registry.json, skills/market, skills/enabled\n",
+                     "已检查：registry/skills/index.json、registry/core/registry.json、skills/market、skills/enabled\n"));
+        cJSON_Delete(catalog);
+        return;
+    }
+
+    if (!category || !*category) {
+        /* ---- 一级：分类浏览 ---- */
+        uart_puts(COLOR_CYAN);
+        uart_puts(tr("=== Skill Categories (level 1) ===\n", "=== 技能分类浏览（一级）===\n"));
+        uart_puts(COLOR_RESET);
+        int printed = 0;
+        for (int i = 0; i < n; i++) {
+            const char *cat = json_field(cJSON_GetArrayItem(catalog, i), "category");
+            if (!cat) continue;
+            int dup = 0;
+            for (int k = 0; k < i; k++) {
+                const char *prev = json_field(cJSON_GetArrayItem(catalog, k), "category");
+                if (prev && strcmp(prev, cat) == 0) { dup = 1; break; }
+            }
+            if (dup) continue;
+            int cnt = 0;
+            for (int j = 0; j < n; j++) {
+                const char *c2 = json_field(cJSON_GetArrayItem(catalog, j), "category");
+                if (c2 && strcmp(c2, cat) == 0) cnt++;
+            }
+            char buf[256];
+            safe_snprintf(buf, sizeof(buf), "  %-24s %d\n", cat, cnt);
+            uart_puts(buf);
+            printed++;
+        }
+        if (printed == 0) {
+            uart_puts(tr("  (no categorized skills)\n", "  （无分类技能）\n"));
+        }
+        char total[128];
+        safe_snprintf(total, sizeof(total), "%s: %d\n", tr("Total skills", "技能总数"), n);
+        uart_puts(total);
+        uart_puts(tr("Next: skill browse <category>  |  skill search <keyword>\n",
+                     "下一步：skill browse <分类>  |  skill search <关键词>\n"));
+    } else {
+        /* ---- 二级：分类内明细 ---- */
+        char head[256];
+        safe_snprintf(head, sizeof(head), "%s: %s\n", tr("Category", "分类"), category);
+        uart_puts(COLOR_CYAN);
+        uart_puts(tr("=== Skills in Category (level 2) ===\n", "=== 分类内技能（二级）===\n"));
+        uart_puts(COLOR_RESET);
+        uart_puts(head);
+        int shown = 0;
+        for (int i = 0; i < n; i++) {
+            cJSON *it = cJSON_GetArrayItem(catalog, i);
+            const char *cat = json_field(it, "category");
+            const char *src = json_field(it, "source");
+            if (!((cat && strcmp(cat, category) == 0) || (src && strcmp(src, category) == 0))) continue;
+            print_skill_item(it);
+            shown++;
+        }
+        if (shown == 0) {
+            /* 诚实空态：该分类确实没有技能（不编造） */
+            uart_puts(tr("No skill in this category. Run 'skill browse' to list real categories.\n",
+                         "该分类下没有技能。运行 'skill browse' 查看真实分类。\n"));
+        } else {
+            char buf[64];
+            safe_snprintf(buf, sizeof(buf), "%s: %d\n", tr("Matched", "匹配"), shown);
+            uart_puts(buf);
+        }
+    }
+    cJSON_Delete(catalog);
+}
+
+/* ============================================================
+ * 二级：关键词搜索（名称 / 描述 / 分类；ASCII 大小写无关）
+ * ============================================================ */
+void skill_store_search(const char *keyword) {
+    if (!keyword || !*keyword) {
+        uart_puts(tr("Usage: skill search <keyword>\n", "用法：skill search <关键词>\n"));
+        uart_puts(tr("Tip: 'skill browse' lists categories first.\n",
+                     "提示：先 'skill browse' 查看分类。\n"));
+        return;
+    }
+    cJSON *catalog = load_skill_catalog();
+    if (!catalog) {
+        uart_puts(tr("Skill catalog unavailable.\n", "技能目录不可用。\n"));
+        return;
+    }
+    char head[256];
+    safe_snprintf(head, sizeof(head), "%s: %s\n", tr("Skill search", "技能搜索"), keyword);
+    uart_puts(COLOR_CYAN);
+    uart_puts(head);
+    uart_puts(COLOR_RESET);
+
+    int n = cJSON_GetArraySize(catalog);
+    int shown = 0;
+    for (int i = 0; i < n; i++) {
+        cJSON *it = cJSON_GetArrayItem(catalog, i);
+        const char *name = json_field(it, "name");
+        const char *desc = json_field(it, "description");
+        const char *cat  = json_field(it, "category");
+        if (!contains_ci(name, keyword) && !contains_ci(desc, keyword) && !contains_ci(cat, keyword)) continue;
+        print_skill_item(it);
+        shown++;
+    }
+    if (shown == 0) {
+        /* 诚实空态：无匹配就是无匹配（不返回编造结果） */
+        char buf[256];
+        safe_snprintf(buf, sizeof(buf),
+                      tr("No skill matches '%s' (no fabricated results).\n",
+                         "没有匹配 '%s' 的技能（不返回编造结果）。\n"), keyword);
+        uart_puts(buf);
+    } else {
+        char buf[64];
+        safe_snprintf(buf, sizeof(buf), "%s: %d\n", tr("Matched", "匹配"), shown);
+        uart_puts(buf);
+    }
+    cJSON_Delete(catalog);
+}
+

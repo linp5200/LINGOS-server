@@ -18,7 +18,12 @@
 #include "../config/config_core.h"
 #include "../core/version.h"
 #include "../security/access_control.h"   /* 【0.7.0 S11】CORS 校验（替换写死的 *） */
+#include "skill_catalog.h"                 /* 【第 4 期】真实技能目录（清零假数据） */
+#ifdef LINGOS_USE_SYSTEM_MHD
 #include <microhttpd.h>
+#else
+#include "../net/mhd_compat.h"             /* 【第 4 期】与 http_server.c 同源，避免类型冲突 */
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -244,11 +249,22 @@ int api_route_skills(struct MHD_Connection *conn, const char *path, const char *
             return MHD_YES;
         }
 
-        /* 返回默认技能列表（简版） */
-        send_ok(conn, "[\"file_read\",\"file_write\",\"file_delete\",\"file_list\","
-                       "\"system_info\",\"system_memory\",\"system_disk\",\"system_cpu\","
-                       "\"net_ping\",\"net_status\",\"process_list\",\"package_list\","
-                       "\"memory_read\",\"memory_write\",\"memory_search\"]");
+        /* 【第 4 期】清零假数据：此前返回写死的 15 条示例技能名（与真实注册表无关），
+         * 现读真实技能目录（registry 索引 / registry.json / 技能市场 / 已启用目录）。
+         * 空目录 → count=0 诚实空态，不再编造技能。 */
+        char skills_json[4096];
+        int n = skill_catalog_json(skills_json, sizeof(skills_json), NULL, NULL);
+        if (n < 0) {
+            send_error(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, "skill catalog unavailable");
+            return MHD_YES;
+        }
+        char data[4224];
+        int w = safe_snprintf(data, sizeof(data), "{\"count\":%d,\"skills\":%s}", n, skills_json);
+        if (w < 0 || (size_t)w >= sizeof(data)) {
+            send_error(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, "skill catalog too large");
+            return MHD_YES;
+        }
+        send_ok(conn, data);
         return MHD_YES;
     }
 

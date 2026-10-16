@@ -233,6 +233,8 @@ FS_SRCS = $(SRC_DIR)/fs/env_detect.c \
           $(SRC_DIR)/fs/sync_template.c
 
 API_SRCS = $(SRC_DIR)/api/api_core.c \
+$(SRC_DIR)/api/control_url.c \
+$(SRC_DIR)/api/skill_catalog.c \
            $(SRC_DIR)/api/api_routes.c \
            $(SRC_DIR)/api/http_server.c \
            $(SRC_DIR)/api/websocket_server.c
@@ -357,6 +359,7 @@ SHELL_SRCS = $(SRC_DIR)/shell/ai_config_cmd.c \
              $(SRC_DIR)/shell/rules_cmds.c \
              $(SRC_DIR)/shell/security_cmd.c \
              $(SRC_DIR)/shell/shell.c \
+             $(SRC_DIR)/shell/dotted_cmd.c \
              $(SRC_DIR)/shell/system_config.c \
              $(SRC_DIR)/shell/system_debug.c \
              $(SRC_DIR)/shell/system_info.c \
