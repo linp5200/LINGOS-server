@@ -143,8 +143,8 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 <div class="topbar">
   <div class="logo">LING<em>OS</em></div><div class="sep"></div>
   <div class="host">//SERVER · 完整功能控制台</div>
-  <span class="lk"><span class="p"></span>LINKED · 192.168.1.20 · WS 2939</span>
-  <span class="ver">LN-0.4.4 · Qt6 UI</span>
+  <span class="lk"><span class="p" style="background:var(--dd)"></span>连接中…</span>
+  <span class="ver" id="topVer">--</span>
   <span class="clock" id="clock">--:--:--</span>
 </div>
 <div class="layout">
@@ -156,7 +156,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     <div class="ni" data-p="chat"><span class="ic">◈</span>AI 对话</div>
     <div class="ni" data-p="sessions"><span class="ic">▤</span>会话管理</div>
     <div class="ni" data-p="providers"><span class="ic">⬡</span>模型与提供商</div>
-    <div class="ni" data-p="skills"><span class="ic">⌬</span>技能 <span class="b">68</span></div>
+    <div class="ni" data-p="skills"><span class="ic">⌬</span>技能 <span class="b" id="navSkillBadge" style="display:none">--</span></div>
     <div class="ni" data-p="memory"><span class="ic">▦</span>记忆</div>
     <div class="ni" data-p="persona"><span class="ic">☺</span>人格</div>
   </div>
@@ -188,7 +188,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
   </div>
   <div class="sec">配置</div>
   <div class="nav"><div class="ni" data-p="setting"><span class="ic">⚙</span>设置与高级</div></div>
-  <div class="foot"><div style="display:flex;gap:5px;align-items:center;color:var(--d)"><span style="width:5px;height:5px;border-radius:50%;background:var(--green)"></span>lingosd · alertd · visiond</div>LING OS 0.8.0 · 22 页</div>
+  <div class="foot"><div style="display:flex;gap:5px;align-items:center;color:var(--d)"><span id="footDot" style="width:5px;height:5px;border-radius:50%;background:var(--dd)"></span><span id="footProc">服务端状态 --（不模拟）</span></div>LING OS <span id="footVer">--</span> · <span id="footPages">--</span> 页</div>
 </div>
 <div class="main">
 
@@ -242,41 +242,81 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 
 <!-- 提供商 -->
 <div class="page" id="p-providers">
-  <div class="phead"><div class="l"><div class="k">▍PROVIDERS / MODELS</div><h1>模型与提供商</h1></div><div class="r">当前 <b>deepseek-chat</b> · 余额 <b>¥12.4</b></div></div>
-  <div class="toolbar"><button>＋ 添加提供商</button><button>↻ 获取模型列表</button><span class="cnt">3 提供商 · 5 模型</span></div>
-  <div class="grid g3">
-    <div class="card"><div class="ct"><span style="color:var(--green)">● DeepSeek</span><b>当前</b></div><div class="big" style="font-size:15px;font-family:var(--mono)">deepseek-chat</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px;line-height:1.8">格式 openai · 思考 开/中<br>余额 ¥12.4 · 上下文 64K</div></div>
-    <div class="card"><div class="ct"><span>Kimi</span></div><div class="big" style="font-size:15px;font-family:var(--mono)">moonshot-v1-8k</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px;line-height:1.8">格式 openai · 思考 关<br>上下文 8K</div></div>
-    <div class="card"><div class="ct"><span>Ollama 本地</span></div><div class="big" style="font-size:15px;font-family:var(--mono)">llama3:8b</div><div style="font-family:var(--mono);font-size:8px;color:var(--g);margin-top:5px;line-height:1.8">格式 openai · 本地 127.0.0.1:11434<br><span style="color:var(--green)">● 在线</span></div></div>
+  <div class="phead"><div class="l"><div class="k">▍PROVIDERS / MODELS</div><h1>模型与提供商</h1></div><div class="r" id="providerHead">加载中…</div></div>
+  <div class="toolbar"><button>＋ 添加提供商</button><button onclick="bindProviders()">↻ 获取模型列表</button><span class="cnt" id="providerCnt">--</span></div>
+  <div class="grid g3" id="providerGrid">
+    <div class="card"><div class="ct"><span style="color:var(--d)">加载中…（provider_list）</span></div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px">无数据一律显示 --（不模拟）</div></div>
   </div>
 </div>
 
 <!-- 技能 -->
 <div class="page" id="p-skills">
-  <div class="phead"><div class="l"><div class="k">▍SKILLS</div><h1>技能管理</h1></div><div class="r">共 <b>68</b> · 启用 <b>61</b> · <span style="color:var(--green)">内置核心不可删</span></div></div>
-  <div class="toolbar"><input placeholder="搜索技能…"><button>↻ 市场</button><button>＋ 安装(custom)</button><span class="cnt">68 技能 · schema A+B 分层</span></div>
-  <div class="cols">
-    <div id="alList"></div>
-    <div><div class="card"><div class="ct"><span>数据源健康</span></div><div class="evlog" id="alSrc"></div><div class="evlog">
-      <div class="e"><span class="lv d">USGS</span><span class="tx">13:47 <b>OK</b></span></div>
-      <div class="e"><span class="lv d">CMA</span><span class="tx">13:30 <b>OK</b></span></div>
-      <div class="e"><span class="lv a">预警中心</span><span class="tx">慢 1.2s</span></div>
-      <div class="e"><span class="lv">自定义</span><span class="tx">未配置</span></div></div>
-      <div style="margin-top:8px"><button style="background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--g);font-family:var(--mono);font-size:9px;padding:5px 10px;cursor:pointer">配置源与规则 →</button></div></div></div>
+  <div class="phead"><div class="l"><div class="k">▍SKILLS</div><h1>技能管理</h1></div><div class="r" id="skillHead">加载中…</div></div>
+  <div class="toolbar"><input id="skillFilter" placeholder="搜索技能…" oninput="filterSkills()"><button onclick="bindSkills()">↻ 刷新</button><span class="cnt" id="skillCnt">--</span></div>
+  <div class="listwrap" id="skillList">
+    <div class="lrow"><div class="t"><div class="n" style="color:var(--d)">加载中…（skill_list_full）</div><div class="s">无数据一律显示 --（不模拟）</div></div></div>
   </div>
+</div>
+
+<!-- 预警（原「技能」页误挂的假「数据源健康」块移入本页，改真实 alert_query/alert_summary） -->
+<div class="page" id="p-alert">
+  <div class="phead"><div class="l"><div class="k">▍ALERTS</div><h1>预警</h1></div><div class="r" id="alertHead">加载中…</div></div>
+  <div class="grid g4" id="alLevels">
+    <div class="card"><div class="ct"><span>L0 极重</span></div><span class="big al-lv" data-lv="L0">--</span></div>
+    <div class="card"><div class="ct"><span>L1 严重</span></div><span class="big al-lv" data-lv="L1">--</span></div>
+    <div class="card"><div class="ct"><span>L2 中等</span></div><span class="big al-lv" data-lv="L2">--</span></div>
+    <div class="card"><div class="ct"><span>L3 轻微 / info</span></div><span class="big al-lv" data-lv="L3">--</span></div>
+  </div>
+  <div class="cols" style="margin-top:10px">
+    <div class="listwrap" id="alList">
+      <div class="lrow"><div class="t"><div class="n" style="color:var(--d)">加载中…（alert_query）</div><div class="s">无数据一律显示 --（不模拟）</div></div></div>
+    </div>
+    <div class="card"><div class="ct"><span>数据源健康</span><b id="alSrcCount">--</b></div><div class="evlog" id="alSrc">
+      <div class="e"><span class="tx" style="color:var(--d)">加载中…（alert_summary.sources）</span></div></div>
+      <div style="margin-top:8px"><button onclick="bindAlert()" style="background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--g);font-family:var(--mono);font-size:9px;padding:5px 10px;cursor:pointer">↻ 刷新源健康</button></div></div>
+  </div>
+</div>
+
+<!-- 记忆 -->
+<div class="page" id="p-memory">
+  <div class="phead"><div class="l"><div class="k">▍MEMORY</div><h1>记忆</h1></div><div class="r" id="memHead">加载中…</div></div>
+  <div class="toolbar"><input id="memKeyword" placeholder="关键字（空=全部）"><button onclick="bindMemory()">↻ 检索</button><span class="cnt" id="memCnt">--</span></div>
+  <div class="listwrap" id="memList">
+    <div class="lrow"><div class="t"><div class="n" style="color:var(--d)">加载中…（memory_search）</div><div class="s">无数据一律显示 --（不模拟）</div></div></div>
+  </div>
+</div>
+
+<!-- 人格 -->
+<div class="page" id="p-persona">
+  <div class="phead"><div class="l"><div class="k">▍PERSONALITY</div><h1>人格</h1></div><div class="r" id="personaHead">加载中…</div></div>
+  <div class="grid g2" id="personaCards"></div>
+  <div class="card" style="margin-top:10px"><div class="ct"><span>说明</span></div>
+    <div style="font-family:var(--mono);font-size:9px;color:var(--g);line-height:1.9">
+      切换走服务端 personality_set（可选：<b id="personaOpts">--</b>）；当前值读 personality_get。<br>
+      无数据一律显示 --（不模拟）。
+    </div></div>
 </div>
 
 <!-- 天气 -->
 <div class="page" id="p-weather">
-  <div class="phead"><div class="l"><div class="k">▍WEATHER</div><h1>天气</h1></div><div class="r">Open-Meteo · 可切 wttr.in/自定义<br>上海市 · 更新 14:00</div></div>
-  <div class="card" style="display:flex;align-items:center;gap:24px;padding:16px 22px"><div class="wx-t" style="font-family:var(--disp);font-weight:700;font-size:64px;line-height:1">--</div><div><div style="font-size:17px;font-weight:600">多云转阴 · 舒适</div><div style="font-family:var(--mono);font-size:9px;color:var(--d);margin-top:3px">体感 23° · 白天 26° / 夜 19°</div></div><div style="margin-left:auto;display:flex;gap:18px;font-family:var(--mono);font-size:9px;color:var(--d);text-align:center"><div><div style="font-size:16px;color:var(--w);font-weight:600">68%</div>湿度</div><div><div style="font-size:16px;color:var(--w);font-weight:600">3.2</div>风 m/s</div><div><div style="font-size:16px;color:var(--w);font-weight:600">1013</div>hPa</div><div><div style="font-size:16px;color:var(--w);font-weight:600">4</div>UV</div></div></div>
-  <div class="grid g2" style="margin-top:10px"><div class="card"><div class="ct"><span>逐小时 24h</span><b>温度/降水</b></div><svg viewBox="0 0 320 64" preserveAspectRatio="none" style="width:100%;height:64px"><defs><linearGradient id="rain2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5AB0FF" stop-opacity=".4"/><stop offset="1" stop-color="#5AB0FF" stop-opacity="0"/></linearGradient></defs><line x1="0" y1="16" x2="320" y2="16" stroke="rgba(255,255,255,.05)"/><line x1="0" y1="40" x2="320" y2="40" stroke="rgba(255,255,255,.05)"/><polyline fill="none" stroke="#6CF59A" stroke-width="1.5" points="0,26 26,22 53,18 80,26 106,32 133,40 160,44 186,42 213,36 240,30 266,32 293,36 320,40"/><rect x="30" y="42" width="18" height="22" fill="url(#rain2)"/><rect x="106" y="46" width="18" height="18" fill="url(#rain2)"/><rect x="212" y="48" width="18" height="16" fill="url(#rain2)"/></svg></div>
-  <div class="card"><div class="ct"><span>今日曲线</span><b>日出 05:44 日落 18:12</b></div><svg viewBox="0 0 320 64" preserveAspectRatio="none" style="width:100%;height:64px"><path d="M0,52 C30,47 55,28 85,18 C115,11 150,9 175,14 C205,20 230,18 260,27 C285,34 305,40 320,44" fill="none" stroke="rgba(255,255,255,.45)" stroke-width="1.6"/><circle cx="85" cy="18" r="3" fill="#6CF59A"/></svg></div></div>
-  <div class="grid g4" style="margin-top:10px;gap:6px">
-    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">今天 09/04</div><div style="font-size:18px;margin:4px 0">☁</div><div style="font-size:13px;font-weight:700">26°</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">19° · ☂40%</div></div>
-    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">周五 05</div><div style="font-size:18px;margin:4px 0">☂</div><div style="font-size:13px;font-weight:700">24°</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">18° · ☂80%</div></div>
-    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">周六 06</div><div style="font-size:18px;margin:4px 0">☀</div><div style="font-size:13px;font-weight:700">28°</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">20°</div></div>
-    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">周日 07</div><div style="font-size:18px;margin:4px 0">☀</div><div style="font-size:13px;font-weight:700">29°</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">21°</div></div>
+  <div class="phead"><div class="l"><div class="k">▍WEATHER</div><h1>天气</h1></div><div class="r" id="wxHead">加载中…（weather_current/forecast）</div></div>
+  <div class="card" style="display:flex;align-items:center;gap:24px;padding:16px 22px">
+    <div class="wx-t" id="wxTemp" style="font-family:var(--disp);font-weight:700;font-size:64px;line-height:1">--</div>
+    <div><div style="font-size:17px;font-weight:600" id="wxDesc">--</div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--d);margin-top:3px" id="wxSub">无数据不模拟（weather_current）</div></div>
+    <div id="wxMetrics" style="margin-left:auto;display:flex;gap:18px;font-family:var(--mono);font-size:9px;color:var(--d);text-align:center"></div>
+  </div>
+  <div class="grid g2" style="margin-top:10px">
+    <div class="card"><div class="ct"><span>逐小时 24h</span><b id="wxHourNote">--</b></div>
+      <svg viewBox="0 0 320 64" preserveAspectRatio="none" style="width:100%;height:64px">
+        <line x1="0" y1="16" x2="320" y2="16" stroke="rgba(255,255,255,.05)"/><line x1="0" y1="40" x2="320" y2="40" stroke="rgba(255,255,255,.05)"/>
+        <polyline id="wxHourLine" fill="none" stroke="#6CF59A" stroke-width="1.5" points=""/></svg></div>
+    <div class="card"><div class="ct"><span>今日曲线</span><b id="wxSun">--</b></div>
+      <svg viewBox="0 0 320 64" preserveAspectRatio="none" style="width:100%;height:64px">
+        <polyline id="wxDayLine" fill="none" stroke="rgba(255,255,255,.45)" stroke-width="1.6" points=""/></svg></div>
+  </div>
+  <div class="grid g4" id="wxDays" style="margin-top:10px;gap:6px">
+    <div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">--</div><div style="font-size:13px;font-weight:700">--</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">无数据不模拟</div></div>
   </div>
 </div>
 
@@ -293,55 +333,39 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     <div style="display:flex;flex-direction:column;gap:8px">
       <div class="card"><div class="ct"><span>检测事件流</span><b>vision_event</b></div><div class="evlog">
         <div class="e"><span class="tx" style="color:var(--d)">暂无事件（visiond 上报后实时显示）</span></div></div></div>
-      <div class="card"><div class="ct"><span>摄像头列表</span><b>--</b></div>
-        <div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px;color:var(--d)">未获取（monitor_list 实时填充）</div><div class="s">无数据不模拟</div></div><span class="tag dim">--</span></div></div>
+      <div class="card"><div class="ct"><span>摄像头列表</span><b id="camCount">--</b>
+        <button onclick="bindVision()" style="margin-left:8px">↻ 刷新</button></div>
+        <div id="camList"><div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px;color:var(--d)">加载中…（monitor_list）</div><div class="s">无数据不模拟</div></div><span class="tag dim">--</span></div></div></div>
     </div>
   </div>
 </div>
 
 <!-- HA -->
 <div class="page" id="p-ha">
-  <div class="phead"><div class="l"><div class="k">▍HOME ASSISTANT / HELP AI</div><h1>智能家居</h1></div><div class="r">桥 MQTT+REST+WS · 在线<br>ha_control · 高风险需确认</div></div>
-  <div class="grid g3">
-    <div class="card"><div class="ct"><span>客厅灯</span><b style="color:var(--green)">● ON</b></div><div style="font-family:var(--disp);font-weight:700;font-size:19px">80%</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px">brightness · 客厅</div></div>
-    <div class="card"><div class="ct"><span>空调</span><b style="color:var(--green)">● 制冷</b></div><div style="font-family:var(--disp);font-weight:700;font-size:19px">24°C</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px">风速自动 · 卧室</div></div>
-    <div class="card"><div class="ct"><span>门锁</span><b style="color:var(--d)">○ 已锁</b></div><div style="font-family:var(--disp);font-weight:700;font-size:19px;color:var(--d)">锁定</div><div style="font-family:var(--mono);font-size:8px;color:var(--amber);margin-top:5px">开锁需二次确认</div></div>
+  <div class="phead"><div class="l"><div class="k">▍HOME ASSISTANT / HELP AI</div><h1>智能家居</h1></div><div class="r" id="haHead">加载中…（ha_status / ha_states）</div></div>
+  <div class="grid g4" id="haStats">
+    <div class="card"><div class="ct"><span style="color:var(--d)">加载中…</span></div><span class="big" style="font-size:20px">--</span></div>
   </div>
-  <div class="grid g4" style="margin-top:10px">
-    <div class="card"><div class="ct"><span>温度</span></div><span class="big" style="font-size:20px">24.6<span class="u">°C</span></span></div>
-    <div class="card"><div class="ct"><span>湿度</span></div><span class="big" style="font-size:20px">62<span class="u">%</span></span></div>
-    <div class="card"><div class="ct"><span>人体存在</span></div><span class="big" style="font-size:20px;color:var(--green)">有人</span></div>
-    <div class="card"><div class="ct"><span>AQI</span></div><span class="big" style="font-size:20px">42</span></div>
-  </div>
+  <div class="card" style="margin-top:10px"><div class="ct"><span>实体状态（ha_states）</span><b id="haEntityCount">--</b>
+    <button onclick="bindHa()" style="margin-left:8px">↻ 刷新</button></div>
+    <div class="evlog" id="haEntities" style="max-height:420px;overflow:auto">
+      <div class="e"><span class="tx" style="color:var(--d)">加载中…（无数据不模拟）</span></div></div>
+    <div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:6px">控制走 ha_control（高风险实体需二次确认）</div></div>
 </div>
 
 <!-- 文件 -->
 <div class="page" id="p-files">
-  <div class="phead"><div class="l"><div class="k">▍FILES · /LINGOS</div><h1>文件管理</h1></div><div class="r">file_list/read/write · HTTP 上传/下载<br>磁盘 <b>64%</b> · 500M 余</div></div>
+  <div class="phead"><div class="l"><div class="k">▍FILES · /LINGOS</div><h1>文件管理</h1></div><div class="r" id="fsHead">加载中…（file_list）</div></div>
   <div class="fs">
-    <div class="fstree">
-      <div class="fsnode on">▾ /LINGOS</div>
-      <div style="margin-left:16px;padding-left:8px;border-left:1px solid rgba(255,255,255,.06)">
-        <div class="fsnode">bin/ <span style="margin-left:auto;color:var(--dd)">6</span></div>
-        <div class="fsnode">etc/ <span style="margin-left:auto;color:var(--dd)">13</span></div>
-        <div class="fsnode">var/lib/ <span style="margin-left:auto;color:var(--dd)">21</span></div>
-        <div class="fsnode">run/ <span style="margin-left:auto;color:var(--dd)">5</span></div>
-        <div class="fsnode on">registry/ <span style="margin-left:auto;color:var(--green)">8</span></div>
-        <div class="fsnode">plugins/</div>
-        <div class="fsnode">share/ <span style="margin-left:auto;color:var(--dd)">14</span></div>
-        <div class="fsnode">log/</div>
-      </div>
-      <div class="fsnode">/Ensystem</div><div class="fsnode">/tmp</div>
+    <div class="fstree" id="fsTree">
+      <div class="fsnode on" onclick="bindFiles('/')">/ 根</div>
+      <div class="fsnode" id="fsTreeLingos" onclick="bindFiles('/LINGOS')">/LINGOS</div>
+      <div class="fsnode" id="fsTreeNote" style="color:var(--dd)">加载中…（file_list）</div>
     </div>
     <div>
-      <div class="toolbar"><button>⬆ 上传</button><button>＋ 新建</button><button>↻</button><span class="cnt" style="margin-left:auto">/LINGOS/registry/ · 8 项</span></div>
+      <div class="toolbar"><button>⬆ 上传</button><button>＋ 新建</button><button onclick="bindFiles()">↻</button><span class="cnt" id="fsCnt" style="margin-left:auto">--</span></div>
       <div class="listwrap" id="fsList">
-        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">core/</div><div class="s">注册表核心</div></div><span class="st2">--</span></div>
-        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">modules/</div><div class="s">模块注册</div></div><span class="st2">--</span></div>
-        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">skills/</div><div class="s">技能注册</div></div><span class="st2">--</span></div>
-        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">plugins/</div><div class="s">插件注册</div></div><span class="st2">--</span></div>
-        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">hooks/</div><div class="s">钩子注册</div></div><span class="st2">--</span></div>
-        <div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">features/</div><div class="s">功能注册</div></div><span class="st2">--</span></div>
+        <div class="lrow"><div class="t"><div class="n" style="color:var(--d)">加载中…（file_list）</div><div class="s">无数据一律显示 --（不模拟）</div></div></div>
       </div>
     </div>
   </div>
@@ -349,18 +373,10 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 
 <!-- 日志 -->
 <div class="page" id="p-log">
-  <div class="phead"><div class="l"><div class="k">▍LOG · /LINGOS/log</div><h1>日志</h1></div><div class="r">time/id/level/txt · JSON · 最近 100 行<br>级别过滤: DEBUG+ <b style="color:var(--amber)">WARN</b> <b style="color:var(--red)">ERROR</b></div></div>
+  <div class="phead"><div class="l"><div class="k">▍LOG · /LINGOS/log</div><h1>日志</h1></div><div class="r">time/id/level/txt · JSON · 最近 30 行<br>级别过滤: DEBUG+ <b style="color:var(--amber)">WARN</b> <b style="color:var(--red)">ERROR</b></div></div>
   <div class="toolbar"><button style="width:auto">级别: ALL ▾</button><button style="width:auto">模块: ALL ▾</button><input placeholder="过滤关键字…" style="flex:1"><button style="width:auto">暂停</button><button style="width:auto">导出</button></div>
-  <div class="logview">
-    <div class="l"><span class="tm">14:05:02.312</span><span class="lvl INFO">INFO</span><span class="mod">[visiond]</span><span class="msg">detection push <b>person 0.92</b></span></div>
-    <div class="l"><span class="tm">14:05:00.104</span><span class="lvl INFO">INFO</span><span class="mod">[alertd]</span><span class="msg">sources fetch <b>4/4 OK</b></span></div>
-    <div class="l"><span class="tm">14:04:58.887</span><span class="lvl INFO">INFO</span><span class="mod">[sync]</span><span class="msg">delta push <b>3 条</b></span></div>
-    <div class="l"><span class="tm">14:04:15.221</span><span class="lvl WARN">WARN</span><span class="mod">[disk]</span><span class="msg">free <b>500M</b> below threshold</span></div>
-    <div class="l"><span class="tm">14:03:58.602</span><span class="lvl INFO">INFO</span><span class="mod">[visiond]</span><span class="msg">zone alarm 车道越界</span></div>
-    <div class="l"><span class="tm">14:03:30.110</span><span class="lvl INFO">INFO</span><span class="mod">[ai]</span><span class="msg">token <b>+2.1k</b> deepseek-chat</span></div>
-    <div class="l"><span class="tm">14:02:47.090</span><span class="lvl INFO">INFO</span><span class="mod">[visiond]</span><span class="msg">detection push car 0.88</span></div>
-    <div class="l"><span class="tm">14:02:31.776</span><span class="lvl ERROR">ERROR</span><span class="mod">[net]</span><span class="msg">ws client timeout retry 2s</span></div>
-    <div class="l"><span class="tm">14:02:11.405</span><span class="lvl INFO">INFO</span><span class="mod">[sync]</span><span class="msg">session #4 done</span></div>
+  <div class="logview" id="logView">
+    <div class="l"><span class="tm">--:--:--</span><span class="lvl INFO">INFO</span><span class="msg" style="color:var(--d)">加载中…（file_read /LINGOS/log/lingos.log——无数据不模拟）</span></div>
   </div>
 </div>
 
@@ -380,7 +396,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     <div class="card"><div class="ct"><span>检查结果</span></div><div class="evlog" id="upLog">
       <div class="e"><span class="lv">--</span><span class="tx">尚未检查</span></div></div></div>
     <div class="card"><div class="ct"><span>更新源</span></div>
-      <div style="font-family:var(--mono);font-size:9px;color:var(--g);line-height:2" id="upSrc">repo.conf 未配置</div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--g);line-height:2" id="upSrc">未检查（点「检查更新」读 repo.conf 真实源）</div>
       <div style="margin-top:8px"><button onclick="checkUpdate()" style="background:rgba(255,190,77,.08);border:1px solid rgba(255,190,77,.4);color:var(--amber);font-family:var(--mono);font-size:9px;padding:5px 12px;cursor:pointer">检查更新</button></div></div>
   </div>
 </div>
@@ -533,16 +549,11 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
       <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">高级 config</div>
       <div style="padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--d)">关于</div></div>
     <div>
-      <div class="card" style="margin-bottom:10px"><div class="ct"><span>主机连接</span><b style="color:var(--green)">● LINKED 192.168.1.20</b></div>
-        <div style="display:flex;flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:10px;color:var(--g);line-height:2.2"><span>WS <b style="color:var(--w)">2939</b></span><span>HTTP <b style="color:var(--w)">8080</b></span><span>认证 token</span><span>本地 Unix sock</span></div></div>
-      <div class="card"><div class="ct"><span>高级设置 · config 白名单</span><b>config get/set</b></div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 16px;font-family:var(--mono);font-size:9px;color:var(--g)">
-          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">temperature <b style="color:var(--w)">0.7</b></div>
-          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">max_tokens <b style="color:var(--w)">4096</b></div>
-          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">context_window <b style="color:var(--w)">64K</b></div>
-          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">heartbeat <b style="color:var(--w)">30s</b></div>
-          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">log_level <b style="color:var(--w)">INFO</b></div>
-          <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0">weather_api <b style="color:var(--w)">open-meteo</b></div>
+      <div class="card" style="margin-bottom:10px"><div class="ct"><span>主机连接</span><b id="setLink">--</b></div>
+        <div id="setHost" style="display:flex;flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:10px;color:var(--g);line-height:2.2"><span>--</span></div></div>
+      <div class="card"><div class="ct"><span>高级设置 · config 白名单</span><b>config get/set（真实）</b></div>
+        <div id="setCfg" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 16px;font-family:var(--mono);font-size:9px;color:var(--g)">
+          <div style="padding:5px 0;color:var(--d)">加载中…（config_get）</div>
         </div>
         <div style="margin-top:10px;border:1px solid rgba(255,190,77,.3);background:rgba(255,190,77,.05);padding:8px 10px;display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:9px;color:var(--amber)">⚠ 修改需理解量参数——类型/范围校验，保存前二次确认<span style="border:1px solid rgba(255,190,77,.4);padding:2px 8px">进入</span></div>
       </div>
@@ -680,45 +691,109 @@ async function bindSessions(){
 /* ===== 预警 ===== */
 async function bindAlert(){
   var a = await apiCmd('alert_query');
-  var list = (a && a.status==='ok' && Array.isArray(a.data))? a.data : [];
+  var ok = !!(a && a.status==='ok');
+  var list = (ok && Array.isArray(a.data))? a.data : [];
   var lv={L0:0,L1:0,L2:0,L3:0,info:0};
   list.forEach(function(e){ var l=String(e.level||'info').toUpperCase(); if(l in lv)lv[l]++; else lv.info++; });
-  // 级别卡
+  // 级别卡（L3 卡合并 info——与 alert_summary.levels 对齐）
   document.querySelectorAll('.al-lv').forEach(function(el){
-    var k=el.getAttribute('data-lv'); el.textContent = lv[k]||'--';
+    var k = el.getAttribute('data-lv');
+    if(!ok){ el.textContent='--'; return; }
+    el.textContent = (k==='L3') ? (lv.L3 + lv.info) : (lv[k]||0);
   });
-  setTxt('#p-alert .phead .r', '共 <b>'+(a&&a.status==='ok'?list.length:'--')+'</b> 条 · alert_query');
-  var box=$('#alList');
-  if(!box) return;
-  if(!list.length){ box.innerHTML='<div style="padding:20px;color:var(--d);font-family:var(--mono);font-size:12px">'+(a&&a.status==='error'?'预警读取失败':'暂无预警 —— 系统正常')+'</div>'; return; }
-  box.innerHTML = list.slice(0,10).map(function(e){
-    var lv2=String(e.level||'info').toUpperCase();
-    var rc = lv2==='L0'||lv2==='L1'?'var(--red)':(lv2==='L2'?'var(--amber)':'var(--blue)');
-    return '<div class="lrow"><div class="t"><div class="n">'+(e.title||'预警')+'</div><div class="s">'+(e.content||e.description||'')+' · '+(e.source||'')+'</div></div>'
-      +'<span class="tag" style="border-color:'+rc+';color:'+rc+'">'+lv2+'</span></div>';
-  }).join('');
+  setTxt('#alertHead', ok ? ('共 <b>'+list.length+'</b> 条 · alert_query') : '预警不可达<br>显示 -- 不模拟');
+  var box=document.getElementById('alList');
+  var srcBox=document.getElementById('alSrc');
+  if(box){
+    if(!ok){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">预警读取失败（显示 -- 不模拟）</div></div></div>'; }
+    else if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">暂无预警 —— 系统正常</div></div></div>'; }
+    else box.innerHTML = list.slice(0,10).map(function(e){
+      var lv2=String(e.level||'info').toUpperCase();
+      var rc = lv2==='L0'||lv2==='L1'?'var(--red)':(lv2==='L2'?'var(--amber)':'var(--blue)');
+      return '<div class="lrow"><div class="t"><div class="n">'+(e.title||'预警')+'</div><div class="s">'+(e.content||e.description||'')+' · '+(e.source||'')+'</div></div>'
+        +'<span class="tag" style="border-color:'+rc+';color:'+rc+'">'+lv2+'</span></div>';
+    }).join('');
+  }
+  // 【第6期】数据源健康：真实 alert_summary.sources（替代原写死 USGS/CMA 行）
+  if(!srcBox) return;
+  var sm = await apiCmd('alert_summary');
+  if(sm && sm.status==='ok' && sm.data){
+    var srcs = sm.data.sources || {};
+    var keys = Object.keys(srcs);
+    setTxt('#alSrcCount', keys.length + ' 源 · ' + (sm.data.total||0) + ' 条');
+    srcBox.innerHTML = keys.length
+      ? keys.map(function(k){
+          var v = srcs[k] || {};
+          return '<div class="e"><span class="lv d">'+k+'</span><span class="tx">'+ (v.count||0) +' 条 · 最近 '+(v.last||'--')+'</span></div>';
+        }).join('')
+      : '<div class="e"><span class="tx" style="color:var(--d)">暂无源数据</span></div>';
+  } else {
+    setTxt('#alSrcCount','--');
+    srcBox.innerHTML='<div class="e"><span class="tx" style="color:var(--d)">源健康不可达（显示 -- 不模拟）</span></div>';
+  }
 }
 /* ===== 提供商 ===== */
 async function bindProviders(){
   var p = await apiCmd('provider_list');
-  var list = (p && p.status==='ok' && p.data)? (p.data.providers||[]) : [];
-  var active = (p && p.data)? (p.data.active||'--') : '--';
-  setTxt('#p-providers .phead .r', '当前 <b>'+active+'</b>');
-  var grid = $('#p-providers .grid');
+  var ok = !!(p && p.status==='ok' && p.data);
+  var list = ok ? (p.data.providers||[]) : [];
+  var active = ok ? (p.data.active||'') : '';
+  // 【第6期】真实 provider_list（清除写死 DeepSeek/Kimi/Ollama 卡 + 「3 提供商 · 5 模型」+ 余额假值）
+  setTxt('#providerHead', ok
+    ? ('当前 <b>'+(active||'--')+'</b><br>provider_list 实读')
+    : '提供商不可达<br>显示 -- 不模拟');
+  setTxt('#providerCnt', ok ? (list.length+' 提供商 · 实读 provider_list') : '--');
+  var grid = document.getElementById('providerGrid');
   if(!grid) return;
-  if(!list.length){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--d);font-family:var(--mono);font-size:12px;padding:12px">'+(p&&p.status==='error'?'提供商读取失败':'暂无提供商 —— 需在主机配置')+'</div>'; }
-  else grid.innerHTML = list.map(function(pr){ return '<div class="card"><div class="ct"><span>'+(pr.name||pr.id||'?')+'</span>'+(String(pr.id)===String(active)?'<b style="color:var(--green)">当前</b>':'')+'</div><div class="big" style="font-size:15px;font-family:var(--mono)">'+(pr.model||'--')+'</div><div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px">格式 '+(pr.format||'openai')+'</div></div>'; }).join('');
+  if(!ok){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--d);font-family:var(--mono);font-size:12px;padding:12px">提供商读取失败（显示 -- 不模拟）</div>'; return; }
+  if(!list.length){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--d);font-family:var(--mono);font-size:12px;padding:12px">暂无提供商 —— 需在主机配置</div>'; return; }
+  grid.innerHTML = list.map(function(pr){
+    var isCur = String(pr.id)===String(active) || String(pr.name)===String(active);
+    var meta = [];
+    if(pr.format) meta.push('格式 '+pr.format);
+    if(pr.model) meta.push('模型 '+pr.model);
+    if(pr.base_url) meta.push(pr.base_url);
+    return '<div class="card"><div class="ct"><span>'+((isCur?'<span style="color:var(--green)">● </span>':'')+(pr.name||pr.id||'?'))+'</span>'+(isCur?'<b>当前</b>':'')+'</div>'
+      +'<div class="big" style="font-size:15px;font-family:var(--mono)">'+(pr.model||pr.id||'--')+'</div>'
+      +'<div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:5px;line-height:1.8">'+(meta.join(' · ')||'--')+'</div></div>';
+  }).join('');
 }
 
-/* ===== 技能 ===== */
+/* ===== 技能（【第6期】真实 skill_list_full——清除写死「68 技能 · 启用 61」） ===== */
+var _skillsAll = [];
 async function bindSkills(){
   var sk = await apiCmd('skill_list_full');
-  var list = (sk && sk.status==='ok' && Array.isArray(sk.data))? sk.data : [];
-  var box = $('#p-skills .listwrap');
+  var ok = !!(sk && sk.status==='ok');
+  _skillsAll = ok ? sk.data : [];
+  if(!Array.isArray(_skillsAll)) _skillsAll = [];
+  var enabled = _skillsAll.filter(function(s){ return !!s.enabled; }).length;
+  setTxt('#skillHead', ok
+    ? ('共 <b>'+_skillsAll.length+'</b> · 启用 <b>'+enabled+'</b> · <span style="color:var(--green)">内置核心不可删</span>')
+    : '技能不可达<br>显示 -- 不模拟');
+  setTxt('#skillCnt', ok ? (_skillsAll.length+' 技能 · 实读 skill_list_full') : '--');
+  var badge = document.getElementById('navSkillBadge');
+  if(badge){
+    if(ok && _skillsAll.length){ badge.style.display=''; badge.textContent = _skillsAll.length; }
+    else { badge.style.display='none'; badge.textContent='--'; }
+  }
+  renderSkills(_skillsAll, ok);
+}
+function filterSkills(){
+  var el = document.getElementById('skillFilter');
+  var k = (el ? el.value : '').trim().toLowerCase();
+  var list = _skillsAll.filter(function(s){
+    if(!k) return true;
+    return ((''+(s.name||'')).toLowerCase().indexOf(k) >= 0)
+        || ((''+(s.description||'')).toLowerCase().indexOf(k) >= 0);
+  });
+  renderSkills(list, true);
+}
+function renderSkills(list, ok){
+  var box = document.getElementById('skillList');
   if(!box) return;
-  setTxt('#p-skills .phead .r', '共 <b>'+(sk&&sk.status==='ok'?list.length:'--')+'</b> 技能');
-  if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">'+(sk&&sk.status==='error'?'技能读取失败':'暂无技能')+'</div></div></div>'; return; }
-  box.innerHTML = list.slice(0,12).map(function(s){
+  if(!ok){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">技能读取失败（显示 -- 不模拟）</div></div></div>'; return; }
+  if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">暂无技能（或筛选无匹配）</div></div></div>'; return; }
+  box.innerHTML = list.map(function(s){
     var risk = s.risk||'low';
     var rc = risk==='high'?'var(--red)':(risk==='medium'?'var(--amber)':'var(--green)');
     return '<div class="lrow"><div class="t"><div class="n">'+s.name+'</div><div class="s">'+(s.description||'')+'</div></div>'
@@ -726,46 +801,181 @@ async function bindSkills(){
       +(s.enabled?'<span class="tag g">ON</span>':'<span class="tag">OFF</span>')+'</div>';
   }).join('');
 }
-/* ===== 记忆 ===== */
+/* ===== 记忆（【第6期】真实 memory_search——补页面 + 关键字检索） ===== */
 async function bindMemory(){
-  var m = await apiCmd('memory_search', {keyword:''});
-  var box = $('#p-memory .listwrap');
+  var kwEl = document.getElementById('memKeyword');
+  var kw = kwEl ? (kwEl.value||'').trim() : '';
+  var m = await apiCmd('memory_search', {keyword: kw});
+  var ok = !!(m && m.status==='ok');
+  var list = (ok && Array.isArray(m.data))? m.data : [];
+  var box = document.getElementById('memList');
+  setTxt('#memHead', ok ? ('记忆 <b>'+list.length+'</b> 条 · memory_search') : '记忆不可达<br>显示 -- 不模拟');
+  setTxt('#memCnt', ok ? (list.length + ' 条') : '--');
   if(!box) return;
-  var list = (m && m.status==='ok' && Array.isArray(m.data))? m.data : [];
-  setTxt('#p-memory .phead .r', '记忆 <b>'+(m&&m.status==='ok'?list.length:'--')+'</b> 条');
-  if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">'+(m&&m.status==='error'?'记忆读取失败':'暂无记忆')+'</div></div></div>'; return; }
-  box.innerHTML = list.slice(0,10).map(function(r){
+  if(!ok){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">记忆读取失败（显示 -- 不模拟）</div></div></div>'; return; }
+  if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">暂无记忆</div></div></div>'; return; }
+  box.innerHTML = list.slice(0,50).map(function(r){
     var content = r.content||r.text||r.summary||'';
     var lv = (r.level||r.type||'L3').toUpperCase();
     var tagC = lv.indexOf('L1')>=0?'g':(lv.indexOf('L2')>=0?'a':'dim');
-    return '<div class="lrow"><div class="t"><div class="n"><span class="tag '+tagC+'">'+lv+'</span> '+String(content).slice(0,60)+'</div><div class="s">'+(r.time||r.created_at||'')+'</div></div></div>';
+    return '<div class="lrow"><div class="t"><div class="n"><span class="tag '+tagC+'">'+lv+'</span> '+String(content).slice(0,80)+'</div><div class="s">'+(r.time||r.created_at||'')+'</div></div></div>';
   }).join('');
 }
-/* ===== 天气 ===== */
+
+/* ===== 人格（【第6期】真实 personality_get/personality_set——页面原缺失，点导航会报错） ===== */
+async function bindPersona(){
+  var r0 = await apiCmd('personality_get');
+  var ok = !!(r0 && r0.status==='ok' && r0.data);
+  var cur = ok ? (r0.data.personality||'--') : '--';
+  setTxt('#personaHead', ok ? ('当前人格 <b>'+cur+'</b> · personality_get') : '人格不可达<br>显示 -- 不模拟');
+  setTxt('#personaOpts', 'nook / noma');
+  var box = document.getElementById('personaCards');
+  if(!box) return;
+  if(!ok){ box.innerHTML='<div class="card"><div class="ct"><span style="color:var(--d)">人格读取失败（显示 -- 不模拟）</span></div></div>'; return; }
+  box.innerHTML = ['nook','noma'].map(function(nm){
+    var isCur = (nm===cur);
+    return '<div class="card"><div class="ct"><span>'+nm+'</span>'+(isCur?'<b style="color:var(--green)">当前</b>':'')+'</div>'
+      +'<div style="font-family:var(--mono);font-size:9px;color:var(--d);margin-top:5px">'
+      +(isCur?'已是当前人格':'切换走 personality_set（服务端写入 personality.json）')+'</div>'
+      +'<div style="margin-top:8px">'+(isCur?'':'<button onclick="wfSetPersona(this.dataset.p)" data-p="'+nm+'">切换为 '+nm+'</button>')+'</div></div>';
+  }).join('');
+}
+async function wfSetPersona(name){
+  var r0 = await apiCmd('personality_set', {name: name});
+  if(!r0 || r0.status!=='ok') alert('切换失败：'+((r0&&r0.msg)||'服务端不可达'));
+  bindPersona();
+}
+/* ===== 天气（【第6期】整页真实化：weather_current + weather_forecast + weather_code_map） ===== */
+var _wxCodes = null;
+async function _wxCodeText(code){
+  if(_wxCodes===null){
+    _wxCodes = {};
+    try{
+      var cm = await apiCmd('weather_code_map');
+      if(cm && cm.status==='ok' && Array.isArray(cm.data)){
+        cm.data.forEach(function(x){ _wxCodes[String(x.code)] = x.zh || x.en || ''; });
+      }
+    }catch(e){ _wxCodes = {}; }
+  }
+  var t = _wxCodes[String(code)];
+  return t ? t : ('天气码 '+(code===undefined||code===null?'--':code));
+}
+function _wxNum(v, unit, digits){
+  if(v===undefined||v===null||isNaN(v)) return '--';
+  return Number(v).toFixed(digits===undefined?0:digits)+(unit||'');
+}
 async function bindWeather(){
   var w = await apiCmd('weather_current');
-  setTxt('#p-weather .phead .r', (w&&w.status==='ok'?'Open-Meteo · '+(w.city||'')+'<br>更新 实时':'天气源不可达<br>显示 -- 不模拟'));
-  var temp=(w&&w.status==='ok'&&w.data)? w.data.temp : null;
-  setTxt('#p-weather .card .wx-t', temp===null?'--':'<span style="font-family:var(--disp);font-weight:700;font-size:64px;line-height:1">'+temp+'<sup style="font-size:18px;color:var(--g)">°C</sup></span>');
+  var ok = !!(w && w.status==='ok' && w.data);
+  var d = ok ? w.data : {};
+  if(!ok){
+    setTxt('#wxHead','天气源不可达<br>显示 -- 不模拟');
+    setTxt('#wxTemp','--'); setTxt('#wxDesc','--');
+    setTxt('#wxSub','无数据不模拟（weather_current）');
+    setTxt('#wxMetrics','');
+    setTxt('#wxHourNote','--'); setTxt('#wxSun','--');
+    var l1=document.getElementById('wxHourLine'); if(l1) l1.setAttribute('points','');
+    var l2=document.getElementById('wxDayLine'); if(l2) l2.setAttribute('points','');
+    var db=document.getElementById('wxDays');
+    if(db) db.innerHTML='<div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">--</div><div style="font-size:13px;font-weight:700">--</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">无数据不模拟</div></div>';
+    return;
+  }
+  var src = w.source||'--', city = w.city||'--';
+  var upd = d.time ? String(d.time).replace('T',' ') : '--';
+  setTxt('#wxHead', src+' · '+city+'<br>数据时间 '+upd+(w.cache?'（缓存）':'（实时）'));
+  setTxt('#wxTemp', (d.temp===undefined||d.temp===null)?'--':(Math.round(d.temp)+'<sup style="font-size:18px;color:var(--g)">°C</sup>'));
+  setTxt('#wxDesc', await _wxCodeText(d.code));
+  setTxt('#wxSub', '体感 '+_wxNum(d.feels!==undefined?d.feels:d.feels_like,'°')+' · 湿度 '+_wxNum(d.humidity,'%'));
+  setTxt('#wxMetrics',
+      '<div><div style="font-size:16px;color:var(--w);font-weight:600">'+_wxNum(d.humidity,'%')+'</div>湿度</div>'
+    + '<div><div style="font-size:16px;color:var(--w);font-weight:600">'+_wxNum(d.wind!==undefined?d.wind:d.wind_speed,'',1)+'</div>风 m/s</div>'
+    + '<div><div style="font-size:16px;color:var(--w);font-weight:600">'+_wxNum(d.pressure!==undefined?d.pressure:d.surface_pressure,'')+'</div>hPa</div>'
+    + '<div><div style="font-size:16px;color:var(--w);font-weight:600">'+_wxNum(d.uv!==undefined?d.uv:d.uv_index,'')+'</div>UV</div>');
+
+  // 逐小时 24h（真实 weather_forecast.data.hourly）
+  var f = await apiCmd('weather_forecast');
+  var fok = !!(f && f.status==='ok' && f.data);
+  var hourly = (fok && Array.isArray(f.data.hourly))? f.data.hourly : [];
+  var daily  = (fok && Array.isArray(f.data.daily))?  f.data.daily  : [];
+  var line = document.getElementById('wxHourLine');
+  if(line){
+    if(!hourly.length){ line.setAttribute('points',''); setTxt('#wxHourNote','--（无预报数据）'); }
+    else{
+      var temps = hourly.map(function(h){ return Number(h.temp); }).filter(function(x){ return !isNaN(x); });
+      var mn = Math.min.apply(null, temps), mx = Math.max.apply(null, temps);
+      var span = (mx-mn)||1;
+      line.setAttribute('points', hourly.map(function(h,i){
+        var t = Number(h.temp); if(isNaN(t)) t = mn;
+        var x = Math.round(i*(320/Math.max(1,hourly.length-1)));
+        var y = 58 - Math.round((t-mn)/span*50);
+        return x+','+y;
+      }).join(' '));
+      var pop = hourly.map(function(h){ return Number(h.pop); }).filter(function(x){ return !isNaN(x); });
+      setTxt('#wxHourNote', '温度 '+Math.round(mn)+'~'+Math.round(mx)+'°C · 降水峰值 '+(pop.length?Math.round(Math.max.apply(null,pop)):'--')+'%');
+    }
+  }
+  // 7 日曲线（真实 daily.hi）
+  var dline = document.getElementById('wxDayLine');
+  if(dline){
+    if(!daily.length){ dline.setAttribute('points',''); setTxt('#wxSun','--'); }
+    else{
+      var his = daily.map(function(x){ return Number(x.hi); }).filter(function(x){ return !isNaN(x); });
+      var hmn = Math.min.apply(null, his), hmx = Math.max.apply(null, his);
+      var hspan = (hmx-hmn)||1;
+      dline.setAttribute('points', daily.map(function(x,i){
+        var t = Number(x.hi); if(isNaN(t)) t = hmn;
+        var cx = Math.round(i*(320/Math.max(1,daily.length-1)));
+        var cy = 58 - Math.round((t-hmn)/hspan*50);
+        return cx+','+cy;
+      }).join(' '));
+      var d0 = daily[0]||{};
+      setTxt('#wxSun', '日出 '+((d0.sunrise||'--').toString().slice(11)||'--')+' 日落 '+((d0.sunset||'--').toString().slice(11)||'--'));
+    }
+  }
+  var dbox = document.getElementById('wxDays');
+  if(dbox){
+    dbox.innerHTML = daily.length
+      ? daily.slice(0,4).map(function(x){
+          var ds = String(x.date||'--');
+          return '<div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">'+ds.slice(5)+'</div>'
+            +'<div style="font-size:13px;font-weight:700">'+_wxNum(x.hi,'°')+'</div>'
+            +'<div style="font-family:var(--mono);font-size:8px;color:var(--d)">'+_wxNum(x.lo,'°')+' · ☂'+_wxNum(x.pop,'%')+'</div></div>';
+        }).join('')
+      : '<div class="card" style="text-align:center;padding:9px 6px"><div style="font-family:var(--mono);font-size:8px;color:var(--d)">--</div><div style="font-size:13px;font-weight:700">--</div><div style="font-family:var(--mono);font-size:8px;color:var(--d)">无预报数据（不模拟）</div></div>';
+  }
 }
 /* ===== 视觉状态 ===== */
 async function bindVision(){
   var m = await apiCmd('monitor_status');
   var a = await apiCmd('ai_vision_status');
-  var mok = m && m.status==='ok' && m.data;
-  var aok = a && a.status==='ok' && a.data;
-  if(mok){
-    var md = m.data.data||m.data;
-    var cams = md.cameras||[];
-    var online = cams.filter(function(c){return c.connected}).length;
-    setTxt('#p-vision .phead .r', '监控 <b>'+online+'/'+cams.length+'</b> 路在线 · 存储 '+(md.record_dir||'--')+'<br>预览 :'+(md.preview_port||8891)+' · AI识别 '+(aok?'就绪':'--'));
-    // 摄像头列表渲染
-    var box=document.querySelector('#p-vision .cols');
-    if(box && cams.length){
-      var lb=box.querySelector('.card .evlog'); 
+  var mok = !!(m && m.status==='ok' && m.data);
+  var aok = !!(a && a.status==='ok' && a.data);
+  var list = document.getElementById('camList');
+  var md = mok ? (m.data.data||m.data) : null;
+  var cams = md ? (md.cameras||[]) : [];
+  var online = cams.filter(function(c){ return c.connected; }).length;
+  setTxt('#p-vision .phead .r', mok
+    ? ('监控 <b>'+online+'/'+cams.length+'</b> 路在线 · 存储 '+_esc(md.record_dir||'--')+'<br>预览 :'+_esc(md.preview_port||'--')+' · AI识别 '+(aok?'就绪':'--'))
+    : '监控未连接 —— 显示 -- 不模拟');
+  // 【第6期】摄像头列表：真实 monitor_list（原为「未获取」永不填充）
+  var ml = await apiCmd('monitor_list');
+  if(ml && ml.status==='ok'){
+    var d2 = ml.data && ml.data.data ? ml.data.data : ml.data;
+    var cams2 = (d2 && d2.cameras) ? d2.cameras : [];
+    setTxt('#camCount', cams2.length + ' 路');
+    if(list){
+      list.innerHTML = cams2.length
+        ? cams2.map(function(c){
+            var on = !!c.connected;
+            return '<div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px">'+_esc(c.id||'?')+'</div>'
+              +'<div class="s">'+_esc(c.type||'--')+(c.error?(' · '+_esc(c.error)):'')+(c.enabled===false?' · 已停用':'')+'</div></div>'
+              +'<span class="tag '+(on?'g':'dim')+'">'+(on?'在线':'离线')+'</span></div>';
+          }).join('')
+        : '<div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px;color:var(--d)">未配置摄像头（不模拟）</div><div class="s">monitor_list 返回 0 路</div></div><span class="tag dim">--</span></div>';
     }
   } else {
-    setTxt('#p-vision .phead .r', '监控未连接 —— 显示 -- 不模拟');
+    setTxt('#camCount','--');
+    if(list) list.innerHTML='<div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px;color:var(--d)">摄像头列表不可达（显示 -- 不模拟）</div></div><span class="tag dim">--</span></div>';
   }
 }
 /* ===== 日志 ===== */
@@ -792,18 +1002,49 @@ async function bindLog(){
     return '<div class="l"><span class="lvl '+lvl+'">'+lvl+'</span><span class="msg">'+(ts?'<span style="color:var(--d)">['+ts+']</span> ':'')+msg.replace(/</g,'&lt;')+'</span></div>';
   }).join('');
 }
-/* ===== 文件(系统目录) ===== */
-async function bindFiles(){
-  var f = await apiCmd('file_list', {path:'/LINGOS'});
-  var box = $('#fsList');
+/* ===== 文件（【第6期】真实目录树 + 逐级浏览——清除写死 bin/6 etc/13 … 与「8 项」） ===== */
+function _esc(s){ return String(s===undefined||s===null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _joinPath(base, name){
+  if(base==='/') return '/'+name;
+  return (base.replace(/\/+$/,''))+'/'+name;
+}
+async function bindFiles(path){
+  path = path || '/LINGOS';
+  var f = await apiCmd('file_list', {path:path});
+  var ok = !!(f && f.status==='ok' && Array.isArray(f.data));
+  var list = ok ? f.data : [];
+  var box = document.getElementById('fsList');
+  setTxt('#fsHead', 'file_list · '+_esc(path)+'<br>共 <b>'+(ok?list.length:'--')+'</b> 项');
+  setTxt('#fsCnt', (ok?list.length:'--')+' 项 · '+path);
+  // 目录树：面包屑（真实路径）+ 当前层子目录
+  var tree = document.getElementById('fsTree');
+  if(tree){
+    var parts = path.split('/').filter(Boolean);
+    var t = '<div class="fsnode" data-p="/" onclick="bindFiles(this.dataset.p)">/ 根</div>';
+    var acc = '';
+    for(var i=0;i<parts.length;i++){
+      acc += '/'+parts[i];
+      t += '<div class="fsnode'+(i===parts.length-1?' on':'')+'" data-p="'+_esc(acc)+'" onclick="bindFiles(this.dataset.p)">'+_esc(parts[i])+'</div>';
+    }
+    if(ok){
+      var dirs = list.filter(function(e){ return e.type==='dir'; });
+      t += dirs.length
+        ? dirs.map(function(e){ return '<div class="fsnode" data-p="'+_esc(_joinPath(path,e.name))+'" onclick="bindFiles(this.dataset.p)">'+_esc(e.name)+'/</div>'; }).join('')
+        : '<div class="fsnode" style="color:var(--dd)">（无子目录）</div>';
+    } else {
+      t += '<div class="fsnode" style="color:var(--dd)">目录不可读（不模拟）</div>';
+    }
+    tree.innerHTML = t;
+  }
   if(!box) return;
-  var list = (f&&f.status==='ok'&&Array.isArray(f.data))? f.data : [];
-  setTxt('#p-files .phead .r', 'file_list · /LINGOS <br>共 <b>'+(f&&f.status==='ok'?list.length:'--')+'</b> 项');
-  if(!list.length){ box.innerHTML='<div class="lrow"><div class="n" style="color:var(--d)">'+(f&&f.status==='error'?'文件读取失败':'/LINGOS 为空')+'</div></div>'; return; }
+  if(!ok){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">文件读取失败（显示 -- 不模拟）</div></div></div>'; return; }
+  if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">'+_esc(path)+' 为空</div></div></div>'; return; }
   box.innerHTML = list.map(function(e){
+    var full = _joinPath(path, e.name);
     var ic = e.type==='dir'?'▸':'·';
-    return '<div class="lrow"><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">'+ic+' '+e.name+'</div></div>'
-      +'<div class="st2">'+(e.type==='dir'?'DIR':(e.size||''))+'</div></div>';
+    var click = e.type==='dir' ? (' style="cursor:pointer" data-p="'+_esc(full)+'" onclick="bindFiles(this.dataset.p)"') : '';
+    return '<div class="lrow"'+click+'><div class="t"><div class="n" style="font-family:var(--mono);font-size:12px">'+ic+' '+_esc(e.name)+'</div></div>'
+      +'<div class="st2">'+(e.type==='dir'?'DIR':_esc(e.size))+'</div></div>';
   }).join('');
 }
 /* ===== 系统/插件（【0.4.4】由假数据改为真实绑定） ===== */
@@ -850,7 +1091,9 @@ async function bindSys(){
     setTxt('#sysPlugCount','--');
     document.getElementById('sysPlugList').innerHTML='<div class="e"><span class="lv">—</span><span class="tx">插件层不可达（显示 -- 不模拟）</span></div>';
   }
-  // 3) 注册表（真实 registry_list）
+  // 3) 注册表：优先 registry_list（lingosd 命令 src/daemon/lingosd.c:634）
+  //    注：/api/cmd 代理到 ai.sock（Python）；ai_server 未实现的命令会回 '未知命令'。
+  //    此处不伪造条目——降级为真实命令汇总（技能/命令/插件），并明确标注来源。
   var rg = await apiCmd('registry_list');
   var ents=null;
   if(rg&&rg.status==='ok'){ ents = rg.entries || rg.data || rg.items || null; }
@@ -863,8 +1106,22 @@ async function bindSys(){
     }
     document.getElementById('sysRegList').innerHTML=tags;
   } else {
-    setTxt('#sysRegCount','--');
-    document.getElementById('sysRegList').innerHTML='<span style="font-family:var(--mono);font-size:9px;color:var(--d)">注册表不可达（显示 -- 不模拟）</span>';
+    var sk2 = await apiCmd('skill_list_full');
+    var cl2 = await apiCmd('command_list');
+    var pl2 = await apiCmd('plugin_list');
+    var nSk  = (sk2&&sk2.status==='ok'&&Array.isArray(sk2.data)) ? sk2.data.length : null;
+    var nCmd = (cl2&&cl2.status==='ok'&&cl2.data&&Array.isArray(cl2.data.commands)) ? cl2.data.commands.length : null;
+    var nPl  = (pl2&&pl2.status==='ok'&&Array.isArray(pl2.plugins)) ? pl2.plugins.length : null;
+    var tot = (nSk===null&&nCmd===null&&nPl===null) ? null : (nSk||0)+(nCmd||0)+(nPl||0);
+    setTxt('#sysRegCount', tot===null ? '--' : (tot+' 项（实读汇总）'));
+    var tag2 = function(label, n, cls){
+      return '<span class="tag '+(cls||'')+'" title="registry_list 不可用——此数为真实命令实读">'+label+' '+(n===null?'--':n)+'</span>';
+    };
+    document.getElementById('sysRegList').innerHTML =
+      (tot===null)
+        ? '<span style="font-family:var(--mono);font-size:9px;color:var(--d)">注册表不可达且汇总命令全部失败（显示 -- 不模拟）</span>'
+        : (tag2('技能', nSk, 'g') + tag2('命令', nCmd, 'b') + tag2('插件', nPl, ''))
+          + '<div style="font-family:var(--mono);font-size:8px;color:var(--d);margin-top:6px;width:100%">registry_list 经 /api/cmd 不可达（ai.sock 未实现）——以上为 skill_list_full/command_list/plugin_list 实读汇总</div>';
   }
 }
 
@@ -1186,6 +1443,114 @@ async function bindOptions(){
   document.getElementById('opList').innerHTML = html || '<div class="e"><span class="lv">—</span><span class="tx">无可选项</span></div>';
 }
 
+/* ===== 【第6期】智能家居 HA（真实 ha_status + ha_states——清除写死客厅灯/空调/门锁/24.6°/AQI42） ===== */
+async function bindHa(){
+  var st = await apiCmd('ha_status');
+  var okStatus = !!(st && st.status==='ok' && st.data);
+  var d = okStatus ? st.data : {};
+  setTxt('#haHead', okStatus
+    ? ('HA <b>'+_esc(d.version||'--')+'</b> · '+(d.location_name? _esc(d.location_name):'--')+'<br>ha_status / ha_states 实读')
+    : ((st && st.status==='error') ? ('HA 不可达：'+_esc(st.msg||st.code||'--')+'<br>显示 -- 不模拟') : 'HA 不可达<br>显示 -- 不模拟'));
+
+  var s = await apiCmd('ha_states');
+  var ok = !!(s && s.status==='ok' && Array.isArray(s.data));
+  var ents = ok ? s.data : [];
+  var stats = document.getElementById('haStats');
+  var box = document.getElementById('haEntities');
+  if(!ok){
+    setTxt('#haEntityCount','--');
+    if(stats) stats.innerHTML='<div class="card"><div class="ct"><span style="color:var(--d)">实体状态不可达</span></div><span class="big" style="font-size:20px">--</span></div>';
+    if(box) box.innerHTML='<div class="e"><span class="tx" style="color:var(--d)">'+_esc((s&&s.msg)||'无数据（显示 -- 不模拟）')+'</span></div>';
+    return;
+  }
+  var bad = {unavailable:1,unknown:1};
+  var avail = ents.filter(function(e){ return !bad[String(e.state)]; }).length;
+  var domains = {};
+  ents.forEach(function(e){ var dm=String(e.entity_id||'').split('.')[0]; domains[dm]=(domains[dm]||0)+1; });
+  var dnum = Object.keys(domains).length;
+  var latest = '';
+  ents.forEach(function(e){ var lc=String(e.last_changed||''); if(lc>latest) latest=lc; });
+  setTxt('#haEntityCount', ents.length + ' 实体');
+  if(stats){
+    var cards=[['实体总数',ents.length],['可用',avail],['域',dnum],['最近更新', latest? latest.replace('T',' ').slice(0,19):'--']];
+    stats.innerHTML = cards.map(function(c){
+      return '<div class="card"><div class="ct"><span>'+c[0]+'</span></div><span class="big" style="font-size:20px">'+_esc(c[1])+'</span></div>';
+    }).join('');
+  }
+  if(box){
+    box.innerHTML = ents.length
+      ? ents.slice(0,200).map(function(e){
+          var bad2 = !!bad[String(e.state)];
+          return '<div class="e"><span class="lv d">'+_esc(String(e.entity_id||'').split('.')[0])+'</span>'
+            +'<span class="tx">'+_esc(e.entity_id)+(e.attributes&&e.attributes.friendly_name?(' · '+_esc(e.attributes.friendly_name)):'')
+            +' · <b style="color:'+(bad2?'var(--d)':'var(--green)')+'">'+_esc(e.state)+'</b></span></div>';
+        }).join('')
+      : '<div class="e"><span class="tx" style="color:var(--d)">暂无实体（HA 未配置或为空——不模拟）</span></div>';
+  }
+}
+
+/* ===== 【第6期】设置页真实值（主机连接 + config_get——清除写死 192.168.1.20/2939/8080 与 temperature 0.7 …） ===== */
+async function bindSettings(){
+  var host = location.hostname || '--';
+  var link = document.getElementById('setLink');
+  var hostBox = document.getElementById('setHost');
+  try{
+    var h = await (await fetch('/system/health')).json();
+    if(link) link.innerHTML = (h && h.status==='ok')
+      ? '<span style="color:var(--green)">● LINKED '+_esc(host)+'</span>'
+      : '<span style="color:var(--amber)">● OFFLINE</span>';
+  }catch(e){ if(link) link.innerHTML = '<span style="color:var(--amber)">● OFFLINE</span>'; }
+  if(hostBox){
+    var httpPort = location.port ? location.port : (location.protocol==='https:'?'443':'80');
+    hostBox.innerHTML = '<span>本页 HTTP <b style="color:var(--w)">'+_esc(httpPort)+'</b></span>'
+      + '<span>主机 <b style="color:var(--w)">'+_esc(host)+'</b></span>'
+      + '<span>浏览器访问 · 免 token（局域网策略见服务端）</span>'
+      + '<span id="setSysInfo">--</span>';
+  }
+  // config_get 真实白名单值
+  var cfg = await apiCmd('config_get');
+  var box = document.getElementById('setCfg');
+  if(!box) return;
+  var ok = !!(cfg && cfg.status==='ok' && cfg.data && typeof cfg.data==='object');
+  if(!ok){ box.innerHTML='<div style="padding:5px 0;color:var(--d)">config_get 不可达（显示 -- 不模拟）</div>'; }
+  else{
+    var keys = Object.keys(cfg.data);
+    box.innerHTML = keys.length ? keys.map(function(k){
+      var it = cfg.data[k] || {};
+      var v = it.value;
+      var vs = (v===undefined||v===null) ? '--' : (typeof v==='object' ? JSON.stringify(v) : String(v));
+      return '<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:5px 0" title="'+_esc(it.desc||'')+'">'
+        + _esc(k)+' <b style="color:var(--w)">'+_esc(vs)+'</b></div>';
+    }).join('') : '<div style="padding:5px 0;color:var(--d)">无白名单项</div>';
+  }
+  // 系统信息（版本/架构）补进主机卡
+  var si = await apiCmd('system_info');
+  if(si && si.status==='ok' && si.data){
+    var dd = si.data;
+    setTxt('#setSysInfo', '版本 <b style="color:var(--w)">'+_esc(dd.internal_version||dd.version||'--')+'</b> · 架构 <b style="color:var(--w)">'+_esc(dd.arch||'--')+'</b>');
+  }
+}
+
+/* ===== 【第6期】顶栏/页脚真实化（版本取 system_info——清除写死「LN-0.4.4 · Qt6 UI」「0.8.0 · 22 页」） ===== */
+async function bindChrome(){
+  var pages = document.querySelectorAll('.page').length;
+  setTxt('#footPages', pages);
+  var si = await apiCmd('system_info');
+  var ok = !!(si && si.status==='ok' && si.data);
+  var ver = ok ? (si.data.internal_version || si.data.version || '--') : '--';
+  setTxt('#topVer', (ver==='--'?'--':ver) + ' · WebUI');
+  setTxt('#footVer', ver);
+  var dot = document.getElementById('footDot');
+  var proc = document.getElementById('footProc');
+  if(ok){
+    setTxt('#footProc', '服务端 ' + _esc(si.data.status||'运行中') + ' · ' + _esc(ver));
+    if(dot) dot.style.background = 'var(--green)';
+  } else {
+    setTxt('#footProc', '服务端不可达（显示 -- 不模拟）');
+    if(dot) dot.style.background = 'var(--dd)';
+  }
+}
+
 /* ===== 总绑定 ===== */
 async function bindData(){
   setTxt('.topbar .lk','<span class="p"></span>连接中…');
@@ -1193,7 +1558,10 @@ async function bindData(){
     if(h&&h.status==='ok') setTxt('.topbar .lk','<span class="p"></span>LINKED · '+window.location.hostname);
     else setTxt('.topbar .lk','<span class="p" style="background:var(--amber)"></span>OFFLINE');
   }catch(e){ setTxt('.topbar .lk','<span class="p" style="background:var(--amber)"></span>OFFLINE'); }
+  bindChrome();
   bindConsole(); bindSessions(); bindAlert(); bindProviders(); bindSkills(); bindMemory(); bindWeather(); bindVision(); bindLog(); bindFiles(); bindSys();
+  /* 【第6期】此前缺绑定/缺页面的入口（记忆/人格/HA/设置真实值） */
+  bindPersona(); bindHa(); bindSettings();
   /* 【0.5.0】新功能页 */
   bindHome(); bindTimeline(); bindNotify(); bindDashboard(); bindMedia(); bindKb(); bindOptions();
   /* 【0.6.0】端口/更新（真实数据——清除静态假数据） */
