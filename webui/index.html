@@ -200,6 +200,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     <div class="ni" data-p="ports"><span class="ic">⇄</span>端口与网络</div>
     <div class="ni" data-p="update"><span class="ic">⇪</span>升级更新</div>
     <div class="ni" data-p="sys"><span class="ic">⬢</span>系统与插件</div>
+    <div class="ni" data-p="users"><span class="ic">⚇</span>用户管理</div>
   </div>
   <div class="sec">配置</div>
   <div class="nav"><div class="ni" data-p="setting"><span class="ic">⚙</span>设置与高级</div></div>
@@ -416,6 +417,26 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     </div>
     <div class="listwrap" id="ingList"></div>
     <div class="evlog" id="ingPlugins"></div>
+  </div>
+</div>
+
+<!-- 用户管理（2026-10-17 本地账户/角色） -->
+<div class="page" id="p-users">
+  <div class="phead"><div class="l"><div class="k">▍USER MGMT</div><h1>用户管理</h1></div><div class="r">本地账户 · 角色 owner/admin/user/guest · PBKDF2 密码<br><span id="userStorage" style="color:var(--d)"></span></div></div>
+  <div class="card">
+    <div class="toolbar">
+      <input id="userName" placeholder="用户名（字母开头 3-32 位）" style="width:190px">
+      <input id="userDisplay" placeholder="显示名（可选）" style="width:150px">
+      <select id="userRole" style="width:auto;background:#14171C;color:var(--w);border:1px solid rgba(255,255,255,.16);font-family:var(--mono);font-size:10px;padding:6px">
+        <option value="user">user</option><option value="admin">admin</option>
+        <option value="guest">guest</option><option value="owner">owner</option>
+      </select>
+      <input id="userPass" type="password" placeholder="初始密码（≥8 位）" style="width:170px">
+      <button onclick="wfUserAdd()" style="width:auto">＋ 添加用户</button>
+      <span class="cnt" id="userCount">--</span>
+    </div>
+    <div class="listwrap" id="userList"></div>
+    <div class="evlog" id="userHint"></div>
   </div>
 </div>
 
@@ -1698,7 +1719,7 @@ async function bindData(){
   /* 【0.6.0】端口/更新（真实数据——清除静态假数据） */
   bindPorts(); bindUpdate();
   /* 【0.7.0 P3】命令面板（~130 命令入口总出口） */
-  bindCmdPanel(); bindIngest();
+  bindCmdPanel(); bindIngest(); bindUsers();
 }
 
 /* ===== 【0.7.0 P3】命令面板 ===== */
@@ -1972,6 +1993,85 @@ async function wfIngestDelete(id){
   if(!confirm('删除该资料？')) return;
   await apiCmd('ingest_delete',{doc_id:id});
   bindIngest();
+}
+/* ===== 用户管理（2026-10-17） ===== */
+var _userRoles = [];
+async function bindUsers(){
+  var r = await apiCmd('user_list');
+  var box = document.getElementById('userList'); if(!box) return;
+  var d = (r && r.status==='ok') ? r.data : null;
+  var list = Array.isArray(d) ? d : [];
+  _userRoles = (r && Array.isArray(r.roles)) ? r.roles : ['owner','admin','user','guest'];
+  setTxt('#userCount', (r&&r.status==='ok') ? (list.length+' 个账户') : '--');
+  if(r && r.status==='ok' && r.data && r.data.storage) setTxt('#userStorage', '存储：'+r.data.storage);
+  if(!r || r.status!=='ok'){
+    box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--amber)">用户服务不可达</div><div class="s">检查 ai_server / user_manager</div></div></div>';
+    return;
+  }
+  if(!list.length){
+    box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">暂无用户</div><div class="s">系统会在首次 user_list 时创建默认 owner（admin / lingos，需修改）</div></div></div>';
+    return;
+  }
+  box.innerHTML = list.map(function(u){
+    var en = u.enabled !== false;
+    var id = _esc(u.username||'');
+    var roleOpts = _userRoles.map(function(rr){
+      return '<option value="'+rr+'"'+(u.role===rr?' selected':'')+'>'+rr+'</option>';
+    }).join('');
+    return '<div class="lrow" data-u="'+id+'"><div class="t"><div class="n">'+_esc(u.display_name||u.username||'')
+      +' <span class="tag '+(u.role==='owner'?'amber':(u.role==='admin'?'dim':'dim'))+'">'+_esc(u.role||'user')+'</span>'
+      +(en?'':' <span class="tag dim">已禁用</span>')
+      +(u.must_change_password?' <span class="tag amber">待改密</span>':'')
+      +'</div><div class="s">'+_esc(u.username||'')+' · 创建 '+(u.created||0)+' · 最近登录 '+(u.last_login||'从未')+'</div></div>'
+      +'<select class="u-role" data-u="'+id+'" style="width:auto;background:#14171C;color:var(--w);border:1px solid rgba(255,255,255,.16);font-family:var(--mono);font-size:10px;padding:4px">'+roleOpts+'</select>'
+      +'<button class="u-reset" data-u="'+id+'" style="width:auto">重置密码</button>'
+      +'<button class="u-toggle" data-u="'+id+'" data-en="'+(en?'1':'0')+'" style="width:auto">'+(en?'禁用':'启用')+'</button>'
+      +'<button class="u-del" data-u="'+id+'" style="width:auto">删除</button></div>';
+  }).join('');
+  var qsa=function(sel){ return box.querySelectorAll(sel); };
+  for(var i=0;i<qsa('.u-role').length;i++){ (function(el){ el.onchange=function(){ wfUserRole(el.getAttribute('data-u'), el.value); }; })(qsa('.u-role')[i]); }
+  for(var i=0;i<qsa('.u-reset').length;i++){ (function(el){ el.onclick=function(){ wfUserReset(el.getAttribute('data-u')); }; })(qsa('.u-reset')[i]); }
+  for(var i=0;i<qsa('.u-toggle').length;i++){ (function(el){ el.onclick=function(){ wfUserToggle(el.getAttribute('data-u'), el.getAttribute('data-en')!=='1'); }; })(qsa('.u-toggle')[i]); }
+  for(var i=0;i<qsa('.u-del').length;i++){ (function(el){ el.onclick=function(){ wfUserDelete(el.getAttribute('data-u')); }; })(qsa('.u-del')[i]); }
+  var hint=document.getElementById('userHint'); if(hint) hint.innerHTML='';
+  if(list.some(function(u){return u.must_change_password;})) {
+    if(hint) hint.innerHTML='<div class="l"><span class="msg">⚠ 存在待改密账户：默认 admin 密码 lingos——请用「重置密码」立即修改。</span></div>';
+  }
+}
+async function wfUserAdd(){
+  var name=(document.getElementById('userName')||{}).value||'';
+  var disp=(document.getElementById('userDisplay')||{}).value||'';
+  var role=(document.getElementById('userRole')||{}).value||'user';
+  var pass=(document.getElementById('userPass')||{}).value||'';
+  if(!name.trim()||!pass){ alert('请输入用户名和初始密码'); return; }
+  var r=await apiCmd('user_add',{username:name.trim(),display_name:disp.trim(),role:role,password:pass});
+  if(r&&r.status==='ok'){
+    document.getElementById('userName').value=''; document.getElementById('userDisplay').value=''; document.getElementById('userPass').value='';
+    bindUsers();
+  } else { alert('添加失败：'+((r&&(r.msg||r.message))||'服务端不可达')); }
+}
+async function wfUserRole(username, role){
+  var r=await apiCmd('user_set_role',{username:username,role:role});
+  if(!(r&&r.status==='ok')){ alert('修改角色失败：'+((r&&(r.msg||r.message))||'服务端不可达')); }
+  bindUsers();
+}
+async function wfUserReset(username){
+  var p=prompt('为 '+username+' 设置新密码（至少 8 位）：','');
+  if(!p) return;
+  var r=await apiCmd('user_reset_password',{username:username,password:p});
+  if(r&&r.status==='ok'){ alert('密码已更新，该账户下次登录需修改'); bindUsers(); }
+  else { alert('重置失败：'+((r&&(r.msg||r.message))||'服务端不可达')); }
+}
+async function wfUserToggle(username, enable){
+  var r=await apiCmd('user_update',{username:username,enabled:enable});
+  if(!(r&&r.status==='ok')){ alert('操作失败：'+((r&&(r.msg||r.message))||'服务端不可达')); }
+  bindUsers();
+}
+async function wfUserDelete(username){
+  if(!confirm('删除用户 '+username+' ？此操作不可恢复')) return;
+  var r=await apiCmd('user_delete',{username:username});
+  if(!(r&&r.status==='ok')){ alert('删除失败：'+((r&&(r.msg||r.message))||'服务端不可达')); }
+  bindUsers();
 }
 /* ===== 命令面板（Ctrl+K） ===== */
 var _lpAll=null,_lpSel=0,_lpCurrent=[];
