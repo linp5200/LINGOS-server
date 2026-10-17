@@ -81,6 +81,7 @@ grub-efi-amd64-bin
 grub-efi-amd64-signed
 grub-pc-bin
 syslinux
+syslinux-utils
 espeak-ng
 ffmpeg
 libcurl4
@@ -91,7 +92,7 @@ libmicrohttpd12
 libssl3
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
-    sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d' config/package-lists/lingos.list.chroot
+    sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
     echo 'grub-efi-arm64-bin' >> config/package-lists/lingos.list.chroot
     echo 'grub-efi-arm64-signed' >> config/package-lists/lingos.list.chroot
 fi
