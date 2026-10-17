@@ -189,6 +189,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
     <div class="ni" data-p="dashboard"><span class="ic">▩</span>仪表盘</div>
     <div class="ni" data-p="media"><span class="ic">♪</span>媒体</div>
     <div class="ni" data-p="kb"><span class="ic">▣</span>知识库</div>
+    <div class="ni" data-p="ingest"><span class="ic">▥</span>投放箱 S16</div>
     <div class="ni" data-p="options"><span class="ic">⚑</span>可选项</div>
   </div>
   <div class="sec">系统</div>
@@ -389,6 +390,30 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
         <div class="lrow"><div class="t"><div class="n" style="color:var(--d)">加载中…（file_list）</div><div class="s">无数据一律显示 --（不模拟）</div></div></div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- 投放箱（S16 外部内容接入/解析） -->
+<div class="page" id="p-ingest">
+  <div class="phead"><div class="l"><div class="k">▍INGEST · S16</div><h1>投放箱</h1></div><div class="r">URL / 文件路径 / 粘贴文本 → 解析切块入库 → 可检索<br>插件：内置 6 类 + /LINGOS/plugins/ingest 自定义</div></div>
+  <div class="card">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="ingSource" placeholder="URL / 文件路径 / RSS 订阅源" style="flex:1;min-width:260px">
+      <select id="ingType" style="width:auto;background:#14171C;color:var(--w);border:1px solid rgba(255,255,255,.16);font-family:var(--mono);font-size:10px;padding:6px">
+        <option value="">自动识别</option><option value="text">文本</option><option value="webpage">网页</option>
+        <option value="pdf">PDF</option><option value="rss">RSS</option><option value="audio">音频转写</option><option value="ocr">图片 OCR</option>
+      </select>
+      <button onclick="wfIngestAdd()" style="width:auto">＋ 接入</button>
+    </div>
+    <textarea id="ingText" placeholder="或直接粘贴要保存的文本…" style="width:100%;margin-top:8px;height:76px;background:#14171C;color:var(--w);border:1px solid rgba(255,255,255,.16);padding:8px;font-family:var(--zh);font-size:12px"></textarea>
+    <div class="toolbar" style="margin-top:8px">
+      <input id="ingSearch" placeholder="检索已接入资料…" oninput="bindIngestSearch()" style="flex:1">
+      <button onclick="bindIngest()" style="width:auto">↻ 刷新</button>
+      <button onclick="bindIngestPlugins()" style="width:auto">插件列表</button>
+      <span class="cnt" id="ingCount">--</span>
+    </div>
+    <div class="listwrap" id="ingList"></div>
+    <div class="evlog" id="ingPlugins"></div>
   </div>
 </div>
 
@@ -1671,7 +1696,7 @@ async function bindData(){
   /* 【0.6.0】端口/更新（真实数据——清除静态假数据） */
   bindPorts(); bindUpdate();
   /* 【0.7.0 P3】命令面板（~130 命令入口总出口） */
-  bindCmdPanel();
+  bindCmdPanel(); bindIngest();
 }
 
 /* ===== 【0.7.0 P3】命令面板 ===== */
@@ -1857,6 +1882,76 @@ function chatStop(){
   if(wsChat&&chatAuthed){ try{ wsChat.send(JSON.stringify({type:'interrupt'})); }catch(e){} }
 }
 
+/* ===== 投放箱（S16 ingest） ===== */
+function _ingList() {
+  var r = document.getElementById('ingList'); return r;
+}
+async function bindIngest(){
+  var r = await apiCmd('ingest_list');
+  var box = _ingList(); if(!box) return;
+  var list = [];
+  if(r && r.status==='ok'){
+    if(Array.isArray(r.data)) list = r.data;
+    else if(r.data && Array.isArray(r.data.data)) list = r.data.data;
+  }
+  setTxt('#ingCount', (r&&r.status==='ok') ? (list.length+' 条资料') : '--');
+  if(!r || r.status!=='ok'){
+    box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--amber)">资料库不可达（ingest_list 失败）</div><div class="s">检查主机 ai_server 是否运行</div></div></div>';
+    return;
+  }
+  if(!list.length){
+    box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">还没有资料（不模拟）</div><div class="s">输入 URL/文件路径或粘贴文本后点「接入」</div></div></div>';
+    return;
+  }
+  box.innerHTML = list.slice(0,50).map(function(d){
+    var id = _esc(d.id||'');
+    var t = new Date((d.created||0)*1000); var tm = isNaN(t.getTime())?'':t.toLocaleString();
+    return '<div class="lrow"><div class="t"><div class="n">'+_esc(d.title||d.source||'(无标题)')+'</div>'
+      +'<div class="s">'+_esc(d.plugin||'?')+' · '+_esc(String(d.chars||0))+' 字符 · '+_esc(String(d.chunks||0))+' 块 · '+_esc(tm)+'</div></div>'
+      +'<button class="ing-del" data-id="'+id+'" style="width:auto">删除</button></div>';
+  }).join('');
+  var dels=box.querySelectorAll('.ing-del');
+  for(var i=0;i<dels.length;i++){ (function(btn){ btn.onclick=function(){ wfIngestDelete(btn.getAttribute('data-id')); }; })(dels[i]); }
+}
+async function bindIngestSearch(){
+  var el=document.getElementById('ingSearch'); var q=(el&&el.value||'').trim();
+  var box=_ingList(); if(!box) return;
+  if(!q){ bindIngest(); return; }
+  var r=await apiCmd('ingest_search',{query:q,limit:10});
+  var hits=(r&&r.status==='ok'&&r.hits)?r.hits:[];
+  setTxt('#ingCount', hits.length+' 条命中');
+  box.innerHTML = hits.length ? hits.map(function(h){
+    return '<div class="lrow"><div class="t"><div class="n">'+_esc(h.title||'')+'</div>'
+      +'<div class="s">'+_esc(h.snippet||'')+'</div></div><span class="tag dim">'+_esc(String(h.score||''))+'</span></div>';
+  }).join('') : '<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">无命中</div><div class="s">检索为关键词+可选语义（LINGOS_EMBEDDING_URL）</div></div></div>';
+}
+async function bindIngestPlugins(){
+  var r=await apiCmd('ingest_plugins'); var box=document.getElementById('ingPlugins'); if(!box) return;
+  var list=(r&&r.status==='ok'&&Array.isArray(r.data))?r.data:[];
+  box.innerHTML = list.length ? list.map(function(p){
+    return '<div class="l"><span class="tm">'+_esc(p.id||'')+'</span><span class="lvl INFO">'+(p.builtin?'内置':'插件')+'</span><span class="msg">'+_esc(p.name||'')+' · '+(p.source_types||[]).join('/')+'</span></div>';
+  }).join('') : '<div class="l"><span class="msg">插件列表不可达</span></div>';
+}
+async function wfIngestAdd(){
+  var srcEl=document.getElementById('ingSource'); var txtEl=document.getElementById('ingText'); var tyEl=document.getElementById('ingType');
+  var src=(srcEl&&srcEl.value||'').trim(); var txt=(txtEl&&txtEl.value||'').trim(); var ty=(tyEl&&tyEl.value||'');
+  if(!src && !txt){ alert('请输入 URL/文件路径，或粘贴文本'); return; }
+  var r=await apiCmd('ingest_add',{source:src,text:txt,type:ty});
+  if(r&&r.status==='ok'){
+    if(srcEl) srcEl.value=''; if(txtEl) txtEl.value='';
+    var jid=(r.job_id||(r.job&&r.job.job_id)||'');
+    alert('已提交接入任务'+(jid?('：'+jid):''));
+    setTimeout(bindIngest,1500);
+  } else {
+    alert('接入失败：'+((r&&(r.msg||r.message))||'服务端不可达'));
+  }
+}
+async function wfIngestDelete(id){
+  if(!id) return;
+  if(!confirm('删除该资料？')) return;
+  await apiCmd('ingest_delete',{doc_id:id});
+  bindIngest();
+}
 /* ===== 命令面板（Ctrl+K） ===== */
 var _lpAll=null,_lpSel=0,_lpCurrent=[];
 function openPalette(){
