@@ -50,7 +50,7 @@ jobs:
             echo "--- container logs ---"
             docker logs lingos-ci | tail -120
             echo "--- in-container logs ---"
-            docker exec lingos-ci sh -c 'ls -la /LINGOS/log 2>/dev/null; tail -80 /LINGOS/log/*.log 2>/dev/null' || true
+            docker exec lingos-ci sh -c 'echo "=== ps ===; ps -ef; echo "=== lingosd.log ===; cat /LINGOS/log/lingosd.log 2>/dev/null; echo "=== supervisor.log ===; cat /LINGOS/log/supervisor.log 2>/dev/null; echo "=== lingos.log tail ===; tail -c 6000 /LINGOS/log/lingos.log 2>/dev/null; echo "=== run dir ===; ls -la /LINGOS/run 2>/dev/null' || true
             docker rm -f lingos-ci
             exit 1
           fi
