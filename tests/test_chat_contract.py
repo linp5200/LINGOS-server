@@ -74,8 +74,28 @@ if __name__ == "__main__":
     test_round_events()
     test_alert_levels()
     test_session_history_param()
+    test_reply_trace()
     print()
     if fail:
         print("FAILED:", len(fail), fail)
         sys.exit(1)
     print("ALL CONTRACT TESTS PASSED")
+
+
+def test_reply_trace():
+    import ai_server
+
+    class FakeConn:
+        def __init__(self):
+            self.lines = []
+
+        def send(self, b):
+            self.lines.append(b.decode('utf-8').strip())
+
+    c = FakeConn()
+    ai_server._reply(c, 'system_info', {'status': 'ok', 'data': {'version': 'x'}})
+    ev = json.loads(c.lines[-1])
+    check('reply.trace_id', bool(ev.get('trace_id')))
+    check('reply.duration_ms', 'duration_ms' in ev)
+    check('reply.server_ts', 'server_ts' in ev)
+    check('reply.cmd', ev.get('cmd') == 'system_info')
