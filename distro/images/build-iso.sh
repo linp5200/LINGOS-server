@@ -9,7 +9,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 ARCHARG=$1
 if [ -z "$ARCHARG" ]; then ARCHARG=$(uname -m); fi
-DIST=$2
+DIST=""
+if [ "$#" -ge 2 ]; then DIST=$2; fi
 if [ -z "$DIST" ]; then DIST=noble; fi
 case "$ARCHARG" in
     x86_64|amd64)  ARCH=x86_64;  DEBARCH=amd64; GRUBPKG=grub-efi-amd64-bin; GRUBTARGET=x86_64-efi; MIRROR=http://archive.ubuntu.com/ubuntu ;;
@@ -43,6 +44,8 @@ lb config \
   --iso-application "LING OS" \
   --iso-volume "LINGOS" \
   --archive-areas "main restricted universe multiverse" \
+  --parent-distribution "$DIST" \
+  --parent-archive-areas "main restricted universe multiverse" \
   --mirror-bootstrap "$MIRROR" \
   --mirror-chroot "$MIRROR" \
   --mirror-binary "$MIRROR" \
