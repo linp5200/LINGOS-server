@@ -310,7 +310,7 @@ VISION_MAIN_SRCS = $(SRC_DIR)/vision/visiond.c
 #   ai_vision  检测/标定/追踪（给 AI 用）—— 独立进程，经帧通道消费 monitor 帧
 MONITOR_MAIN_SRCS = $(SRC_DIR)/monitor/monitord.c \
 $(SRC_DIR)/monitor/ir_control.c \
-$(SRC_DIR)/monitor/osd_overlay.c \
+$(SRC_DIR)/monitor/osd_overlay.c
 MONITOR_CORE_SRCS = $(SRC_DIR)/monitor/camera_input.c                     $(SRC_DIR)/monitor/frame_channel.c                     $(SRC_DIR)/monitor/monitor_config.c
 
 AI_VISION_MAIN_SRCS = $(SRC_DIR)/vision/ai_visiond.c
@@ -506,7 +506,6 @@ lingos_alertd: $(ALERT_MAIN_SRCS) $(ALERT_CORE_SRCS) $(CORE_DAEMON)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread -ldl -lm
 
 lingos_visiond: $(VISION_MAIN_SRCS) $(VISION_CORE_SRCS) $(CORE_DAEMON)
-	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread -lsqlite3 -lmlingos_visiond: $(VISION_MAIN_SRCS) $(VISION_CORE_SRCS) $(CORE_DAEMON)
 	$(CC) $(CFLAGS) $(INCLUDES) $^ -o $@ $(MINIMAL_LDFLAGS) -lpthread -lsqlite3 -lm
 
 # 【2026-10-10】监控系统 / AI 识别引擎（拆分为独立进程）
