@@ -109,7 +109,6 @@ INCLUDES = -I$(SRC_DIR) -I$(SRC_DIR)/common -I$(SRC_DIR)/drivers -I$(SRC_DIR)/ne
            -I$(SRC_DIR)/core -I$(SRC_DIR)/core/plugin -I$(SRC_DIR)/core/snapshot \
            -I$(SRC_DIR)/alert -I$(SRC_DIR)/firewall -I$(SRC_DIR)/daemon \
            -I$(SRC_DIR)/include -I$(SRC_DIR)/tui \
-           -I$(SRC_DIR)/tui/desktop -I$(SRC_DIR)/tui/widgets \
            -I$(SRC_DIR)/vision -I$(SRC_DIR)/voice -I$(SRC_DIR)/rules \
            -I$(SRC_DIR)/registry -I$(SRC_DIR)/supervisor -I$(SRC_DIR)/gui \
            -I$(SRC_DIR)/ui \
@@ -410,19 +409,7 @@ TUI_SRCS = $(SRC_DIR)/tui/tui_controls.c \
            $(SRC_DIR)/tui/tui_renderer.c \
            $(SRC_DIR)/tui/tui_resource.c \
            $(SRC_DIR)/tui/tui_signal.c \
-           $(SRC_DIR)/tui/tui_wizard.c \
-           $(SRC_DIR)/tui/desktop/tui_app_launcher.c \
-           $(SRC_DIR)/tui/desktop/tui_desktop.c \
-           $(SRC_DIR)/tui/desktop/tui_desktop_events.c \
-           $(SRC_DIR)/tui/desktop/tui_desktop_icons.c \
-           $(SRC_DIR)/tui/desktop/tui_desktop_menu.c \
-           $(SRC_DIR)/tui/desktop/tui_desktop_render.c \
-           $(SRC_DIR)/tui/desktop/tui_desktop_taskbar.c \
-           $(SRC_DIR)/tui/desktop/tui_desktop_window.c \
-           $(SRC_DIR)/tui/widgets/widget_chat.c \
-           $(SRC_DIR)/tui/widgets/widget_files.c \
-           $(SRC_DIR)/tui/widgets/widget_monitor.c \
-           $(SRC_DIR)/tui/widgets/widget_terminal.c
+           $(SRC_DIR)/tui/tui_wizard.c
 else
 # 【0.5.0】TUI 关闭：仅编译「降级桩」，保证外部引用的符号可解析
 TUI_SRCS = $(SRC_DIR)/tui/tui_disabled_stub.c
