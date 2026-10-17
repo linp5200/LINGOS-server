@@ -11,7 +11,7 @@
 #   三内核守护随主包构建：alertd=预警生命线 / visiond=视觉内核 / voiced=语音内核
 TARGETS = lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond lingos_voiced lingos_monitor lingos_ai_vision lingosctl
 
-all: $(TARGETS) install_python_script
+all: $(TARGETS)
 
 # ================================================================
 # 编译器与标志
@@ -543,6 +543,7 @@ test-render:
 # ================================================================
 
 install_python_script:
+	@mkdir -p /LINGOS/bin 2>/dev/null || { echo "skip install_python_script: /LINGOS 不可写（非设备环境，构建不需要）"; exit 0; }
 	@mkdir -p /LINGOS/bin
 	# 【0.6.0 修复】原为固定文件清单（缺 paths.py/permission_gateway/skill_install 等
 	# 后续新增模块 → ai_server 启动即 ModuleNotFoundError: paths）——改为全量复制
