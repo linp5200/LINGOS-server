@@ -313,6 +313,44 @@ def plugin_list() -> List[Dict[str, Any]]:
     return out
 
 
+EMBEDDING_URL = os.environ.get("LINGOS_EMBEDDING_URL", "")
+EMBEDDING_MODEL = os.environ.get("LINGOS_EMBEDDING_MODEL", "")
+
+
+def _embed_texts(texts):
+    """可选向量化：配置 LINGOS_EMBEDDING_URL（OpenAI 兼容 /embeddings）时启用；
+    未配置或失败返回 None（诚实回退关键词检索，不伪造向量）。TODO(seam:S16)"""
+    if not EMBEDDING_URL or not texts:
+        return None
+    try:
+        body = json.dumps({"model": EMBEDDING_MODEL or "default",
+                           "input": [t[:4000] for t in texts]}).encode("utf-8")
+        req = urllib.request.Request(EMBEDDING_URL, data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        data = d.get("data") or []
+        vecs = [x.get("embedding") for x in data]
+        if vecs and all(isinstance(v, list) for v in vecs) and len(vecs) == len(texts):
+            return vecs
+    except Exception:
+        return None
+    return None
+
+
+def _cosine(a, b):
+    try:
+        n = min(len(a), len(b))
+        dot = sum(a[i] * b[i] for i in range(n))
+        na = sum(x * x for x in a[:n]) ** 0.5
+        nb = sum(x * x for x in b[:n]) ** 0.5
+        if na <= 0 or nb <= 0:
+            return 0.0
+        return dot / (na * nb)
+    except Exception:
+        return 0.0
+
+
 def _chunk_text(text: str) -> List[str]:
     text = (text or "").strip()
     if not text:
@@ -390,6 +428,14 @@ def _run_job(job: Dict[str, Any], plugin_key: str) -> None:
             "meta": doc.get("meta", {}),
             "text": text,
         }
+        # 【S16】可选向量化（未配置 embedding 时保持关键词检索）
+        try:
+            _vecs = _embed_texts(chunks)
+            if _vecs:
+                doc_rec["vectors"] = _vecs
+                doc_rec["embedding_model"] = EMBEDDING_MODEL or "default"
+        except Exception:
+            pass
         _ensure_dirs()
         with open(os.path.join(DOCS_DIR, doc_id + ".json"), "w", encoding="utf-8") as f:
             json.dump(doc_rec, f, ensure_ascii=False)
@@ -467,6 +513,13 @@ def search(query: str, limit: int = 5) -> Dict[str, Any]:
     idx = _load_index()
     hits: List[Dict[str, Any]] = []
     terms = [t for t in re.split(r"\s+", q) if t][:6]
+    qvec = None
+    try:
+        _qv = _embed_texts([q])
+        if _qv:
+            qvec = _qv[0]
+    except Exception:
+        qvec = None
     for meta in idx.get("docs", [])[:500]:
         try:
             with open(_doc_path(meta["id"]), encoding="utf-8") as f:
@@ -475,14 +528,29 @@ def search(query: str, limit: int = 5) -> Dict[str, Any]:
             continue
         text = str(doc.get("text") or "")
         low = text.lower()
-        score = sum(low.count(t) for t in terms)
-        if score <= 0 and q not in low:
-            continue
+        kw_score = sum(low.count(t) for t in terms)
+        sem_score = 0.0
+        if qvec and doc.get("vectors"):
+            try:
+                sem_score = max(_cosine(qvec, v) for v in doc["vectors"] if isinstance(v, list))
+            except Exception:
+                sem_score = 0.0
+        if qvec:
+            score = sem_score
+            if sem_score < 0.2 and kw_score <= 0:
+                continue
+        else:
+            score = kw_score
+            if score <= 0 and q not in low:
+                continue
         pos = low.find(terms[0]) if terms else low.find(q)
         pos = max(0, pos)
         snippet = text[max(0, pos - 60):pos + 160].replace("\n", " ")
-        hits.append({"id": doc.get("id"), "title": doc.get("title"), "source": doc.get("source"),
-                     "plugin": doc.get("plugin"), "score": score, "snippet": snippet})
+        hits.append({"id": doc.get("id"), "title": doc.get("title"),
+                     "source": doc.get("source"), "plugin": doc.get("plugin"),
+                     "score": round(float(score), 4),
+                     "semantic": bool(qvec and doc.get("vectors")),
+                     "snippet": snippet})
         if len(hits) >= max(1, min(20, int(limit or 5))):
             break
     hits.sort(key=lambda x: x["score"], reverse=True)
