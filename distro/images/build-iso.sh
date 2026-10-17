@@ -25,7 +25,7 @@ if [ -z "$BUNDLE" ]; then
     exit 1
 fi
 if ! command -v lb >/dev/null 2>&1; then
-    echo "需要 live-build：apt-get install -y live-build debootstrap squashfs-tools xorriso mtools dosfstools rsync" >&2
+    echo "需要 live-build：apt-get install -y live-build debootstrap squashfs-tools xorriso mtools dosfstools rsync syslinux-utils isolinux" >&2
     exit 1
 fi
 

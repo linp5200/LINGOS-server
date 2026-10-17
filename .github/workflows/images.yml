@@ -88,7 +88,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y live-build debootstrap squashfs-tools xorriso \
-            mtools dosfstools rsync genisoimage isolinux syslinux-common
+            mtools dosfstools rsync genisoimage isolinux syslinux-common syslinux-utils
 
       - name: 编译（pipefail）
         run: |
@@ -121,7 +121,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y live-build debootstrap squashfs-tools xorriso \
-            mtools dosfstools rsync genisoimage isolinux syslinux-common
+            mtools dosfstools rsync genisoimage isolinux syslinux-common syslinux-utils
 
       - name: 编译（pipefail）
         run: |
