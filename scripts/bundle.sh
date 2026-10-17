@@ -78,6 +78,16 @@ for bin in lingos_linux lingosd lingos_supervisor lingos_alertd lingos_visiond l
 done
 
 # 复制库到 lib/（保留 SONAME 文件名）
+# ---------- 1.5 关键二进制校验（防 make 失败但打包继续 -> 残包） ----------
+MISSING_CRITICAL=""
+for b in lingos_linux lingosd lingos_supervisor; do
+    [ -x "$DEST/$b" ] || MISSING_CRITICAL="$MISSING_CRITICAL $b"
+done
+if [ -n "$MISSING_CRITICAL" ]; then
+    echo "!! 关键二进制缺失:$MISSING_CRITICAL —— 先确保 make 成功" >&2
+    exit 1
+fi
+
 echo "==> 捆绑动态库:"
 for lib in $(echo "$LIBLIST" | tr ' ' '\n' | sort -u); do
     if [ -f "$lib" ]; then
