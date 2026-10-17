@@ -22,6 +22,7 @@ if [ ! -s /LINGOS/system/config/config.json ]; then
     echo "[entrypoint] seeded config.json (headless default)"
 fi
 
+touch /LINGOS/log/lingos.log /LINGOS/log/lingosd.log /LINGOS/log/supervisor.log /LINGOS/log/ai_server.log
 cd /LINGOS || exit 1
 
 if [ -x /LINGOS/lingos.sh ]; then
@@ -30,5 +31,5 @@ else
     /LINGOS/bin/lingos_linux --fast || echo "[entrypoint] lingos_linux 退出"
 fi
 
-touch /LINGOS/log/lingos.log
-exec tail -n +1 -F /LINGOS/log/lingos.log
+# 前台保活 + 所有关键日志进 docker logs（便于 CI/排障）
+exec tail -n +1 -F /LINGOS/log/lingos.log /LINGOS/log/lingosd.log /LINGOS/log/supervisor.log /LINGOS/log/ai_server.log
