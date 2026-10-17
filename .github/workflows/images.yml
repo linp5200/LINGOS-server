@@ -161,10 +161,27 @@ jobs:
       - name: 列出产物
         run: find /tmp/isos -type f -ls
 
+      - name: 拆分超过 2GiB 的 ISO（GitHub Release 单资产上限）
+        run: |
+          mkdir -p /tmp/rel
+          for f in $(find /tmp/isos -name "*.iso"); do
+            sz=$(stat -c%s "$f")
+            base=$(basename "$f")
+            if [ "$sz" -gt 1992294400 ]; then
+              split -b 1900M -d -a 1 "$f" "/tmp/rel/$base.part"
+              echo "split $base ($sz bytes)" > "/tmp/rel/$base.合并说明.txt"
+              echo "在 Termux/VTERM 中执行：" >> "/tmp/rel/$base.合并说明.txt"
+              echo "cat $base.part* > $base" >> "/tmp/rel/$base.合并说明.txt"
+            else
+              cp -n "$f" /tmp/rel/
+            fi
+          done
+          ls -lh /tmp/rel
+
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            /tmp/isos/**/*.iso
+            /tmp/rel/*
           generate_release_notes: true
           overwrite_files: true
