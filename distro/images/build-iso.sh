@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 # ============================================================
-# LING OS 安装 ISO 构建（Ubuntu noble live-build，UEFI+BIOS hybrid）
+# LING OS 安装 ISO 构建（Ubuntu noble live-build，UEFI；x86 走 live-build，arm64 用 grub-mkrescue 重制）
 # 用法：sudo bash distro/images/build-iso.sh [x86_64|aarch64] [发行版代号]
-# 前置：dist/*allbin*.tar.gz 存在；root；网络（拉基础包）
+# 前置：dist/*allbin*.tar.gz 存在；root；网络
 # 产物：dist/images/lingos-installer-<arch>.iso
 # ============================================================
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 ARCHARG=$1
 if [ -z "$ARCHARG" ]; then ARCHARG=$(uname -m); fi
-DIST=""
-if [ "$#" -ge 2 ]; then DIST=$2; fi
+DIST=$2
 if [ -z "$DIST" ]; then DIST=noble; fi
-BINIMG=iso
 case "$ARCHARG" in
-    x86_64|amd64)  ARCH=x86_64;  DEBARCH=amd64; GRUBPKG=grub-efi-amd64-bin; GRUBTARGET=x86_64-efi; MIRROR=http://archive.ubuntu.com/ubuntu;;
-    aarch64|arm64) ARCH=aarch64; DEBARCH=arm64; GRUBPKG=grub-efi-arm64-bin; GRUBTARGET=arm64-efi;  MIRROR=http://ports.ubuntu.com/ubuntu-ports ;;
+    x86_64|amd64)  ARCH=x86_64;  DEBARCH=amd64; GRUBTARGET=x86_64-efi; MIRROR=http://archive.ubuntu.com/ubuntu ;;
+    aarch64|arm64) ARCH=aarch64; DEBARCH=arm64; GRUBTARGET=arm64-efi;  MIRROR=http://ports.ubuntu.com/ubuntu-ports ;;
     *) echo "unsupported arch: $ARCHARG" >&2; exit 1 ;;
 esac
 OUT=$ROOT/dist/images
@@ -26,7 +24,7 @@ if [ -z "$BUNDLE" ]; then
     exit 1
 fi
 if ! command -v lb >/dev/null 2>&1; then
-    echo "需要 live-build：apt-get install -y live-build debootstrap squashfs-tools xorriso mtools dosfstools rsync syslinux-utils isolinux" >&2
+    echo "需要 live-build：apt-get install -y live-build debootstrap squashfs-tools xorriso mtools dosfstools rsync" >&2
     exit 1
 fi
 
@@ -38,8 +36,7 @@ lb config \
   --mode ubuntu \
   --distribution "$DIST" \
   --architecture "$DEBARCH" \
-  --binary-images "$BINIMG" \
-  --bootloader grub-efi \
+  --binary-images iso \
   --apt-recommends false \
   --memtest none \
   --iso-application "LING OS" \
@@ -108,7 +105,7 @@ cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/et
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
 
-# ---------- chroot hook ----------
+# ---------- chroot hook：安装全捆 + 启用自动安装器 ----------
 cat > config/hooks/live/0100-lingos.hook.chroot <<'HOOK'
 #!/bin/sh
 set -e
@@ -127,19 +124,25 @@ chmod +x config/hooks/live/0100-lingos.hook.chroot
 echo "==> lb build（10-30 分钟，需网络）"
 lb build
 
+# ============================================================
+# arm64：live-build 无 bootloader 支持 → 用 chroot 生成 squashfs +
+# grub-mkrescue 重建带 UEFI El Torito 的可启动 ISO
+# ============================================================
 if [ "$DEBARCH" = "arm64" ]; then
-    echo "==> arm64: live-build 对 arm64 无 bootloader 支持，改用 grub-mkrescue 重制 UEFI 可启动 ISO"
+    echo "==> arm64: live-build 无 bootloader，改为 chroot squashfs + grub-mkrescue 重制 UEFI ISO"
     BIN_DIR="$WORK/binary"
-    if [ ! -f "$BIN_DIR/live/vmlinuz" ]; then
-        KERNEL=$(ls "$WORK"/chroot/boot/vmlinuz-* 2>/dev/null | head -1 || true)
-        INITRD=$(ls "$WORK"/chroot/boot/initrd.img-* 2>/dev/null | head -1 || true)
-        [ -n "$KERNEL" ] && cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
-        [ -n "$INITRD" ] && cp -f "$INITRD" "$BIN_DIR/live/initrd.img"
-    fi
-    if [ ! -f "$BIN_DIR/live/filesystem.squashfs" ]; then
-        echo "错误：binary/live/filesystem.squashfs 不存在，无法重制 ISO" >&2
+    CHROOT_DIR="$WORK/chroot"
+    mkdir -p "$BIN_DIR/live"
+    KERNEL=$(ls "$CHROOT_DIR"/boot/vmlinuz-* 2>/dev/null | head -1 || true)
+    INITRD=$(ls "$CHROOT_DIR"/boot/initrd.img-* 2>/dev/null | head -1 || true)
+    if [ -z "$KERNEL" ] || [ -z "$INITRD" ]; then
+        echo "错误：chroot/boot 下缺少 vmlinuz/initrd，无法生成 live ISO" >&2
         exit 1
     fi
+    cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
+    cp -f "$INITRD" "$BIN_DIR/live/initrd.img"
+    echo "==> mksquashfs chroot -> binary/live/filesystem.squashfs（gzip）"
+    mksquashfs "$CHROOT_DIR" "$BIN_DIR/live/filesystem.squashfs" -comp gzip -noappend -e boot proc sys dev run tmp >/dev/null
     mkdir -p "$BIN_DIR/boot/grub"
     cat > "$BIN_DIR/boot/grub/grub.cfg" <<GRUBCFG
 set default=0
@@ -151,15 +154,16 @@ menuentry "LING OS 安装器 (aarch64)" {
 GRUBCFG
     grub-mkrescue --modules="part_gpt part_msdos fat iso9660 normal linux search search_fs_file search_fs_uuid search_label configfile echo serial terminal all_video" \
         -o "$OUT/lingos-installer-$ARCH.iso" "$BIN_DIR" -- -volid LINGOS
-    rm -rf "$WORK"
     if ! xorriso -indev "$OUT/lingos-installer-$ARCH.iso" -report_el_torito plain 2>/dev/null | grep -q "UEFI"; then
         echo "错误：grub-mkrescue 产物没有 UEFI El Torito 引导项" >&2
         exit 1
     fi
+    rm -rf "$WORK"
     echo "OK: $OUT/lingos-installer-$ARCH.iso (grub-mkrescue)"
     exit 0
 fi
 
+# x86_64：live-build 自带 bootloader
 ISO=$(ls -1 *.hybrid.iso 2>/dev/null | head -1 || true)
 if [ -z "$ISO" ]; then ISO=$(ls -1 *.iso 2>/dev/null | head -1 || true); fi
 if [ -z "$ISO" ]; then echo "构建失败：未找到 ISO 产物" >&2; exit 1; fi
