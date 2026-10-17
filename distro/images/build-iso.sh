@@ -139,9 +139,22 @@ if [ "$DEBARCH" = "arm64" ]; then
     if [ -z "$LBISO" ]; then echo "错误：live-build 未产出 ISO" >&2; exit 1; fi
     ISO_ROOT="$WORK/isoroot"
     rm -rf "$ISO_ROOT"; mkdir -p "$ISO_ROOT"
-    xorriso -osirrox on -indev "$LBISO" -extract / "$ISO_ROOT" >/dev/null 2>&1
-    if [ ! -f "$ISO_ROOT/live/vmlinuz" ] || [ ! -f "$ISO_ROOT/live/initrd.img" ]; then
-        echo "错误：live ISO 根缺少 live/vmlinuz 或 live/initrd.img" >&2
+    xorriso -osirrox on -indev "$LBISO" -extract / "$ISO_ROOT" >/dev/null 2>&1 || true
+    echo "=== ISO 根 /live 内容 ==="; ls -la "$ISO_ROOT/live" 2>/dev/null || true
+    mkdir -p "$ISO_ROOT/live"
+    # live-build 未复制 kernel/initrd 时，从 chroot/boot 补
+    if [ ! -f "$ISO_ROOT/live/vmlinuz" ]; then
+        KERNEL=$(ls "$WORK"/chroot/boot/vmlinuz-* 2>/dev/null | head -1 || true)
+        INITRD=$(ls "$WORK"/chroot/boot/initrd.img-* 2>/dev/null | head -1 || true)
+        if [ -z "$KERNEL" ] || [ -z "$INITRD" ]; then
+            echo "错误：ISO 无 live/vmlinuz 且 chroot/boot 也缺 kernel/initrd" >&2
+            exit 1
+        fi
+        cp -f "$KERNEL" "$ISO_ROOT/live/vmlinuz"
+        cp -f "$INITRD" "$ISO_ROOT/live/initrd.img"
+    fi
+    if ! ls "$ISO_ROOT"/live/*.squashfs >/dev/null 2>&1; then
+        echo "错误：ISO 根缺少 live/*.squashfs" >&2
         exit 1
     fi
     mkdir -p "$ISO_ROOT/boot/grub"
