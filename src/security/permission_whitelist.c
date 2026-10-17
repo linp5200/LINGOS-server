@@ -55,9 +55,13 @@ int permission_whitelist_load(void) {
         LOG_DEBUG_T("PermWhitelist", "Load", "NotFound", "whitelist not found, creating default");
         g_whitelist_root = cJSON_CreateObject();
         cJSON_AddItemToObject(g_whitelist_root, "apps", cJSON_CreateArray());
-        permission_whitelist_save();
         g_loaded = 1;
         pthread_mutex_unlock(&g_whitelist_lock);
+        /* 【2026-10-17 修复】原实现在持锁状态下调用 save()（同一非递归互斥锁）
+         * → 冷启动（白名单文件不存在）时自死锁，lingosd 卡死在 init，
+         *   导致 8080/2939 永远不监听、容器/新设备首启失败。
+         *   改为：先解锁，再保存。 */
+        permission_whitelist_save();
         return 0;
     }
 
