@@ -85,6 +85,20 @@ CI：GitHub Actions（build-bundle，双架构全量包 + Release 资产）。
 - [DEPENDENCIES.md](DEPENDENCIES.md)：依赖清单
 - [docs/ARCHITECTURE_系统类目.md](docs/ARCHITECTURE_系统类目.md)：系统类目架构
 - [docs/PLUGIN_ARCHITECTURE.md](docs/PLUGIN_ARCHITECTURE.md)：插件化架构（含外部内容解析扩展设计基线）
+
+## 容器 / VM / 安装 ISO（打包形态）
+
+本项目除直跑全捆包外，已提供三层系统级交付：
+
+- **OCI 容器镜像（已 CI 验证）**：`distro/images/Dockerfile` + `entrypoint.sh`，
+  CI 中完成「编译 → 全捆 → docker build → 启动容器 → `/system/health` 探活 → 镜像 artifact」。
+  本地：`make && RELEASE_VER=0.9.0 bash scripts/bundle.sh dist && bash distro/images/build-container.sh`。
+- **VM 镜像（qcow2）**：`distro/images/build-vm-qcow2.sh`（debootstrap + 全捆 + GRUB/cloud-init）。
+- **安装 ISO**：`distro/images/build-iso.sh`（live-build：UEFI+BIOS hybrid，含全捆离线包）。
+
+详见 [distro/images/README.md](distro/images/README.md) 与项目文档《LINGOS-系统镜像与打包方案》。
+注意：`.sio` 不是标准格式，安装镜像应为 **.iso**；VM 镜像常用 **qcow2/ova**。
+
 - [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md)：HTTP / WebSocket / VNC 远程访问矩阵
 - [distro/desktop/README.md](distro/desktop/README.md)：Wayland 桌面（labwc/waybar/wofi/kiosk/wayvnc）
 - webui/preview/theme-preview.html：三种 UI 方向预览（A 静默深色 / B 暖白家居 / C 诺玛 HUD）
