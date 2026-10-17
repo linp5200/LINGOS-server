@@ -635,15 +635,11 @@ static void handle_startup_command(const char *args) {
 
 /* FTF[处理 desktop 命令] */
 static void handle_desktop_command(void) {
-    uart_puts(tr("Switching to TUI Desktop...\n", "正在切换到 TUI 桌面...\n"));
-    LOG_INFO_T("Shell", "Desktop", "Enter", "User requested TUI desktop");
-    extern int tui_desktop_run(void);
-    int ret = tui_desktop_run();
-    if (ret == 0) {
-        LOG_INFO_T("Shell", "Desktop", "OK", "TUI desktop exited normally");
-    } else {
-        LOG_WARN_T("Shell", "Desktop", "Fail", "TUI desktop exited with error %d", ret);
-    }
+    /* 【2026-10-17】TUI 桌面已退役（tag: legacy-tui-0.9.0）——改用 WebUI / Wayland 桌面 */
+    uart_puts(tr("TUI 桌面已退役，请使用 WebUI（浏览器 /ui）或 Wayland 桌面（distro/desktop）。",
+                 "TUI desktop retired — use WebUI (/ui) or Wayland desktop (distro/desktop)."));
+    uart_puts("\n");
+    LOG_WARN_T("Shell", "Desktop", "Retired", "desktop command refused: TUI retired");
 }
 
 /* FTF[显示帮助信息] */

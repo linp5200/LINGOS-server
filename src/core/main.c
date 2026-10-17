@@ -90,7 +90,6 @@
 #include "../config/config_renderer.h"
 #include "../config/config_core.h"   /* 用于配置加载和语言同步 */
 
-extern int tui_desktop_run(void);
 extern int ensure_daemon_running(void);
 extern int ensure_ai_server_running(void);
 
@@ -1636,14 +1635,10 @@ after_wizard:
     LOG_INFO_T("Main", "Startup", "Mode", "startup mode: %s", startup_mode_name(mode));
 
     if (mode == STARTUP_MODE_TUI) {
-        LOG_INFO_T("Main", "Startup", "Mode", "Starting TUI Desktop");
-        uart_puts(tr("Starting TUI Desktop...\n", "正在启动 TUI 桌面...\n"));
-        int tui_ret = tui_desktop_run();
-        if (tui_ret == 0) {
-            LOG_INFO_T("Main", "Exit", "TUI", "TUI Desktop exited normally");
-        } else {
-            LOG_WARN_T("Main", "Exit", "TUI", "TUI Desktop exited with error %d", tui_ret);
-        }
+        /* 【2026-10-17】TUI 桌面已退役（tag: legacy-tui-0.9.0）——改用 WebUI kiosk / Wayland 桌面 */
+        LOG_WARN_T("Main", "Startup", "TUI", "TUI desktop retired (legacy-tui-0.9.0) — falling back to shell");
+        uart_puts(tr("TUI 桌面已退役，请使用 WebUI/桌面模式；已回退到 Shell。", "TUI desktop retired — use WebUI/desktop; falling back to shell."));
+        uart_puts("\n");
         shell_run();
     } else {
         LOG_INFO_T("Main", "Init", "Shell", "Entering LING Shell");
