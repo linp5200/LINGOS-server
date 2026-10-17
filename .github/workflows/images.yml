@@ -120,7 +120,7 @@ jobs:
       - name: 安装 live-build 工具链
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap squashfs-tools xorriso \
+          sudo apt-get install -y live-build debootstrap squashfs-tools xorriso grub-efi-arm64-bin grub2-common \
             mtools dosfstools rsync genisoimage
 
       - name: 编译（pipefail）

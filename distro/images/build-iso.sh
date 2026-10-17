@@ -127,6 +127,35 @@ chmod +x config/hooks/live/0100-lingos.hook.chroot
 echo "==> lb build（10-30 分钟，需网络）"
 lb build
 
+if [ "$DEBARCH" = "arm64" ]; then
+    echo "==> arm64: live-build 对 arm64 无 bootloader 支持，改用 grub-mkrescue 重制 UEFI 可启动 ISO"
+    BIN_DIR="$WORK/binary"
+    if [ ! -f "$BIN_DIR/live/vmlinuz" ]; then
+        KERNEL=$(ls "$WORK"/chroot/boot/vmlinuz-* 2>/dev/null | head -1 || true)
+        INITRD=$(ls "$WORK"/chroot/boot/initrd.img-* 2>/dev/null | head -1 || true)
+        [ -n "$KERNEL" ] && cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
+        [ -n "$INITRD" ] && cp -f "$INITRD" "$BIN_DIR/live/initrd.img"
+    fi
+    if [ ! -f "$BIN_DIR/live/filesystem.squashfs" ]; then
+        echo "错误：binary/live/filesystem.squashfs 不存在，无法重制 ISO" >&2
+        exit 1
+    fi
+    mkdir -p "$BIN_DIR/boot/grub"
+    cat > "$BIN_DIR/boot/grub/grub.cfg" <<GRUBCFG
+set default=0
+set timeout=5
+menuentry "LING OS 安装器 (aarch64)" {
+    linux /live/vmlinuz boot=live components quiet splash console=tty0 console=ttyAMA0,115200 lingos.autostart=1
+    initrd /live/initrd.img
+}
+GRUBCFG
+    grub-mkrescue --modules="part_gpt part_msdos fat iso9660 normal linux search search_fs_file search_fs_uuid search_label configfile echo serial terminal all_video" \
+        -o "$OUT/lingos-installer-$ARCH.iso" "$BIN_DIR" -- -volid LINGOS
+    rm -rf "$WORK"
+    echo "OK: $OUT/lingos-installer-$ARCH.iso (grub-mkrescue)"
+    exit 0
+fi
+
 ISO=$(ls -1 *.hybrid.iso 2>/dev/null | head -1 || true)
 if [ -z "$ISO" ]; then ISO=$(ls -1 *.iso 2>/dev/null | head -1 || true); fi
 if [ -z "$ISO" ]; then echo "构建失败：未找到 ISO 产物" >&2; exit 1; fi
