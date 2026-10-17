@@ -29,6 +29,7 @@ sys.path.insert(0, PY)
 
 TMP = tempfile.mkdtemp(prefix="lingos_test_")
 os.environ["LINGOS_INGEST_ROOT"] = os.path.join(TMP, "ingest")
+os.environ["LINGOS_ROOT"] = os.path.join(TMP, "root")
 PLUG = os.path.join(PY, "ingest_plugins")  # 直接指向仓库内示例插件目录（避免 tmp 复制兼容问题）
 os.environ["LINGOS_INGEST_PLUGINS"] = PLUG
 
@@ -199,6 +200,30 @@ def test_remote():
     check("remote.status", r.get("status") == "ok" and all(k in d for k in ("http", "ws", "vnc")))
 
 
+def test_users():
+    """用户管理：默认 owner / 密码 PBKDF2 / 角色 / 保护最后一个 owner。"""
+    import user_manager as um
+    d = um.cmd_user_list()
+    check("users.default_owner", d.get("count", 0) >= 1 and
+          any(u.get("role") == "owner" for u in d.get("data", [])))
+    check("users.no_hash_leak", all("pass_hash" not in u for u in d.get("data", [])))
+    r = um.add_user("tester", "password123", "user", "Tester")
+    check("users.add", r.get("status") == "ok", str(r)[:120])
+    check("users.duplicate_rejected", um.add_user("tester", "password123").get("status") == "error")
+    check("users.weak_password_rejected", um.add_user("weakuser", "123").get("status") == "error")
+    check("users.invalid_name_rejected", um.add_user("1bad", "password123").get("status") == "error")
+    check("users.verify_ok", um.verify_user("tester", "password123") is not None)
+    check("users.verify_bad", um.verify_user("tester", "wrongpass") is None)
+    check("users.set_role", um.set_role("tester", "admin").get("status") == "ok")
+    check("users.reset_password",
+          um.set_password("tester", "newpassword1").get("status") == "ok" and
+          um.verify_user("tester", "newpassword1") is not None)
+    check("users.delete", um.delete_user("tester").get("status") == "ok")
+    check("users.last_owner_guard", um.delete_user("admin").get("status") == "error")
+    st = um.cmd_user_stats()
+    check("users.stats", st.get("status") == "ok" and st.get("data", {}).get("total", 0) >= 1)
+
+
 if __name__ == "__main__":
     print("TMP:", TMP)
     test_dispatch()
@@ -206,6 +231,7 @@ if __name__ == "__main__":
     test_mcp()
     test_server_functions()
     test_webui()
+    test_users()
     test_remote()
     print()
     print("RESULT: PASS=%d FAIL=%d" % (len(PASS), len(FAIL)))

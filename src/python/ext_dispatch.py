@@ -120,6 +120,15 @@ EXT_MAP = {
     "remote_status":          ("remote_access", "cmd_remote_status"),
     "vnc_start":          ("remote_access", "cmd_vnc_start"),
     "vnc_stop":          ("remote_access", "cmd_vnc_stop"),
+
+    # ---------- 用户管理（2026-10-17）----------
+    "user_list":           ("user_manager", "cmd_user_list"),
+    "user_add":            ("user_manager", "cmd_user_add"),
+    "user_update":         ("user_manager", "cmd_user_update"),
+    "user_set_role":       ("user_manager", "cmd_user_set_role"),
+    "user_reset_password": ("user_manager", "cmd_user_reset_password"),
+    "user_delete":         ("user_manager", "cmd_user_delete"),
+    "user_stats":          ("user_manager", "cmd_user_stats"),
 }
 
 # 已加载的模块缓存
