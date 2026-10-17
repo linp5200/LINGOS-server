@@ -404,6 +404,8 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
         <option value="pdf">PDF</option><option value="rss">RSS</option><option value="audio">音频转写</option><option value="ocr">图片 OCR</option>
       </select>
       <button onclick="wfIngestAdd()" style="width:auto">＋ 接入</button>
+      <button onclick="document.getElementById('ingFile').click()" style="width:auto">上传文件</button>
+      <input type="file" id="ingFile" style="display:none" onchange="wfIngestUpload(this)">
     </div>
     <textarea id="ingText" placeholder="或直接粘贴要保存的文本…" style="width:100%;margin-top:8px;height:76px;background:#14171C;color:var(--w);border:1px solid rgba(255,255,255,.16);padding:8px;font-family:var(--zh);font-size:12px"></textarea>
     <div class="toolbar" style="margin-top:8px">
@@ -1932,6 +1934,25 @@ async function bindIngestPlugins(){
     return '<div class="l"><span class="tm">'+_esc(p.id||'')+'</span><span class="lvl INFO">'+(p.builtin?'内置':'插件')+'</span><span class="msg">'+_esc(p.name||'')+' · '+(p.source_types||[]).join('/')+'</span></div>';
   }).join('') : '<div class="l"><span class="msg">插件列表不可达</span></div>';
 }
+async function wfIngestUpload(inp){
+  var f = inp && inp.files && inp.files[0];
+  if(!f) return;
+  var safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  var path = '/tmp/' + Date.now() + '_' + safe;
+  try {
+    var r = await fetch('/api/files/upload?path=' + encodeURIComponent(path), {method:'POST', body:f});
+    if(!r.ok){ alert('上传失败 HTTP ' + r.status); return; }
+    var res = await apiCmd('ingest_add', {source:path});
+    if(res && res.status==='ok'){
+      alert('已上传并提交解析：' + cleanName(f.name));
+      setTimeout(bindIngest, 1500);
+    } else {
+      alert('解析任务失败：' + ((res && (res.msg||res.message)) || '服务端不可达'));
+    }
+  } catch(e) { alert('上传异常：' + e); }
+  finally { try { inp.value=''; } catch(e){} }
+}
+function cleanName(n){ return String(n||'').replace(/[<>&"']/g,''); }
 async function wfIngestAdd(){
   var srcEl=document.getElementById('ingSource'); var txtEl=document.getElementById('ingText'); var tyEl=document.getElementById('ingType');
   var src=(srcEl&&srcEl.value||'').trim(); var txt=(txtEl&&txtEl.value||'').trim(); var ty=(tyEl&&tyEl.value||'');
