@@ -133,44 +133,25 @@ lb build
 # grub-mkrescue 重建带 UEFI El Torito 的可启动 ISO
 # ============================================================
 if [ "$DEBARCH" = "arm64" ]; then
-    echo "==> arm64: live-build 无 bootloader；提取其 ISO 内容并用 grub-mkrescue 加 UEFI 引导"
-    LBISO=$(ls -1 *.hybrid.iso 2>/dev/null | head -1 || true)
-    if [ -z "$LBISO" ]; then LBISO=$(ls -1 *.iso 2>/dev/null | head -1 || true); fi
-    if [ -z "$LBISO" ]; then echo "错误：live-build 未产出 ISO" >&2; exit 1; fi
-    ISO_ROOT="$WORK/isoroot"
-    rm -rf "$ISO_ROOT"; mkdir -p "$ISO_ROOT"
-    xorriso -osirrox on -indev "$LBISO" -extract / "$ISO_ROOT" >/dev/null 2>&1 || true
-    echo "=== ISO 根 /live 内容 ==="; ls -la "$ISO_ROOT/live" 2>/dev/null || true
-    mkdir -p "$ISO_ROOT/live"
-    # 找到 lb 生成的 squashfs（位置可能是 /live 或根目录）
-    SQ=$(find "$ISO_ROOT" -maxdepth 3 -name "*.squashfs" 2>/dev/null | head -1 || true)
-    echo "=== squashfs: $SQ ==="
-    if [ -z "$SQ" ]; then
-        echo "错误：ISO 内未找到 squashfs 根文件系统" >&2
+    echo "==> arm64: live-build 无 bootloader；从 chroot 生成 squashfs + grub-mkrescue 重制 UEFI ISO"
+    BIN_DIR="$WORK/binary"
+    CHROOT_DIR="$WORK/chroot"
+    # 关键：lb 在 chroot 内会生成 filesystem.squashfs，若不删除会被再打进 squashfs（体积翻倍）
+    rm -f "$CHROOT_DIR/filesystem.squashfs"
+    mkdir -p "$BIN_DIR/live"
+    KERNEL=$(ls "$CHROOT_DIR"/boot/vmlinuz-* 2>/dev/null | head -1 || true)
+    INITRD=$(ls "$CHROOT_DIR"/boot/initrd.img-* 2>/dev/null | head -1 || true)
+    if [ -z "$KERNEL" ] || [ -z "$INITRD" ]; then
+        echo "错误：chroot/boot 缺少 vmlinuz/initrd" >&2
         exit 1
     fi
-    if [ "$SQ" != "$ISO_ROOT/live/filesystem.squashfs" ]; then
-        mv -f "$SQ" "$ISO_ROOT/live/filesystem.squashfs"
-    fi
-    # kernel/initrd：先在 ISO 内找，找不到从 chroot/boot 补
-    if [ ! -f "$ISO_ROOT/live/vmlinuz" ]; then
-        IK=$(find "$ISO_ROOT" -maxdepth 4 -name "vmlinuz*" -type f 2>/dev/null | head -1 || true)
-        II=$(find "$ISO_ROOT" -maxdepth 4 -name "initrd*" -type f 2>/dev/null | head -1 || true)
-        if [ -n "$IK" ]; then cp -f "$IK" "$ISO_ROOT/live/vmlinuz"; fi
-        if [ -n "$II" ]; then cp -f "$II" "$ISO_ROOT/live/initrd.img"; fi
-    fi
-    if [ ! -f "$ISO_ROOT/live/vmlinuz" ] || [ ! -f "$ISO_ROOT/live/initrd.img" ]; then
-        KERNEL=$(ls "$WORK"/chroot/boot/vmlinuz-* 2>/dev/null | head -1 || true)
-        INITRD=$(ls "$WORK"/chroot/boot/initrd.img-* 2>/dev/null | head -1 || true)
-        if [ -z "$KERNEL" ] || [ -z "$INITRD" ]; then
-            echo "错误：找不到 kernel/initrd（ISO 与 chroot 均无）" >&2
-            exit 1
-        fi
-        cp -f "$KERNEL" "$ISO_ROOT/live/vmlinuz"
-        cp -f "$INITRD" "$ISO_ROOT/live/initrd.img"
-    fi
-    mkdir -p "$ISO_ROOT/boot/grub"
-    cat > "$ISO_ROOT/boot/grub/grub.cfg" <<GRUBCFG
+    cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
+    cp -f "$INITRD" "$BIN_DIR/live/initrd.img"
+    echo "==> mksquashfs chroot -> binary/live/filesystem.squashfs（xz，排除缓存/文档）"
+    mksquashfs "$CHROOT_DIR" "$BIN_DIR/live/filesystem.squashfs" -comp xz -noappend \
+        -e boot proc sys dev run tmp var/cache/apt var/lib/apt/lists var/log usr/share/doc usr/share/man filesystem.squashfs >/dev/null
+    mkdir -p "$BIN_DIR/boot/grub"
+    cat > "$BIN_DIR/boot/grub/grub.cfg" <<GRUBCFG
 set default=0
 set timeout=5
 menuentry "LING OS 安装器 (aarch64)" {
@@ -179,13 +160,14 @@ menuentry "LING OS 安装器 (aarch64)" {
 }
 GRUBCFG
     grub-mkrescue --modules="part_gpt part_msdos fat iso9660 normal linux search search_fs_file search_fs_uuid search_label configfile echo serial terminal all_video" \
-        -o "$OUT/lingos-installer-$ARCH.iso" "$ISO_ROOT" -- -volid LINGOS
+        -o "$OUT/lingos-installer-$ARCH.iso" "$BIN_DIR" -- -volid LINGOS
     if ! xorriso -indev "$OUT/lingos-installer-$ARCH.iso" -report_el_torito plain 2>/dev/null | grep -q "UEFI"; then
         echo "错误：grub-mkrescue 产物没有 UEFI El Torito 引导项" >&2
         exit 1
     fi
+    ls -lh "$OUT/lingos-installer-$ARCH.iso"
     rm -rf "$WORK"
-    echo "OK: $OUT/lingos-installer-$ARCH.iso (grub-mkrescue from lb ISO)"
+    echo "OK: $OUT/lingos-installer-$ARCH.iso (grub-mkrescue)"
     exit 0
 fi
 
