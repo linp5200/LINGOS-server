@@ -9,7 +9,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 ARCHARG=$1
 if [ -z "$ARCHARG" ]; then ARCHARG=$(uname -m); fi
-DIST=$2
+DIST=""
+if [ "$#" -ge 2 ]; then DIST=$2; fi
 if [ -z "$DIST" ]; then DIST=noble; fi
 case "$ARCHARG" in
     x86_64|amd64)  ARCH=x86_64;  DEBARCH=amd64; GRUBTARGET=x86_64-efi; MIRROR=http://archive.ubuntu.com/ubuntu ;;
