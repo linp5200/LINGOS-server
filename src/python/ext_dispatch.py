@@ -107,6 +107,19 @@ EXT_MAP = {
     "media_command":       ("ux_ext", "cmd_media_command"),
     "media_state":         ("ux_ext", "cmd_media_state"),
     "ux_overview":         ("ux_ext", "cmd_ux_overview"),
+
+    # ---------- S16 外部内容接入/解析（ingest 插件管线）----------
+    "ingest_add":          ("ingest_manager", "cmd_ingest_add"),
+    "ingest_status":          ("ingest_manager", "cmd_ingest_status"),
+    "ingest_list":          ("ingest_manager", "cmd_ingest_list"),
+    "ingest_search":          ("ingest_manager", "cmd_ingest_search"),
+    "ingest_plugins":          ("ingest_manager", "cmd_ingest_plugins"),
+    "ingest_delete":          ("ingest_manager", "cmd_ingest_delete"),
+
+    # ---------- 远程访问（HTTP/WS/VNC）----------
+    "remote_status":          ("remote_access", "cmd_remote_status"),
+    "vnc_start":          ("remote_access", "cmd_vnc_start"),
+    "vnc_stop":          ("remote_access", "cmd_vnc_stop"),
 }
 
 # 已加载的模块缓存

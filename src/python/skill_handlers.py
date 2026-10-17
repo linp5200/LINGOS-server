@@ -2108,3 +2108,70 @@ register_skill("gui_location", gui_location, risk="low", source="gui")
 register_skill("gui_clipboard", gui_clipboard, risk="low", source="gui")
 register_skill("gui_open_url", gui_open_url, risk="low", source="gui")
 register_skill("gui_share", gui_share, risk="low", source="gui")
+# ===== 【S16】外部内容接入/解析技能（ingest 插件管线）=====
+def ingest_add_skill(args_json: str) -> Tuple[bool, str]:
+    """外部内容接入：URL/文件路径/文本 -> 资料库（异步任务）；返回 job_id 或 doc 结果"""
+    import json as _json
+    try:
+        a = _json.loads(args_json or "{}")
+    except Exception:
+        a = {}
+    try:
+        import ingest_manager as _im
+        r = _im.add(str(a.get("source") or ""), type_hint=str(a.get("type") or ""),
+                    title=str(a.get("title") or ""), text=str(a.get("text") or ""),
+                    wait=bool(a.get("wait", False)))
+        return r.get("status") == "ok", _json.dumps(r, ensure_ascii=False)
+    except Exception as e:
+        return False, "ingest_add 失败: %s" % e
+
+
+def ingest_status_skill(args_json: str) -> Tuple[bool, str]:
+    """查询外部内容接入任务状态（不传 job_id 返回最近任务）"""
+    import json as _json
+    try:
+        a = _json.loads(args_json or "{}")
+    except Exception:
+        a = {}
+    try:
+        import ingest_manager as _im
+        r = _im.status(str(a.get("job_id") or ""))
+        return r.get("status") == "ok", _json.dumps(r, ensure_ascii=False)
+    except Exception as e:
+        return False, "ingest_status 失败: %s" % e
+
+
+def ingest_search_skill(args_json: str) -> Tuple[bool, str]:
+    """在已接入的外部资料中按关键词检索，返回命中片段"""
+    import json as _json
+    try:
+        a = _json.loads(args_json or "{}")
+    except Exception:
+        a = {}
+    try:
+        import ingest_manager as _im
+        r = _im.search(str(a.get("query") or ""), int(a.get("limit", 5) or 5))
+        return r.get("status") == "ok", _json.dumps(r, ensure_ascii=False)
+    except Exception as e:
+        return False, "ingest_search 失败: %s" % e
+
+
+def ingest_list_skill(args_json: str) -> Tuple[bool, str]:
+    """列出已接入的外部资料文档"""
+    import json as _json
+    try:
+        a = _json.loads(args_json or "{}")
+    except Exception:
+        a = {}
+    try:
+        import ingest_manager as _im
+        r = _im.list_docs(int(a.get("limit", 20) or 20))
+        return r.get("status") == "ok", _json.dumps(r, ensure_ascii=False)
+    except Exception as e:
+        return False, "ingest_list 失败: %s" % e
+
+
+register_skill("ingest_add", ingest_add_skill, risk="low", source="ingest")
+register_skill("ingest_status", ingest_status_skill, risk="low", source="ingest")
+register_skill("ingest_search", ingest_search_skill, risk="low", source="ingest")
+register_skill("ingest_list", ingest_list_skill, risk="low", source="ingest")
