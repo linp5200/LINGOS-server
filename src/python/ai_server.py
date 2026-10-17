@@ -454,15 +454,19 @@ def cmd_weather_set_city(city: str = "", lat: float = 0.0, lon: float = 0.0, api
             cfg["api"] = api
         if custom_url:
             cfg["custom_url"] = custom_url
-        # 若只给城市名无经纬度 → geocoding 解析
+        # 若只给城市名无经纬度 → geocoding 解析；失败必须明确报错（不保留旧坐标冒充新城市）
+        geo_ok = bool(lat or lon)
         if city and not (lat or lon):
             geo = _weather_fetch("%s?name=%s&count=1&language=zh" % (OPENMETEO_GEO, requests.utils.quote(city)))
             if geo and geo.get("results"):
                 r = geo["results"][0]
                 cfg["lat"] = r.get("latitude", cfg.get("lat", 31.2304))
                 cfg["lon"] = r.get("longitude", cfg.get("lon", 121.4737))
-                if not cfg.get("city") or city:
-                    cfg["city"] = r.get("name", city)
+                cfg["city"] = r.get("name", city)
+                geo_ok = True
+            else:
+                return {"status": "error", "geo_ok": False,
+                        "msg": "城市未识别（geocoding 无结果）：%s" % city}
         os.makedirs("/LINGOS/system/config", exist_ok=True)
         with open("/LINGOS/system/config/weather.json", "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -471,7 +475,7 @@ def cmd_weather_set_city(city: str = "", lat: float = 0.0, lon: float = 0.0, api
             os.remove(WEATHER_CACHE_PATH)
         except Exception:
             pass
-        return {"status": "ok", "config": cfg}
+        return {"status": "ok", "geo_ok": bool(geo_ok), "config": cfg}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 SKILL_INDEX_PATH = "/LINGOS/registry/skills/index.json"
@@ -2421,10 +2425,19 @@ def call_ollama_stream(messages: List[Dict], tools: Optional[List[Dict]] = None,
                                            reasoning_effort=deepseek_reasoning_effort)
 
 # ========== ReAct循环 ==========
+_evt_seq = 0
+
+
 def _send_evt(conn, evt):
-    """发送流式事件行（容错）"""
+    """发送流式事件行（容错）；统一注入 ts/seq（P0-2 时间归属与排序）"""
+    global _evt_seq
     try:
         if conn:
+            if isinstance(evt, dict):
+                if "ts" not in evt:
+                    evt["ts"] = int(time.time() * 1000)
+                _evt_seq += 1
+                evt.setdefault("seq", _evt_seq)
             conn.send((json.dumps(evt, ensure_ascii=False) + "\n").encode())
     except Exception:
         pass
@@ -2525,6 +2538,7 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
             logger.info("react_stream: client disconnected (interrupt) — stopping at iter=%d", iteration)
             return full, usage_info
         iteration += 1
+        _send_evt(conn, {"type": "round_start", "round": iteration})
         if max_iterations > 0 and iteration > max_iterations:
             # 达到上限：强制总结（防"未收到有效回复"）
             _send_evt(conn, {"type": "thinking",
@@ -2641,6 +2655,9 @@ def _react_stream(conn, messages, session_id, max_iterations=0, show_thinking=Tr
             # 无工具调用：content 已实时流式推送（最终回复）
             full = content
             return full, usage_info
+
+        # 【P0-2】轮次边界：工具调用前关闭当前回答段（客户端据此另起气泡/分组）
+        _send_evt(conn, {"type": "round_end", "round": iteration})
 
         # 工具调用事件
         for tc in tool_calls:
@@ -4133,7 +4150,12 @@ def cmd_alert_query() -> dict:
     """
     try:
         from alert_store import load_records
-        return {"status": "ok", "data": load_records()}
+        recs = load_records()
+        base = "/LINGOS/data/alerts"
+        avail = os.path.isdir(base) and os.access(base, os.R_OK)
+        return {"status": "ok", "data": recs, "available": bool(avail),
+                "source_health": {"alert_dir": bool(avail), "count": len(recs),
+                                  "msg": "" if avail else "预警数据目录不可读"}}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
 
@@ -5154,7 +5176,8 @@ def handle_client(conn, addr):
             _reply(conn, "session_rename", cmd_session_rename(str(req.get("id", "")), str(req.get("title", "")), str(req.get("device_id", ""))))
             return
         if cmd == "session_history":
-            _reply(conn, "session_history", cmd_session_history(str(req.get("id", "")), int(req.get("limit", 50))))
+            _reply(conn, "session_history", cmd_session_history(
+                str(req.get("id") or req.get("session_id") or ""), int(req.get("limit", 50))))
             return
 
         # 【0.2.2 同步协议】（先生裁决 2026-08-14）

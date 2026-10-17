@@ -137,7 +137,21 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 .logview .l .tm{color:var(--dd);flex-shrink:0}.logview .l .lvl{width:42px;flex-shrink:0}
 .logview .l .lvl.DEBUG{color:var(--dd)}.logview .l .lvl.INFO{color:var(--g)}.logview .l .lvl.WARN{color:var(--amber)}.logview .l .lvl.ERROR{color:var(--red)}
 .logview .l .mod{color:var(--d);width:80px;flex-shrink:0}.logview .l .msg{color:var(--g)}.logview .l .msg b{color:var(--w)}
+/* LINGOS 2026-10-17：工具块/时间/命令面板 */
+.toolblk2{border-left:2px solid var(--green);background:rgba(255,255,255,.03);padding:6px 10px;margin:6px 0;font-family:var(--mono);font-size:9.5px;color:var(--g);white-space:pre-wrap}
+.toolblk2 .nm{color:var(--w)}
+.cmsg .bub .meta{font-family:var(--mono);font-size:8px;color:var(--dd);margin-bottom:4px}
+.lingos-palette{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:100;align-items:flex-start;justify-content:center;padding-top:12vh}
+.lingos-palette.on{display:flex}
+.lp-box{width:min(640px,92vw);background:var(--surface,#12151A);border:1px solid rgba(255,255,255,.16);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.lp-in{width:100%;background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,.1);color:var(--w,#E8EAED);padding:14px 16px;font-size:14px;outline:none}
+.lp-list{max-height:46vh;overflow:auto}
+.lp-it{padding:9px 16px;display:flex;gap:10px;align-items:center;cursor:pointer;font-size:13px;color:var(--g,#9AA3AF)}
+.lp-it:hover,.lp-it.sel{background:rgba(255,255,255,.06);color:var(--w,#E8EAED)}
+.lp-it .src{margin-left:auto;font-size:10px;color:var(--dd,#3C434D)}
+.lp-out{padding:10px 16px;border-top:1px solid rgba(255,255,255,.08);font-family:var(--mono);font-size:10px;color:var(--g);max-height:20vh;overflow:auto;display:none;white-space:pre-wrap}
 </style>
+<link rel="stylesheet" href="themes.css">
 </head>
 <body>
 <div class="topbar">
@@ -236,7 +250,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 <!-- 会话管理 -->
 <div class="page" id="p-sessions">
   <div class="phead"><div class="l"><div class="k">▍SESSIONS</div><h1>会话管理</h1></div><div class="r">共 <b>--</b> · token 总 <b>--</b></div></div>
-  <div class="toolbar"><input placeholder="搜索会话…"><button>＋ 新建</button><span class="cnt">-- 个会话</span></div>
+  <div class="toolbar"><input id="sessSearch" placeholder="搜索会话…" oninput="filterSessionList()"><button onclick="wfNewSession()">＋ 新建</button><span class="cnt" id="sessCnt">-- 个会话</span></div>
   <div class="listwrap">
     <div class="lrow"><div class="t"><div class="n" style="color:var(--d)">加载中…（连接主机后显示真实会话）</div><div class="s">无数据一律显示 --（不模拟）</div></div></div>
   </div>
@@ -336,7 +350,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
         NO SIGNAL<br><span style="color:var(--dd)">摄像头未连接 —— 配置摄像头后此处显示实时预览</span><br><span style="color:var(--dd)">（无数据不模拟）</span>
       </div>
     </div>
-    <div style="display:flex;gap:6px;margin-top:8px"><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⏺ 录像</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">◉ 拍照</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⌖ 标定</button><button style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⚙ 设置</button></div></div>
+    <div style="display:flex;gap:6px;margin-top:8px"><button onclick="wfVision('rec')" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⏺ 录像</button><button onclick="wfVision('snap')" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">◉ 拍照</button><button onclick="wfVision('calib')" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⌖ 标定</button><button onclick="wfVision('cfg')" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--w);font-family:var(--mono);font-size:9px;padding:6px;cursor:pointer">⚙ 设置</button></div></div>
     <div style="display:flex;flex-direction:column;gap:8px">
       <div class="card"><div class="ct"><span>检测事件流</span><b>vision_event</b></div><div class="evlog">
         <div class="e"><span class="tx" style="color:var(--d)">暂无事件（visiond 上报后实时显示）</span></div></div></div>
@@ -381,7 +395,7 @@ body{background:#101216;color:var(--w);font-family:var(--zh);min-height:100vh;mi
 <!-- 日志 -->
 <div class="page" id="p-log">
   <div class="phead"><div class="l"><div class="k">▍LOG · /LINGOS/log</div><h1>日志</h1></div><div class="r">time/id/level/txt · JSON · 最近 30 行<br>级别过滤: DEBUG+ <b style="color:var(--amber)">WARN</b> <b style="color:var(--red)">ERROR</b></div></div>
-  <div class="toolbar"><button style="width:auto">级别: ALL ▾</button><button style="width:auto">模块: ALL ▾</button><input placeholder="过滤关键字…" style="flex:1"><button style="width:auto">暂停</button><button style="width:auto">导出</button></div>
+  <div class="toolbar"><select id="logLevel" onchange="bindLog()" style="width:auto;background:#14171C;color:var(--w);border:1px solid rgba(255,255,255,.16);font-family:var(--mono);font-size:10px;padding:4px"><option value="">级别: ALL</option><option>DEBUG</option><option>INFO</option><option>WARN</option><option>ERROR</option></select><input id="logFilter" placeholder="过滤关键字…" oninput="bindLog()" style="flex:1"><button onclick="window._logPaused=!window._logPaused;this.textContent=window._logPaused?'继续':'暂停'" style="width:auto">暂停</button><button onclick="wfLogExport()" style="width:auto">导出</button></div>
   <div class="logview" id="logView">
     <div class="l"><span class="tm">--:--:--</span><span class="lvl INFO">INFO</span><span class="msg" style="color:var(--d)">加载中…（file_read /LINGOS/log/lingos.log——无数据不模拟）</span></div>
   </div>
@@ -724,7 +738,24 @@ async function bindSessions(){
   if(!box) return;
   var list = (s && s.data && (s.data.sessions|| (Array.isArray(s.data)?s.data:[]))) || [];
   if(!list.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">'+(s&&s.status==='error'?'会话读取失败':'暂无会话')+'</div><div class="s">连接主机后显示</div></div></div>'; return; }
-  box.innerHTML = list.map(function(ss,i){ return '<div class="lrow"><div class="t"><div class="n">'+ (ss.title||('会话 '+(i+1))) +'</div><div class="s">'+(ss.message_count?ss.message_count+' 条消息':'')+'</div></div><div class="st2">'+(ss.updated||'')+'</div></div>'; }).join('');
+  _sessAll=list; renderSessionRows(list);
+}
+var _sessAll=[];
+function renderSessionRows(list){
+  var box=$('#p-sessions .listwrap'); if(!box) return;
+  var rows=(list||[]);
+  if(!rows.length){ box.innerHTML='<div class="lrow"><div class="t"><div class="n" style="color:var(--d)">无匹配会话</div></div></div>'; }
+  else box.innerHTML = rows.map(function(ss,i){ return '<div class="lrow"><div class="t"><div class="n">'+_esc(ss.title||('会话 '+(i+1)))+'</div><div class="s">'+(ss.message_count?ss.message_count+' 条消息':'')+'</div></div><div class="st2">'+_esc(ss.updated||'')+'</div></div>'; }).join('');
+  setTxt('#sessCnt', rows.length+' 个会话');
+}
+function filterSessionList(){
+  var el=document.getElementById('sessSearch'); var q=(el&&el.value||'').trim().toLowerCase();
+  renderSessionRows(!q?_sessAll:_sessAll.filter(function(ss){return String(ss.title||'').toLowerCase().indexOf(q)>=0;}));
+}
+async function wfNewSession(){
+  var t=window.prompt('新会话标题','新会话'); if(t===null) return;
+  var r=await apiCmd('session_create',{title:t});
+  if(r&&r.status==='ok'){ bindSessions(); } else { alert('创建失败：'+((r&&(r.msg||r.message))||'服务端不可达')); }
 }
 /* ===== 预警 ===== */
 async function bindAlert(){
@@ -1027,8 +1058,27 @@ async function bindVision(){
     if(list) list.innerHTML='<div class="lrow" style="padding:6px 0"><div class="t"><div class="n" style="font-size:12px;color:var(--d)">摄像头列表不可达（显示 -- 不模拟）</div></div><span class="tag dim">--</span></div>';
   }
 }
+async function wfVision(action){
+  var r=null;
+  if(action==='snap') r=await apiCmd('monitor_snapshot',{camera_id:'cam0'});
+  else if(action==='rec') r=await apiCmd('monitor_record_start',{camera_id:'cam0'});
+  else if(action==='calib') r=await apiCmd('ai_vision_calibrate',{});
+  else if(action==='cfg') r=await apiCmd('vision_config_get');
+  showCmdResult('视觉操作',r);
+}
+function showCmdResult(title,r){
+  var txt=JSON.stringify(r,null,2); if(txt&&txt.length>4000) txt=txt.slice(0,4000)+' ...';
+  var nl=String.fromCharCode(10);
+  window.alert(title+'：'+nl+(txt||'无响应'));
+}
+function wfLogExport(){
+  var box=$('#p-log .logview'); if(!box) return;
+  var blob=new Blob([box.innerText||''],{type:'text/plain'});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='lingos-log.txt'; a.click();
+}
 /* ===== 日志 ===== */
 async function bindLog(){
+  if(window._logPaused) return;
   var lv = await apiCmd('file_read', {path:'/LINGOS/log/lingos.log'});
   var box = $('#p-log .logview');
   if(!box) return;
@@ -1720,15 +1770,28 @@ function wsForgetToken(){
   var st=document.getElementById('chatState'); if(st) st.textContent='离线';
 }
 function chatScroll(){ var b=document.getElementById('chatMsgs'); if(b) b.scrollTop=b.scrollHeight; }
+function _chatTime(){var d=new Date();function p(n){return (n<10?'0':'')+n;}return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
 function chatAppend(role, text, meta){
   var box=document.getElementById('chatMsgs'); if(!box) return null;
   var wrap=document.createElement('div'); wrap.className='cmsg'+(role==='u'?' u':'');
   var inner='<div class="who">'+(role==='u'?'我':'N')+'</div><div class="bub">'
-    +(meta?('<div class="meta">'+meta+'</div>'):'')+'<span class="ct"></span></div>';
+    +'<div class="meta">'+_esc(meta||(role==='u'?'我':'NOOK'))+' · '+_chatTime()+'</div><span class="ct"></span></div>';
   wrap.innerHTML=inner;
   var span=wrap.querySelector('.ct'); span.textContent=text||'';
   box.appendChild(wrap); chatScroll();
   return span;
+}
+function chatTool(name,args){
+  var box=document.getElementById('chatMsgs'); if(!box) return;
+  var d=document.createElement('div'); d.className='toolblk2';
+  d.innerHTML='<span class="nm">'+_esc(name||'tool')+'</span> '+(args?('· '+_esc(String(args).slice(0,200))):'');
+  box.appendChild(d); chatScroll();
+}
+function chatToolResult(name,content){
+  var box=document.getElementById('chatMsgs'); if(!box) return;
+  var d=document.createElement('div'); d.className='toolblk2';
+  d.innerHTML='<span class="nm">'+_esc(name||'tool')+'</span> → '+_esc(String(content||'').slice(0,300));
+  box.appendChild(d); chatScroll();
 }
 function wsConnect(){
   if(wsChat){ try{wsChat.close();}catch(e){} wsChat=null; }
@@ -1748,24 +1811,26 @@ function wsOnEvent(m){
   if(m.type==='chat_event'&&m.data){ wsOnEvent(m.data); return; }
   switch(m.type){
     case 'auth_ok':
-      chatAuthed=true; wsSetState('已连接'); 
+      chatAuthed=true; wsSetState('已连接');
       var st=document.getElementById('chatState'); if(st) st.textContent='就绪';
       setTxt('#chatHeadR','已连接 · WS 2939'); break;
     case 'auth_error':
       wsSetState('令牌无效'); break;
+    case 'round_start':
+    case 'round_end':
+      curAi=null; curThink=null; break;
     case 'content':
-      if(!curAi) curAi=chatAppend('n','','NOOK · 流式');
+      if(!curAi) curAi=chatAppend('n','','NOOK');
       if(curAi&&m.delta) curAi.textContent+=m.delta; chatScroll(); break;
     case 'thinking_delta':
       if(!curThink) curThink=chatAppend('n','','思考中…');
       if(curThink&&m.delta) curThink.textContent+=m.delta; chatScroll(); break;
     case 'tool_call':
-      if(!curAi) curAi=chatAppend('n','','NOOK');
-      if(curAi) curAi.textContent+='\n[tool] '+(m.name||''); chatScroll(); break;
+      curAi=null; chatTool(m.name,m.args); break;
     case 'tool_result':
-      if(curAi) curAi.textContent+='\n[result] '+String(m.content||'').slice(0,300); chatScroll(); break;
+      chatToolResult(m.name,m.content); break;
     case 'tool_error':
-      if(curAi) curAi.textContent+='\n[error] '+(m.error||''); chatScroll(); break;
+      chatTool('error',m.error||''); break;
     case 'done':
       curAi=null; curThink=null;
       if(m.usage){ setTxt('#chatTok','↑'+(m.usage.prompt_tokens||0)+' ↓'+(m.usage.completion_tokens||0)); }
@@ -1792,8 +1857,66 @@ function chatStop(){
   if(wsChat&&chatAuthed){ try{ wsChat.send(JSON.stringify({type:'interrupt'})); }catch(e){} }
 }
 
+/* ===== 命令面板（Ctrl+K） ===== */
+var _lpAll=null,_lpSel=0,_lpCurrent=[];
+function openPalette(){
+  var el=document.getElementById('lingosPalette'); if(!el) return;
+  el.className='lingos-palette on';
+  var inp=document.getElementById('lpInput'); if(inp){ inp.value=''; inp.focus(); }
+  loadPalette();
+}
+function closePalette(){ var el=document.getElementById('lingosPalette'); if(el) el.className='lingos-palette'; }
+async function loadPalette(){
+  if(_lpAll) { renderPalette(''); return; }
+  var r=await apiCmd('command_list');
+  var items=[];
+  if(r&&r.status==='ok'&&r.data){ items=r.data.commands||[]; }
+  _lpAll=items; renderPalette('');
+}
+function renderPalette(q){
+  var box=document.getElementById('lpList'); if(!box) return;
+  var kw=(q||'').trim().toLowerCase();
+  var list=(_lpAll||[]).filter(function(it){
+    var name=String(it.name||'').toLowerCase();
+    var src=String(it.source||'');
+    var desc=String(it.desc||'').toLowerCase();
+    if(!kw) return true;
+    return name.indexOf(kw)>=0||desc.indexOf(kw)>=0||src.toLowerCase().indexOf(kw)>=0;
+  }).slice(0,80);
+  _lpSel=0;
+  _lpCurrent=list;
+  box.innerHTML=list.map(function(it,i){
+    return '<div class="lp-it'+(i===0?' sel':'')+'" onclick="runPaletteByIndex('+i+')" >'
+      +'<span>'+_esc(it.name||'')+'</span><span class="src">'+_esc(it.source||'')+(it.desc?(' · '+_esc(String(it.desc).slice(0,40))):'')+'</span></div>';
+  }).join('')||'<div class="lp-it">没有匹配命令</div>';
+}
+async function runPalette(name){
+  if(!name) return;
+  var ps=window.prompt('参数 JSON（可空）','{}');
+  if(ps===null) return;
+  var params={};
+  if(ps.trim()&&ps.trim()!=='{}'){ try{ params=JSON.parse(ps); }catch(e){ alert('参数 JSON 无效'); return; } }
+  var r=await apiCmd(name,params);
+  var out=document.getElementById('lpOut');
+  if(out){ out.style.display='block'; out.textContent=(name+' -> '+JSON.stringify(r,null,2)).slice(0,8000); }
+}
+function runPaletteByIndex(i){ var it=(_lpCurrent||[])[i]; if(it) runPalette(it.name); }
+document.addEventListener('keydown',function(e){
+  var k=(e.key||'').toLowerCase();
+  if((e.metaKey||e.ctrlKey)&&k==='k'){ e.preventDefault(); var el=document.getElementById('lingosPalette');
+    if(el&&el.className.indexOf('on')>=0) closePalette(); else openPalette(); }
+  else if(e.key==='Escape'){ closePalette(); }
+});
 bindData();
 setInterval(bindData, 20000);
 </script>
+<script src="theme.js"></script>
+<div class="lingos-palette" id="lingosPalette">
+  <div class="lp-box">
+    <input class="lp-in" id="lpInput" placeholder="命令面板：输入命令名/关键词（Ctrl+K 打开，Esc 关闭）">
+    <div class="lp-list" id="lpList"></div>
+    <div class="lp-out" id="lpOut"></div>
+  </div>
+</div>
 </body>
 </html>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<labwc_config>
+  <core>
+    <gap>8</gap>
+    <adaptiveSync>no</adaptiveSync>
+  </core>
+  <theme>
+    <name>Clearlooks</name>
+    <cornerRadius>8</cornerRadius>
+    <titlebarActiveBg>#12151A</titlebarActiveBg>
+    <titlebarInactiveBg>#0B0D10</titlebarInactiveBg>
+  </theme>
+  <windowRules>
+    <windowRule identifier="lingos-kiosk" serverDecoration="no" skipTaskbar="yes"/>
+  </windowRules>
+  <keyboard>
+    <keybind key="Super_L"><action name="Execute" command="wofi --show drun"/></keybind>
+    <keybind key="Super-Return"><action name="Execute" command="lingos-kiosk"/></keybind>
+    <keybind key="Super-Q"><action name="Close"/></keybind>
+    <keybind key="Super-F"><action name="ToggleFullscreen"/></keybind>
+    <keybind key="Super-Space"><action name="Execute" command="lingos-assistant"/></keybind>
+  </keyboard>
+</labwc_config>

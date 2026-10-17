@@ -1,0 +1,37 @@
+{
+  "id": "example.markdown",
+  "type": "ingest",
+  "name": "Markdown 文档（示例插件）",
+  "version": "1.0.0",
+  "source_types": [
+    "md",
+    "markdown"
+  ],
+  "entry": "main.py",
+  "capabilities": [
+    "filesystem.read"
+  ],
+  "permissions": {
+    "fs": [
+      "/LINGOS/inbox/**"
+    ]
+  },
+  "chunk": {
+    "strategy": "markdown",
+    "max_tokens": 800,
+    "overlap": 80
+  },
+  "output": {
+    "type": "document",
+    "fields": [
+      "title",
+      "text",
+      "meta"
+    ]
+  },
+  "sandbox": {
+    "seccomp": false,
+    "network": false,
+    "timeout_s": 30
+  }
+}

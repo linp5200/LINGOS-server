@@ -1,0 +1,7 @@
+# wayvnc 配置（放到 ~/.config/wayvnc/config 或 /etc/wayvnc/config）
+address=127.0.0.1
+port=5900
+# 认证：建议设置密码文件（wayvncctl / wayvnc 文档），对外暴露必须加认证或走 SSH 隧道
+# username=lingos
+# password_file=/etc/wayvnc/passwd
+enable_auth=true

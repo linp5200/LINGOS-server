@@ -59,6 +59,9 @@ def normalize_level(value) -> str:
         return "L%d" % n if 1 <= n <= 5 else "info"
     if s.startswith("L") and s[1:].isdigit():
         n = int(s[1:])
+        # 【P0-4】L0 = 紧急通道（最严重），不得被归并为 info
+        if n == 0:
+            return "L0"
         return "L%d" % n if 1 <= n <= 5 else "info"
     return "info"
 
