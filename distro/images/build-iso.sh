@@ -14,6 +14,7 @@ if [ "$#" -ge 2 ]; then DIST=$2; fi
 if [ -z "$DIST" ]; then DIST=noble; fi
 case "$ARCHARG" in
     x86_64|amd64)  ARCH=x86_64;  DEBARCH=amd64; GRUBPKG=grub-efi-amd64-bin; GRUBTARGET=x86_64-efi; MIRROR=http://archive.ubuntu.com/ubuntu ;;
+    BINIMG=iso-hybrid
     aarch64|arm64) ARCH=aarch64; DEBARCH=arm64; GRUBPKG=grub-efi-arm64-bin; GRUBTARGET=arm64-efi;  MIRROR=http://ports.ubuntu.com/ubuntu-ports ;;
     *) echo "unsupported arch: $ARCHARG" >&2; exit 1 ;;
 esac
@@ -37,7 +38,7 @@ lb config \
   --mode ubuntu \
   --distribution "$DIST" \
   --architecture "$DEBARCH" \
-  --binary-images iso-hybrid \
+  --binary-images "$BINIMG" \
   --bootloader grub-efi \
   --apt-recommends false \
   --memtest none \
