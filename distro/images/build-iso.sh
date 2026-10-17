@@ -17,6 +17,8 @@ case "$ARCHARG" in
     aarch64|arm64) ARCH=aarch64; DEBARCH=arm64; GRUBTARGET=arm64-efi;  MIRROR=http://ports.ubuntu.com/ubuntu-ports ;;
     *) echo "unsupported arch: $ARCHARG" >&2; exit 1 ;;
 esac
+BOOTOPT=""
+if [ "$DEBARCH" = "amd64" ]; then BOOTOPT="--bootloader grub-efi"; fi
 OUT=$ROOT/dist/images
 mkdir -p "$OUT"
 BUNDLE=$(ls "$ROOT"/dist/*allbin*.tar.gz 2>/dev/null | head -1 || true)
@@ -38,6 +40,7 @@ lb config \
   --distribution "$DIST" \
   --architecture "$DEBARCH" \
   --binary-images iso \
+  $BOOTOPT \
   --apt-recommends false \
   --memtest none \
   --iso-application "LING OS" \
@@ -143,7 +146,7 @@ if [ "$DEBARCH" = "arm64" ]; then
     cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
     cp -f "$INITRD" "$BIN_DIR/live/initrd.img"
     echo "==> mksquashfs chroot -> binary/live/filesystem.squashfs（gzip）"
-    mksquashfs "$CHROOT_DIR" "$BIN_DIR/live/filesystem.squashfs" -comp gzip -noappend -e boot proc sys dev run tmp >/dev/null
+    mksquashfs "$CHROOT_DIR" "$BIN_DIR/live/filesystem.squashfs" -comp xz -noappend -e boot proc sys dev run tmp var/cache/apt var/lib/apt/lists var/log usr/share/doc usr/share/man >/dev/null
     mkdir -p "$BIN_DIR/boot/grub"
     cat > "$BIN_DIR/boot/grub/grub.cfg" <<GRUBCFG
 set default=0
