@@ -12,7 +12,7 @@
 
 - **设备系统层（C）**：lingosd 主程序、supervisor、alertd、visiond、voiced、monitor/ai_vision、安装/更新、应用沙箱（seccomp + namespace）、驱动与设备管理。
 - **Agent 层（Python）**：模型统一层（多 Provider）、68 个 AI 技能、82 个扩展命令、MCP 客户端、会话/记忆 L1-L3、上下文压缩、子 AI 调度、危机模式。
-- **交互层**：WebUI（25 页真实数据 + 三主题 + 投放箱，作为桌面 kiosk 壳）、Flutter App、语音 TTS（STT 规划中）。
+- **交互层**：WebUI（27 页真实数据 + 三主题 + 投放箱 + 用户管理，作为桌面 kiosk 壳）、Flutter App、语音 TTS（STT 规划中）。
 - **接口面**：统一命令协议（HTTP /api/cmd、WebSocket 2939）、OpenAPI（api.openapi）、lingosctl CLI、MQTT/HA 集成、webhook。
 
 目标形态：**电脑上的 AI 手机 + 智能家居中枢 + 常驻系统助理**（人格参考"诺玛 / 红后"）。

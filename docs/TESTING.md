@@ -14,13 +14,14 @@ session_history 参数兼容、命令回包 trace_id/duration_ms/server_ts。
 ### 2) 本地全量套件（~20 秒）
     python3 tests/test_local_suite.py
 
-覆盖 37 项断言：
+覆盖 50 项断言（含用户管理 13 项）：
 - A 命令面路由：ext_dispatch 的 ingest_*/remote_status（模拟 /api/cmd 路径）
 - B ingest 管线：文本、本地 HTTP 网页、RSS、插件发现（内置+自定义）、错误诚实性（不存在文件必须报 error）
 - C MCP 客户端：本地 mock MCP（tests/mock_mcp_server.py）initialize / tools/list / tools/call
 - D 服务端函数：weather_code_map / alert_query.available / session_history / weather_current 诚实回退
 - E WebUI 静态自检：id 接线、导航↔页面一致、命令面板/投放箱/主题层存在
 - F remote_access 状态结构（HTTP/WS/VNC）
+- G 用户管理：默认 owner / PBKDF2 密码 / 角色 / 最后 owner 保护 / 重复与弱密码拒绝
 
 ### 3) Python 语法/导入
     cd src/python && python3 -m compileall -q .
