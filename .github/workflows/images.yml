@@ -40,7 +40,7 @@ jobs:
         run: |
           docker run -d --name lingos-ci -p 18080:8080 -p 12939:2939 lingos-server:ci
           ok=0
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             sleep 3
             if curl -fsS http://127.0.0.1:18080/system/health >/dev/null 2>&1; then ok=1; break; fi
           done
@@ -49,6 +49,8 @@ jobs:
           if [ "$ok" != "1" ]; then
             echo "--- container logs ---"
             docker logs lingos-ci | tail -120
+            echo "--- in-container logs ---"
+            docker exec lingos-ci sh -c 'ls -la /LINGOS/log 2>/dev/null; tail -80 /LINGOS/log/*.log 2>/dev/null' || true
             docker rm -f lingos-ci
             exit 1
           fi
