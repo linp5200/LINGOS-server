@@ -373,13 +373,13 @@ SHELL_SRCS = $(SRC_DIR)/shell/ai_config_cmd.c \
 # 配置模块：核心 + 渲染器 + 调试
 # ================================================================
 CONFIG_CORE_SRCS = $(SRC_DIR)/config/config_core.c \
-                   $(SRC_DIR)/config/wizard_engine.c \
                    $(SRC_DIR)/config/wizard_step_defs.c \
                    $(SRC_DIR)/config/config_validator.c \
                    $(SRC_DIR)/config/config_saver.c \
                    $(SRC_DIR)/config/options.c
 
 CONFIG_RENDER_SRCS = $(SRC_DIR)/config/config_renderer.c \
+                     $(SRC_DIR)/config/wizard_engine.c \
                      $(TUI_RENDERER_SRCS) \
                      $(SRC_DIR)/config/config_renderer_clack.c \
                      $(SRC_DIR)/config/config_renderer_cli.c \

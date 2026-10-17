@@ -47,7 +47,9 @@ jobs:
           sudo apt-get install -y espeak-ng || true
 
       - name: 编译（rpath=$ORIGIN/../lib）
-        run: make 2>&1 | tail -20
+        run: |
+          set -o pipefail
+          make 2>&1 | tail -40
 
       - name: 全捆打包（lib/ 全捆 + venv + manifest）
         run: RELEASE_VER=$VERSION bash scripts/bundle.sh dist
