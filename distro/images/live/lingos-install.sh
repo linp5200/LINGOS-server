@@ -3,8 +3,8 @@
 # LING OS 安装器（在 live ISO 内运行）
 # 用法：
 #   lingos-install            交互（whiptail 选盘 + 确认）
-#   lingos-install --auto     自动：需 LINGOS_DISK 或 cmdline lingos.disk=/dev/sdX，
-#                             否则仅在"唯一可安装磁盘"时自动选择
+#   lingos-install --auto     自动：LINGOS_DISK / cmdline lingos.disk=/dev/sdX 优先；
+#                             否则自动选「最大且 >=8G 的内置磁盘」（忽略 USB）
 # 流程：GPT → EFI(512M)+root(ext4,余量) → rsync live 根 → GRUB → 首启配置 → 重启
 # ============================================================
 set -euo pipefail
@@ -27,30 +27,40 @@ if [ -z "$DISK" ]; then
         esac
     done
 fi
+
+# 候选：内置磁盘（排除 USB），格式 "设备:字节数"
 CANDIDATES=""
-for d in $(lsblk -dn -o NAME,TYPE,SIZE,TRAN 2>/dev/null | awk '$2=="disk" {print $1" "$3" "$4}'); do
-    NAME=$(echo "$d" | awk '{print $1}')
-    TRAN=$(echo "$d" | awk '{print $3}')
-    [ "$TRAN" = "usb" ] && continue
-    CANDIDATES="$CANDIDATES /dev/$NAME"
+for row in $(lsblk -bdn -o NAME,TYPE,TRAN,SIZE 2>/dev/null | awk '$2=="disk" && $3!="usb" {print $1":"$4}'); do
+    CANDIDATES="$CANDIDATES $row"
 done
 if [ -z "$CANDIDATES" ]; then echo "未发现可安装磁盘（USB 已排除）" >&2; exit 1; fi
 
+pick_largest() {
+    BEST=""; BESTSIZE=0
+    for row in $CANDIDATES; do
+        DEV=$(echo "$row" | cut -d: -f1)
+        SZ=$(echo "$row" | cut -d: -f2)
+        if [ "$SZ" -ge 8589934592 ] && [ "$SZ" -gt "$BESTSIZE" ]; then
+            BEST="/dev/$DEV"; BESTSIZE=$SZ
+        fi
+    done
+    echo "$BEST"
+}
+
 if [ -z "$DISK" ]; then
     if [ "$AUTO" = "1" ]; then
-        COUNT=$(echo "$CANDIDATES" | wc -w)
-        if [ "$COUNT" = "1" ]; then
-            DISK=$(echo "$CANDIDATES" | awk '{print $1}')
-            echo "自动模式：唯一磁盘 $DISK"
-        else
-            echo "自动模式需要指定磁盘：lingos.disk=/dev/xxx（当前候选：$CANDIDATES）" >&2
+        DISK=$(pick_largest)
+        if [ -z "$DISK" ]; then
+            echo "自动安装需要指定磁盘：lingos.disk=/dev/xxx（候选：$CANDIDATES）" >&2
             exit 1
         fi
+        echo "自动模式：选择最大可安装磁盘 $DISK"
     else
         MENU=""
-        for d in $CANDIDATES; do
-            SZ=$(lsblk -dn -o SIZE "$d" 2>/dev/null)
-            MENU="$MENU $d $(basename "$d") $SZ"
+        for row in $CANDIDATES; do
+            DEV=$(echo "$row" | cut -d: -f1)
+            SZ=$(echo "$row" | cut -d: -f2)
+            MENU="$MENU /dev/$DEV $(basename "/dev/$DEV") $SZ"
         done
         DISK=$(whiptail --title "LING OS 安装器" --menu "选择要安装到的磁盘（将被完全清空）" 20 70 10 $MENU 3>&1 1>&2 2>&3) || exit 1
     fi

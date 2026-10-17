@@ -53,7 +53,7 @@ lb config \
   --parent-mirror-bootstrap "$MIRROR" \
   --parent-mirror-chroot "$MIRROR" \
   --parent-mirror-binary "$MIRROR" \
-  --bootappend-live "boot=live components quiet splash lingos.autostart=1" \
+  --bootappend-live "boot=live components quiet splash console=tty0 console=ttyAMA0,115200 lingos.autostart=1" \
   --linux-flavours generic
 
 # ---------- 包清单 ----------
