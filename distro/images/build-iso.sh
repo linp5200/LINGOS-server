@@ -1,64 +1,129 @@
 #!/usr/bin/env bash
-# 构建 LING OS 安装 ISO（骨架：基于系统上已安装的 live-build）
-# 用法：sudo bash distro/images/build-iso.sh [输出目录]
-# 说明：live-build 默认面向 Debian；Ubuntu 可用 --distribution noble（需源可用）。
-# 首次运行需网络下载基础包；产物可 UEFI+BIOS 启动，包含"试用/安装"入口。
+# ============================================================
+# LING OS 安装 ISO 构建（Ubuntu noble live-build，UEFI+BIOS hybrid）
+# 用法：sudo bash distro/images/build-iso.sh [x86_64|aarch64] [发行版代号]
+# 前置：dist/*allbin*.tar.gz 存在；root；网络（拉基础包）
+# 产物：dist/images/lingos-installer-<arch>.iso
+# ============================================================
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-OUT=$1
-if [ -z "$OUT" ]; then OUT=$ROOT/dist/images; fi
-BUNDLE=$(ls "$ROOT"/dist/*allbin*.tar.gz 2>/dev/null | head -1)
-if [ -z "$BUNDLE" ]; then echo "缺少 dist/*allbin*.tar.gz" >&2; exit 1; fi
-if ! command -v lb >/dev/null 2>&1; then echo "需要 live-build：apt-get install live-build" >&2; exit 1; fi
+ARCHARG=$1
+if [ -z "$ARCHARG" ]; then ARCHARG=$(uname -m); fi
+DIST=$2
+if [ -z "$DIST" ]; then DIST=noble; fi
+case "$ARCHARG" in
+    x86_64|amd64)  ARCH=x86_64;  DEBARCH=amd64; GRUBPKG=grub-efi-amd64-bin; GRUBTARGET=x86_64-efi; MIRROR=http://archive.ubuntu.com/ubuntu ;;
+    aarch64|arm64) ARCH=aarch64; DEBARCH=arm64; GRUBPKG=grub-efi-arm64-bin; GRUBTARGET=arm64-efi;  MIRROR=http://ports.ubuntu.com/ubuntu-ports ;;
+    *) echo "unsupported arch: $ARCHARG" >&2; exit 1 ;;
+esac
+OUT=$ROOT/dist/images
 mkdir -p "$OUT"
-WORK=$(mktemp -d)
+BUNDLE=$(ls "$ROOT"/dist/*allbin*.tar.gz 2>/dev/null | head -1 || true)
+if [ -z "$BUNDLE" ]; then
+    echo "缺少 dist/*allbin*.tar.gz —— 先 make + RELEASE_VER=0.9.0 bash scripts/bundle.sh dist" >&2
+    exit 1
+fi
+if ! command -v lb >/dev/null 2>&1; then
+    echo "需要 live-build：apt-get install -y live-build debootstrap squashfs-tools xorriso mtools dosfstools rsync" >&2
+    exit 1
+fi
+
+WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
+echo "==> live-build 工作目录: $WORK (dist=$DIST arch=$DEBARCH)"
 cd "$WORK"
+
 lb config \
-  --distribution noble \
-  --architecture amd64 \
+  --mode ubuntu \
+  --distribution "$DIST" \
+  --architecture "$DEBARCH" \
   --binary-images iso-hybrid \
   --bootloader grub-efi \
   --apt-recommends false \
   --memtest none \
   --iso-application "LING OS" \
-  --iso-volume "LINGOS"
-mkdir -p config/includes.chroot/LINGOS
-echo "==> 提示：live-build 的 Ubuntu 源可能需要手动指定镜像；首次运行请检查 config/archives/"
-# 安装包清单：内核/桌面基础/运行依赖（可按需增删）
+  --iso-volume "LINGOS" \
+  --archive-areas "main restricted universe multiverse" \
+  --mirror-bootstrap "$MIRROR" \
+  --mirror-chroot "$MIRROR" \
+  --mirror-binary "$MIRROR" \
+  --parent-mirror-bootstrap "$MIRROR" \
+  --parent-mirror-chroot "$MIRROR" \
+  --parent-mirror-binary "$MIRROR" \
+  --bootappend-live "boot=live components quiet splash lingos.autostart=1" \
+  --linux-flavours generic
+
+# ---------- 包清单 ----------
 mkdir -p config/package-lists
 cat > config/package-lists/lingos.list.chroot <<'EOF'
+live-boot
+live-config
 linux-image-generic
-grub-efi-amd64
 systemd-sysv
 network-manager
-pipewire
+ca-certificates
+curl
 python3
 python3-requests
+rsync
+e2fsprogs
+dosfstools
+parted
+gdisk
+whiptail
+util-linux
+kmod
+grub2-common
+grub-efi-amd64-bin
+grub-efi-amd64-signed
+grub-pc-bin
+espeak-ng
+ffmpeg
 libcurl4
 libseccomp2
 libsqlite3-0
 libmosquitto1
 libmicrohttpd12
 libssl3
-espeak-ng
-ffmpeg
-curl
 EOF
-# 安装 LING OS 全捆包（chroot hook）
-mkdir -p config/hooks/live
-cat > config/hooks/live/0100-lingos-bundle.hook.chroot <<HOOK
+if [ "$DEBARCH" = "arm64" ]; then
+    sed -i '/grub-efi-amd64/d; /grub-pc-bin/d' config/package-lists/lingos.list.chroot
+    echo 'grub-efi-arm64-bin' >> config/package-lists/lingos.list.chroot
+    echo 'grub-efi-arm64-signed' >> config/package-lists/lingos.list.chroot
+fi
+
+# ---------- 安装器 / 服务单元 / 全捆包 ----------
+mkdir -p config/includes.chroot/usr/local/sbin \
+         config/includes.chroot/etc/systemd/system \
+         config/includes.chroot/LINGOS/offline \
+         config/hooks/live
+cp "$ROOT/distro/images/live/lingos-install.sh" config/includes.chroot/usr/local/sbin/lingos-install
+chmod +x config/includes.chroot/usr/local/sbin/lingos-install
+cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
+cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
+cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
+
+# ---------- chroot hook ----------
+cat > config/hooks/live/0100-lingos.hook.chroot <<'HOOK'
 #!/bin/sh
 set -e
 mkdir -p /tmp/lingos_bundle
 tar xzf /LINGOS/offline/lingos_bundle.tar.gz -C /tmp/lingos_bundle --strip-components=1
 bash /tmp/lingos_bundle/install.sh /LINGOS
 rm -rf /tmp/lingos_bundle
+rm -f /LINGOS/offline/lingos_bundle.tar.gz
+chmod +x /usr/local/sbin/lingos-install
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sf /etc/systemd/system/lingos-installer.service /etc/systemd/system/multi-user.target.wants/lingos-installer.service
+echo "LINGOS live root prepared"
 HOOK
-chmod +x config/hooks/live/0100-lingos-bundle.hook.chroot
-mkdir -p config/includes.chroot/LINGOS/offline
-cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
-echo "==> lb build（10-20 分钟，需网络）"
+chmod +x config/hooks/live/0100-lingos.hook.chroot
+
+echo "==> lb build（10-30 分钟，需网络）"
 lb build
-cp -v live-image-*.hybrid.iso "$OUT/lingos-installer.iso" 2>/dev/null || cp -v *.iso "$OUT/lingos-installer.iso" 2>/dev/null || true
+
+ISO=$(ls -1 *.hybrid.iso 2>/dev/null | head -1 || true)
+if [ -z "$ISO" ]; then ISO=$(ls -1 *.iso 2>/dev/null | head -1 || true); fi
+if [ -z "$ISO" ]; then echo "构建失败：未找到 ISO 产物" >&2; exit 1; fi
+cp -v "$ISO" "$OUT/lingos-installer-$ARCH.iso"
 rm -rf "$WORK"
-echo "OK: $OUT/lingos-installer.iso（安装器/分区方案见 docs/IMAGES.md）"
+echo "OK: $OUT/lingos-installer-$ARCH.iso"

@@ -1,0 +1,15 @@
+[Unit]
+Description=LING OS（AI 原生 Linux 设备系统）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/LINGOS
+Environment=LINGOS_BUNDLED=1
+ExecStart=/bin/bash -lc "/LINGOS/lingos.sh start && exec tail -n +1 -F /LINGOS/log/lingos.log"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
