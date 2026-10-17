@@ -1,0 +1,15 @@
+[Unit]
+Description=LING OS VNC server (wayvnc)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/lingos-wayvnc
+Restart=on-failure
+RestartSec=3
+Environment=XDG_SESSION_TYPE=wayland
+Environment=LINGOS_VNC_LISTEN=127.0.0.1
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=LING OS WebUI kiosk (Wayland)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/lingos-kiosk
+Restart=on-failure
+RestartSec=3
+Environment=XDG_SESSION_TYPE=wayland
+Environment=MOZ_ENABLE_WAYLAND=1
+Environment=LINGOS_UI_URL=http://127.0.0.1:8080/ui
+
+[Install]
+WantedBy=graphical-session.target

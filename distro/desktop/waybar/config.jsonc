@@ -1,0 +1,55 @@
+{
+  "layer": "top",
+  "position": "top",
+  "height": 34,
+  "spacing": 8,
+  "margin-top": 0,
+  "modules": {
+    "left": [
+      "custom/logo",
+      "wlr/taskbar"
+    ],
+    "center": [
+      "clock"
+    ],
+    "right": [
+      "network",
+      "wireplumber",
+      "battery",
+      "custom/ai",
+      "tray"
+    ]
+  },
+  "custom/logo": {
+    "format": "LING OS",
+    "tooltip": false,
+    "on-click": "wofi --show drun"
+  },
+  "custom/ai": {
+    "format": "AI: 在线",
+    "tooltip": false,
+    "on-click": "lingos-kiosk"
+  },
+  "clock": {
+    "format": "{:%H:%M  %m-%d}",
+    "tooltipFormat": "<b>{}</b>"
+  },
+  "network": {
+    "formatWifi": "Wi-Fi",
+    "formatWired": "有线",
+    "formatDisconnected": "离线"
+  },
+  "wireplumber": {
+    "format": "{volume}%"
+  },
+  "battery": {
+    "states": {
+      "warning": 20,
+      "critical": 10
+    },
+    "format": "{capacity}%"
+  },
+  "tray": {
+    "spacing": 6
+  }
+}

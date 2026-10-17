@@ -20,7 +20,7 @@
 ## 二、当前状态（诚实标注）
 
 - ✅ 可用：命令行/协议面（251 条可达命令：112 核心 + 82 扩展 + 68 技能）、事件总线、安全策略、预警本地链、MQTT/HA 集成、rootfs 安装、增量更新、技能系统、记忆、双语。
-- 🟡 开发中：图形桌面（Wayland 方案设计完成）、外部内容解析插件（设计完成）、OTA A/B 与真回滚、可观测/评测、契约测试。
+- 🟡 开发中：图形桌面（Wayland 资产已就绪：labwc/waybar/wofi/kiosk）、外部内容解析插件（管线+5 内置插件已实现）、OTA A/B 与真回滚、可观测/评测、契约测试。
 - 🟠 待收口：App/WebUI 部分功能受命令契约问题影响、个别技能为回退实现。
 - ❌ 未开始：镜像构建、包管理、备份恢复、真机长稳（J1–J8）。
 
@@ -65,12 +65,15 @@ CI：GitHub Actions（build-bundle，双架构全量包 + Release 资产）。
 | api.describe / api.openapi / api.rely_status | 命令清单与 OpenAPI 描述 |
 | lingosctl | CLI：api.describe / config.get / system.selfcheck 等 |
 | MQTT / HA / webhook | 智能家居与外部系统集成 |
+| ingest_add/status/list/search/plugins | 外部内容接入插件管线（S16）：URL/文件/文本→解析→切块→入库→检索 |
+| remote_status / vnc_start / vnc_stop | 远程访问状态与 VNC 控制（wayvnc） |
 
 ## 六、目录结构
 
     src/        C 系统层（daemon/api/alert/vision/voice/ai/security/registry/...）
     python/     Agent 层（ai_server/llm_unified/skills/ext/memory/mcp/...）
-    webui/      WebUI（单页，25 页真实数据）
+    webui/      WebUI（25 页真实数据）+ 三主题（A/B/C）+ 主题预览
+    distro/     发行版资产：desktop（labwc/waybar/wofi/kiosk/wayvnc）
     frontend/   Qt6 桌面前端（冻结，可选）
     docs/       架构/插件/i18n 文档
     scripts/    构建/打包/部署
@@ -82,6 +85,8 @@ CI：GitHub Actions（build-bundle，双架构全量包 + Release 资产）。
 - [DEPENDENCIES.md](DEPENDENCIES.md)：依赖清单
 - [docs/ARCHITECTURE_系统类目.md](docs/ARCHITECTURE_系统类目.md)：系统类目架构
 - [docs/PLUGIN_ARCHITECTURE.md](docs/PLUGIN_ARCHITECTURE.md)：插件化架构（含外部内容解析扩展设计基线）
+- [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md)：HTTP / WebSocket / VNC 远程访问矩阵
+- webui/preview/theme-preview.html：三种 UI 方向预览（A 静默深色 / B 暖白家居 / C 诺玛 HUD）
 
 ## 八、路线图
 
