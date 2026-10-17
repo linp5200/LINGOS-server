@@ -1,0 +1,67 @@
+name: images
+
+# LING OS 镜像构建（容器镜像 + 启动冒烟 + artifact）。
+# VM(qcow2)/ISO 见 distro/images/build-vm-qcow2.sh / build-iso.sh（需网络+root，默认不在 CI 跑）。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc make pkg-config \
+            libcurl4-openssl-dev libseccomp-dev libsqlite3-dev \
+            libmosquitto-dev libmicrohttpd-dev libssl-dev \
+            python3 python3-venv python3-pip
+
+      - name: 编译
+        run: make 2>&1 | tail -20
+
+      - name: 全捆打包
+        run: RELEASE_VER=0.9.0 bash scripts/bundle.sh dist
+
+      - name: 构建容器镜像
+        run: |
+          cp -f dist/*allbin*.tar.gz dist/lingos-container-bundle.tar.gz
+          docker build -f distro/images/Dockerfile -t lingos-server:ci .
+
+      - name: 容器冒烟（启动 + /system/health）
+        run: |
+          docker run -d --name lingos-ci -p 18080:8080 -p 12939:2939 lingos-server:ci
+          ok=0
+          for i in $(seq 1 30); do
+            sleep 3
+            if curl -fsS http://127.0.0.1:18080/system/health >/dev/null 2>&1; then ok=1; break; fi
+          done
+          echo "health_probe=$ok"
+          curl -sS http://127.0.0.1:18080/system/health || true
+          if [ "$ok" != "1" ]; then
+            echo "--- container logs ---"
+            docker logs lingos-ci | tail -120
+            docker rm -f lingos-ci
+            exit 1
+          fi
+          echo "--- container logs (tail) ---"
+          docker logs lingos-ci | tail -40
+
+      - name: 导出镜像 artifact
+        if: always()
+        run: |
+          docker save lingos-server:ci | gzip > /tmp/lingos-container-image.tar.gz
+          ls -lh /tmp/lingos-container-image.tar.gz
+
+      - name: 上传镜像 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lingos-container-image
+          path: /tmp/lingos-container-image.tar.gz
