@@ -14,7 +14,7 @@ if [ "$#" -ge 2 ]; then DIST=$2; fi
 if [ -z "$DIST" ]; then DIST=noble; fi
 BINIMG=iso
 case "$ARCHARG" in
-    x86_64|amd64)  ARCH=x86_64;  DEBARCH=amd64; GRUBPKG=grub-efi-amd64-bin; GRUBTARGET=x86_64-efi; MIRROR=http://archive.ubuntu.com/ubuntu; BINIMG=iso-hybrid ;;
+    x86_64|amd64)  ARCH=x86_64;  DEBARCH=amd64; GRUBPKG=grub-efi-amd64-bin; GRUBTARGET=x86_64-efi; MIRROR=http://archive.ubuntu.com/ubuntu;;
     aarch64|arm64) ARCH=aarch64; DEBARCH=arm64; GRUBPKG=grub-efi-arm64-bin; GRUBTARGET=arm64-efi;  MIRROR=http://ports.ubuntu.com/ubuntu-ports ;;
     *) echo "unsupported arch: $ARCHARG" >&2; exit 1 ;;
 esac
