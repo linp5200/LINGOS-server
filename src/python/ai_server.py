@@ -4229,6 +4229,17 @@ def _reply(conn, cmd_name, resp):
         if isinstance(resp, dict):
             resp = dict(resp)
             resp["cmd"] = cmd_name
+            try:
+                import uuid as _uuid
+                resp.setdefault("trace_id", _uuid.uuid4().hex[:16])
+                resp.setdefault("server_ts", int(time.time() * 1000))
+                _ctx = getattr(_api_tls, "current", None)
+                if _ctx:
+                    resp.setdefault("duration_ms", int((time.time() - _ctx.get("t0", time.time())) * 1000))
+                else:
+                    resp.setdefault("duration_ms", 0)
+            except Exception:
+                pass
         _payload = json.dumps(resp, ensure_ascii=False)
         # 【0.7.2】API 日志一行式（req 从 handle_client 线程上下文取——req+resp 齐）
         try:
