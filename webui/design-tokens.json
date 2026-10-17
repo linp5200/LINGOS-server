@@ -1,0 +1,113 @@
+{
+  "$schema": "lingos-design-tokens/v1",
+  "version": "1.0.0",
+  "themes": {
+    "A": {
+      "name": "静默深色",
+      "mode": "dark",
+      "color": {
+        "bg": "#0B0D10",
+        "surface": "#12151A",
+        "surface2": "#191D24",
+        "line": "rgba(255,255,255,0.08)",
+        "text": "#E8EAED",
+        "text2": "#9AA3AF",
+        "dim": "#5C6470",
+        "accent": "#3DDC97",
+        "warn": "#E8A33D",
+        "danger": "#E5484D",
+        "info": "#5AC8FA"
+      }
+    },
+    "B": {
+      "name": "暖白家居",
+      "mode": "light",
+      "color": {
+        "bg": "#F7F5F0",
+        "surface": "#FFFFFF",
+        "surface2": "#F0EDE6",
+        "line": "rgba(0,0,0,0.10)",
+        "text": "#1C1F24",
+        "text2": "#5B616B",
+        "dim": "#8A9099",
+        "accent": "#0F9D6E",
+        "warn": "#C77B1E",
+        "danger": "#C43D3D",
+        "info": "#2F7CD6"
+      }
+    },
+    "C": {
+      "name": "诺玛 HUD",
+      "mode": "dark",
+      "color": {
+        "bg": "#070A0F",
+        "surface": "#0E141D",
+        "surface2": "#131B26",
+        "line": "rgba(120,200,255,0.16)",
+        "text": "#E6F1FF",
+        "text2": "#9DB4CC",
+        "dim": "#5A7186",
+        "accent": "#4FD1FF",
+        "warn": "#FFB454",
+        "danger": "#FF5C5C",
+        "info": "#7AA2FF"
+      },
+      "glow": "radial-gradient(600px 260px at 20% 0%, rgba(79,209,255,0.10), transparent)"
+    }
+  },
+  "typography": {
+    "font": "system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif",
+    "mono": "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+    "size": {
+      "xs": "12px",
+      "sm": "13px",
+      "md": "15px",
+      "lg": "17px",
+      "xl": "22px",
+      "xxl": "28px"
+    },
+    "lh": "1.5"
+  },
+  "spacing": {
+    "1": "4px",
+    "2": "8px",
+    "3": "12px",
+    "4": "16px",
+    "5": "24px",
+    "6": "32px",
+    "7": "48px"
+  },
+  "radius": {
+    "control": "8px",
+    "card": "12px",
+    "bubble": "12px",
+    "sheet": "16px"
+  },
+  "motion": {
+    "fast": "120ms ease-out",
+    "base": "200ms ease-out"
+  },
+  "components": [
+    "CommandPalette",
+    "Button",
+    "Input",
+    "Select",
+    "Card",
+    "ListRow",
+    "Pill",
+    "EmptyState",
+    "ErrorState",
+    "Toast",
+    "Dialog",
+    "Tabs",
+    "ChatUserBubble",
+    "ChatProcessGroup",
+    "ChatAnswer",
+    "AssistantOrb"
+  ],
+  "icons": {
+    "lib": "lucide",
+    "license": "ISC",
+    "usage": "内联 SVG，离线打包，不使用 emoji 作功能图标"
+  }
+}

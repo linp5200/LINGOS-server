@@ -1,0 +1,144 @@
+/* LINGOS 主题层 v1（2026-10-17）
+ * 三种方向：A 静默深色 / B 暖白家居 / C 诺玛 HUD
+ * 用法：<html data-theme="A|B|C"> + theme.js；与现有 index.html CSS 变量兼容。
+ * 依据：docs/LINGOS-UI方向与设计系统-20261017.md
+ */
+:root, :root[data-theme="A"]{
+  --w:#E8EAED; --g:#9AA3AF; --d:#5C6470; --dd:#3A424C;
+  --red:#E5484D; --green:#3DDC97; --amber:#E8A33D; --blue:#5AC8FA;
+  --bg:#0B0D10; --surface:#12151A; --surface2:#191D24;
+  --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --disp:system-ui,-apple-system,'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',sans-serif;
+  --zh:system-ui,-apple-system,'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',sans-serif;
+  --radius:8px; --radius-card:12px;
+  --accent:var(--green); --on-accent:#04110B; --shadow:none;
+}
+:root[data-theme="B"]{
+  --w:#1C1F24; --g:#5B616B; --d:#8A9099; --dd:#B9BEC6;
+  --red:#C43D3D; --green:#0F9D6E; --amber:#C77B1E; --blue:#2F7CD6;
+  --bg:#F7F5F0; --surface:#FFFFFF; --surface2:#F0EDE6;
+  --line:rgba(0,0,0,.10); --line2:rgba(0,0,0,.16);
+  --accent:#0F9D6E; --on-accent:#FFFFFF;
+  --shadow:0 1px 2px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.04);
+}
+:root[data-theme="C"]{
+  --w:#E6F1FF; --g:#9DB4CC; --d:#5A7186; --dd:#35485C;
+  --red:#FF5C5C; --green:#4FD1FF; --amber:#FFB454; --blue:#7AA2FF;
+  --bg:#070A0F; --surface:#0E141D; --surface2:#131B26;
+  --line:rgba(120,200,255,.16); --line2:rgba(120,200,255,.28);
+  --accent:#4FD1FF; --on-accent:#04121B;
+  --shadow:0 0 24px rgba(79,209,255,.06);
+}
+/* ---------- 基础 ---------- */
+html,body{background:var(--bg)!important;color:var(--w)!important;
+  font-family:var(--zh)!important;min-width:0!important}
+body{background-image:none!important;font-size:14px!important;line-height:1.5}
+a{color:var(--accent)}
+::selection{background:color-mix(in srgb, var(--accent) 30%, transparent)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
+/* 顶栏 */
+.topbar{background:var(--bg)!important;border-bottom:1px solid var(--line)!important;
+  height:52px!important;position:sticky;top:0;z-index:30;backdrop-filter:blur(8px)}
+.topbar .logo{letter-spacing:1px!important;font-weight:700;color:var(--w)!important}
+.topbar .logo em{color:var(--accent)!important}
+.topbar .lk{color:var(--accent)!important}
+.topbar .lk .p{background:var(--accent)!important;box-shadow:0 0 8px var(--accent)!important;animation:none!important}
+.topbar .ver{border-color:var(--line)!important;color:var(--d)!important;border-radius:999px!important}
+/* 侧栏 */
+.side,.layout,.main,.page{background:var(--bg)!important}
+.side{width:200px!important;border-right:1px solid var(--line)!important;
+  background:var(--surface)!important;padding:12px 10px!important}
+.sec{font-size:9px!important;letter-spacing:1px!important;color:var(--d)!important;
+  padding:14px 10px 6px!important;font-family:var(--zh)!important}
+.nav .ni{padding:8px 10px!important;border-radius:var(--radius)!important;
+  font-family:var(--zh)!important;font-size:13px!important;letter-spacing:0!important;
+  color:var(--g)!important;border-left:0!important;transition:background 120ms ease-out}
+.nav .ni:hover{background:var(--surface2)!important;color:var(--w)!important}
+.nav .ni.on{background:var(--surface2)!important;color:var(--w)!important;
+  border-left:0!important;box-shadow:inset 2px 0 0 var(--accent)}
+.nav .ni .ic{color:var(--accent)!important;opacity:.9!important}
+.nav .ni .b{background:var(--red)!important;color:#fff!important;border-radius:999px!important}
+.side .foot{color:var(--d)!important;border-top:1px solid var(--line)!important}
+/* 页面/卡片/标题 */
+#terrain{display:none!important}
+.page{padding:20px 24px!important}
+.phead{margin-bottom:18px!important;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.phead .k{color:var(--accent)!important;font-size:11px!important;letter-spacing:1px!important;
+  font-family:var(--zh)!important;font-weight:600}
+.phead h1{font-size:22px!important;font-weight:700!important;letter-spacing:0!important;margin-top:4px!important}
+.phead .r{color:var(--d)!important;font-size:12px!important;font-family:var(--zh)!important}
+.card,.metric,.panel,[class*="card"]{background:var(--surface)!important;
+  border:1px solid var(--line)!important;border-radius:var(--radius-card)!important;
+  box-shadow:var(--shadow)!important}
+.card,.metric{padding:16px!important}
+.metric .big{font-size:26px!important;font-weight:600;color:var(--w)!important}
+.metric .lb,...{color:var(--g)!important}
+/* 按钮/输入 */
+button{font-family:var(--zh)!important;font-size:13px!important;letter-spacing:0!important;
+  border-radius:var(--radius)!important;border:1px solid var(--line2)!important;
+  background:transparent!important;color:var(--w)!important;padding:7px 12px!important;
+  cursor:pointer;transition:background 120ms ease-out,border-color 120ms ease-out}
+button:hover{background:var(--surface2)!important;border-color:var(--accent)!important}
+button.primary,.btn-primary{background:var(--accent)!important;color:var(--on-accent)!important;
+  border-color:transparent!important;font-weight:600}
+input,textarea,select{background:var(--surface)!important;color:var(--w)!important;
+  border:1px solid var(--line2)!important;border-radius:var(--radius)!important;
+  font-family:var(--zh)!important;font-size:13px!important;padding:8px 10px!important;outline:none}
+input:focus,textarea:focus,select:focus{border-color:var(--accent)!important;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 20%,transparent)}
+/* 表格/列表 */
+table{width:100%;border-collapse:collapse;background:transparent!important}
+th{color:var(--d)!important;font-weight:500!important;font-size:12px!important;
+  text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)!important;
+  font-family:var(--zh)!important;letter-spacing:0!important}
+td{padding:9px 10px;border-bottom:1px solid var(--line)!important;font-size:13px!important}
+tr:hover td{background:var(--surface2)!important}
+.tag,.pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;
+  font-size:11px;border:1px solid var(--line2);color:var(--g)!important;background:transparent!important}
+/* 聊天 */
+.chatwrap{border:1px solid var(--line)!important;border-radius:var(--radius-card)!important;
+  background:var(--surface)!important;overflow:hidden}
+.chathead{background:var(--surface)!important;border-bottom:1px solid var(--line)!important;
+  font-family:var(--zh)!important;font-size:12px!important;letter-spacing:0!important;color:var(--g)!important}
+.chathead .mod{border:1px solid var(--line2)!important;color:var(--accent)!important;
+  border-radius:999px!important;padding:2px 10px!important;letter-spacing:0!important}
+.chatmsgs{padding:16px 18px!important;gap:12px!important;background:var(--bg)!important}
+.cmsg{max-width:82%!important}
+.cmsg .who{width:28px!important;height:28px!important;border-radius:999px!important;
+  border:1px solid var(--line2)!important;color:var(--g)!important;font-size:11px!important}
+.cmsg .bub{border:1px solid var(--line)!important;border-radius:var(--radius-card)!important;
+  background:var(--surface)!important;padding:10px 14px!important;font-size:14px!important;line-height:1.6!important}
+.cmsg.u .bub{background:var(--surface2)!important;border-color:var(--line2)!important;color:var(--w)!important}
+.cmsg .bub .meta{font-family:var(--zh)!important;font-size:11px!important;color:var(--d)!important;
+  margin-bottom:6px!important;letter-spacing:0!important}
+.cmsg .bub pre{background:var(--bg)!important;color:var(--g)!important;border-radius:var(--radius)!important;
+  padding:10px!important;font-size:12px!important}
+.toolblk{border-left:2px solid var(--accent)!important;background:var(--surface2)!important;
+  border-radius:0 var(--radius) var(--radius) 0!important;padding:8px 12px!important;
+  font-family:var(--zh)!important;font-size:12px!important;color:var(--g)!important;margin:8px 0!important}
+.chatin{background:var(--surface)!important;border-top:1px solid var(--line)!important;padding:12px 14px!important}
+.chatin textarea{background:var(--bg)!important;border:1px solid var(--line2)!important;
+  border-radius:var(--radius-card)!important;font-size:14px!important;padding:10px 12px!important}
+.chatin .send{background:var(--accent)!important;color:var(--on-accent)!important;
+  border:0!important;border-radius:var(--radius)!important;font-family:var(--zh)!important;
+  font-size:13px!important;letter-spacing:0!important;font-weight:600}
+.chatstatus{color:var(--d)!important;font-family:var(--zh)!important;font-size:11px!important;
+  letter-spacing:0!important;border-top:1px solid var(--line)!important}
+/* C 主题：助理光环（只作用于顶栏/聊天头） */
+:root[data-theme="C"] .topbar{background-image:radial-gradient(600px 120px at 14% 0%,rgba(79,209,255,.12),transparent)!important}
+:root[data-theme="C"] .chathead{background-image:radial-gradient(500px 100px at 10% 0%,rgba(79,209,255,.10),transparent)!important}
+/* 主题切换器（theme.js 注入） */
+.lingos-theme-switch{display:flex;align-items:center;gap:4px;margin-left:12px;
+  padding:3px;border:1px solid var(--line2);border-radius:999px;background:var(--surface)}
+.lingos-theme-switch button{padding:3px 10px!important;border:0!important;border-radius:999px!important;
+  background:transparent!important;color:var(--g)!important;font-size:12px!important;line-height:1.4}
+.lingos-theme-switch button.on{background:var(--accent)!important;color:var(--on-accent)!important;font-weight:600}
+/* 通用工具类（供新页面/预览使用） */
+.lg-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-card);
+  padding:16px;box-shadow:var(--shadow)}
+.lg-muted{color:var(--g)} .lg-dim{color:var(--d)} .lg-accent{color:var(--accent)}
+.lg-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;
+  border:1px solid var(--line2);font-size:12px;color:var(--g)}
+.lg-empty{padding:32px;text-align:center;color:var(--d);font-size:13px}
