@@ -152,6 +152,10 @@ GRUBCFG
     grub-mkrescue --modules="part_gpt part_msdos fat iso9660 normal linux search search_fs_file search_fs_uuid search_label configfile echo serial terminal all_video" \
         -o "$OUT/lingos-installer-$ARCH.iso" "$BIN_DIR" -- -volid LINGOS
     rm -rf "$WORK"
+    if ! xorriso -indev "$OUT/lingos-installer-$ARCH.iso" -report_el_torito plain 2>/dev/null | grep -q "UEFI"; then
+        echo "错误：grub-mkrescue 产物没有 UEFI El Torito 引导项" >&2
+        exit 1
+    fi
     echo "OK: $OUT/lingos-installer-$ARCH.iso (grub-mkrescue)"
     exit 0
 fi
