@@ -30,6 +30,8 @@ ISO 行为：
   分区 = GPT + EFI 512M + root ext4（余量）；rsync live 根到目标盘；装 GRUB（UEFI+BIOS）。
 - 手动模式：在 live 终端执行 sudo lingos-install（whiptail 选盘/确认）。
 - 安装后首启由 systemd lingos.service 拉起 LINGOS（/LINGOS 数据根，WebUI 8080）。
+- 写盘：ISO 为 UEFI El Torito 格式——用 Rufus「ISO 模式」或光学介质/虚拟机挂载；
+  如需 dd 直写 U 盘的 hybrid MBR，后续版本再补（x86 的 isohybrid 依赖已被移除，避免构建脆弱）。
 - 桌面（labwc/waybar/wofi + WebUI kiosk）资产在 distro/desktop/，后续加入 ISO 包清单。
 
 ## 三、VM 镜像（qcow2）
