@@ -12,7 +12,7 @@
 
 - **设备系统层（C）**：lingosd 主程序、supervisor、alertd、visiond、voiced、monitor/ai_vision、安装/更新、应用沙箱（seccomp + namespace）、驱动与设备管理。
 - **Agent 层（Python）**：模型统一层（多 Provider）、68 个 AI 技能、82 个扩展命令、MCP 客户端、会话/记忆 L1-L3、上下文压缩、子 AI 调度、危机模式。
-- **交互层**：WebUI（25 页真实数据，将作为桌面 kiosk 壳）、Flutter App、语音 TTS（STT 规划中）。
+- **交互层**：WebUI（25 页真实数据 + 三主题 + 投放箱，作为桌面 kiosk 壳）、Flutter App、语音 TTS（STT 规划中）。
 - **接口面**：统一命令协议（HTTP /api/cmd、WebSocket 2939）、OpenAPI（api.openapi）、lingosctl CLI、MQTT/HA 集成、webhook。
 
 目标形态：**电脑上的 AI 手机 + 智能家居中枢 + 常驻系统助理**（人格参考"诺玛 / 红后"）。
@@ -20,7 +20,7 @@
 ## 二、当前状态（诚实标注）
 
 - ✅ 可用：命令行/协议面（251 条可达命令：112 核心 + 82 扩展 + 68 技能）、事件总线、安全策略、预警本地链、MQTT/HA 集成、rootfs 安装、增量更新、技能系统、记忆、双语。
-- 🟡 开发中：图形桌面（Wayland 资产已就绪：labwc/waybar/wofi/kiosk）、外部内容解析插件（管线+5 内置插件已实现）、OTA A/B 与真回滚、可观测/评测、契约测试。
+- 🟡 开发中：图形桌面（Wayland 资产已就绪：labwc/waybar/wofi/kiosk/wayvnc；TUI 桌面已退役 tag legacy-tui-0.9.0）、OTA A/B 与真回滚、评测扩面。
 - 🟠 待收口：App/WebUI 部分功能受命令契约问题影响、个别技能为回退实现。
 - ❌ 未开始：镜像构建、包管理、备份恢复、真机长稳（J1–J8）。
 
@@ -86,6 +86,7 @@ CI：GitHub Actions（build-bundle，双架构全量包 + Release 资产）。
 - [docs/ARCHITECTURE_系统类目.md](docs/ARCHITECTURE_系统类目.md)：系统类目架构
 - [docs/PLUGIN_ARCHITECTURE.md](docs/PLUGIN_ARCHITECTURE.md)：插件化架构（含外部内容解析扩展设计基线）
 - [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md)：HTTP / WebSocket / VNC 远程访问矩阵
+- [distro/desktop/README.md](distro/desktop/README.md)：Wayland 桌面（labwc/waybar/wofi/kiosk/wayvnc）
 - webui/preview/theme-preview.html：三种 UI 方向预览（A 静默深色 / B 暖白家居 / C 诺玛 HUD）
 
 ## 八、路线图
