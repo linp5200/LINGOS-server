@@ -145,7 +145,13 @@ if [ "$DEBARCH" = "arm64" ]; then
         echo "错误：chroot/boot 缺少 vmlinuz/initrd" >&2
         exit 1
     fi
-    cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
+    # Ubuntu arm64 的 /boot/vmlinuz-* 是 gzip 压缩；GRUB arm64 linux 需要 PE/EFI-stub 内核
+    if file -L "$KERNEL" | grep -qi gzip; then
+        gunzip -c "$KERNEL" > "$BIN_DIR/live/vmlinuz"
+        echo "==> kernel 已解压为 EFI-stub Image: $(file -L "$BIN_DIR/live/vmlinuz" | cut -c1-80)"
+    else
+        cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
+    fi
     cp -f "$INITRD" "$BIN_DIR/live/initrd.img"
     echo "==> mksquashfs chroot -> binary/live/filesystem.squashfs（xz，排除缓存/文档）"
     mksquashfs "$CHROOT_DIR" "$BIN_DIR/live/filesystem.squashfs" -comp xz -noappend \
