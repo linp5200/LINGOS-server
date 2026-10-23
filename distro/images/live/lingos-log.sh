@@ -51,9 +51,13 @@ _emit() {
     local line="$1" t
     printf '%s\n' "$line" 2>/dev/null >> "$LINGOS_LOG" || true
     printf '<6>%s\n' "$line" 2>/dev/null > /dev/kmsg || true
-    # 串口优先（CI/真机调试依赖），再写 tty0/tty1
-    for t in /dev/ttyAMA0 /dev/ttyS0 /dev/tty0 /dev/tty1; do
+    # 串口直接写（CI/真机调试依赖）；tty0/tty1 用 timeout 保护，避免 getty/console buffer 阻塞整个安装
+    for t in /dev/ttyAMA0 /dev/ttyS0; do
         [ -c "$t" ] && { printf '%s\n' "$line" 2>/dev/null > "$t" || true; }
+    done
+    for t in /dev/tty0 /dev/tty1; do
+        [ -c "$t" ] || continue
+        printf '%s\n' "$line" 2>/dev/null | timeout 1 tee -a "$t" >/dev/null 2>&1 || true
     done
     printf '%s\n' "$line" >&2
 }
