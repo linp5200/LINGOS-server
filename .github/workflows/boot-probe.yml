@@ -9,6 +9,10 @@ on:
         description: "要诊断的 Release tag"
         required: true
         default: v0.9.11
+      inspect_only:
+        description: "只解包检查 initrd（不跑 QEMU）"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -48,7 +52,38 @@ jobs:
           echo "=== 根目录 ==="
           xorriso -indev lingos.iso -ls / 2>&1 | head -20 || true
 
+      - name: 解包 initrd 检查关键组件
+        working-directory: work
+        run: |
+          sudo apt-get install -y initramfs-tools xorriso
+          xorriso -osirrox on -indev lingos.iso -extract /live/initrd.img "$PWD/initrd.img" 2>/dev/null || true
+          xorriso -osirrox on -indev lingos.iso -extract /live/vmlinuz "$PWD/vmlinuz" 2>/dev/null || true
+          ls -l initrd.img vmlinuz 2>/dev/null || true
+          rm -rf ird && mkdir ird
+          if command -v unmkinitramfs >/dev/null 2>&1; then
+            unmkinitramfs initrd.img ird || true
+          fi
+          {
+            echo "=== initrd 顶层 ==="
+            ls ird 2>/dev/null || true
+            echo "=== live-boot 脚本 ==="
+            find ird -name 'live-boot' -o -name 'live' -path '*scripts*' 2>/dev/null | head
+            echo "=== 关键工具 ==="
+            for f in blkid udevadm cdrom_id mount modprobe; do
+              echo "-- $f --"; find ird -name "$f" 2>/dev/null | head -3
+            done
+            echo "=== 驱动模块 ==="
+            for m in isofs squashfs sr_mod usb-storage uas virtio_blk overlay; do
+              echo "-- $m --"; find ird -name "*$m*" 2>/dev/null | head -3
+            done
+            echo "=== initrd 内核版本 ==="
+            ls ird/main/lib/modules 2>/dev/null || ls ird/lib/modules 2>/dev/null || true
+            echo "=== vmlinuz 版本字符串 ==="
+            strings vmlinuz 2>/dev/null | grep -m3 -E 'Linux version|6\.8\.0' || true
+          } 2>&1 | tee initrd-check.txt
+
       - name: QEMU 启动（usb-storage 光驱 / virtio 光驱 两种，串口日志）
+        if: ${{ inputs.inspect_only != 'true' }}
         working-directory: work
         run: |
           for variant in usb virtio; do
@@ -100,6 +135,7 @@ jobs:
             work/iso-live.txt
             work/sha256.txt
             work/qemu.txt
+            work/initrd-check.txt
           if-no-files-found: warn
 
   x86_64:
