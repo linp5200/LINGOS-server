@@ -114,7 +114,9 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/includes.chroot/etc/initramfs-tools/scripts/init-premount \
          config/includes.chroot/LINGOS/offline \
          config/hooks/live
-for f in lingos-install lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session; do
+cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
+chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
+for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/sbin/$f"
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done

@@ -24,6 +24,17 @@ LOG="$OUT/serial.log"
 DISK="$OUT/disk.qcow2"
 : > "$LOG"
 qemu-img create -f qcow2 "$DISK" 12G >/dev/null || exit 2
+echo "==> ISO 内容检查（vmlinuz/initrd/filesystem.squashfs）"
+if command -v xorriso >/dev/null 2>&1; then
+    xorriso -indev "$ISO" -find /live -exec lsdl 2>/dev/null | tee "$OUT/iso-live.txt" || true
+    if xorriso -indev "$ISO" -find /live/filesystem.squashfs -exec lsdl 2>/dev/null | grep -q filesystem.squashfs; then
+        echo "PASS: ISO 内 /live/filesystem.squashfs 存在"
+    else
+        echo "FAIL: ISO 内缺少 /live/filesystem.squashfs（构建问题）"
+    fi
+else
+    echo "（未安装 xorriso，跳过 ISO 内容检查）"
+fi
 echo "==> 启动测试 arch=$ARCH mode=$MODE timeout=${TIMEOUT}s"
 echo "    ISO: $ISO"
 echo "    日志: $LOG"
