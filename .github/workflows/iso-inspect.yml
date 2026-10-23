@@ -67,6 +67,11 @@ jobs:
             done
             echo "=== initrd kernel modules dir ==="
             ls ird/main/lib/modules 2>/dev/null || ls ird/lib/modules 2>/dev/null || true
+            echo "=== LING OS initramfs 脚本 ==="
+            find ird -name 'lingos-report' -o -name 'lingos-bottom' 2>/dev/null | head
+            cat ird/*/scripts/init-premount/lingos-report 2>/dev/null | head -20 || true
+            echo "=== /conf/modules ==="
+            cat ird/*/conf/modules 2>/dev/null | head -30 || true
             echo "=== vmlinuz version ==="
             strings vmlinuz 2>/dev/null | grep -m2 -E 'Linux version 6\.' || true
           } | tee initrd-check.txt
