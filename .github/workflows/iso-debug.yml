@@ -53,7 +53,7 @@ jobs:
             -device usb-storage,bus=xhci.0,drive=cd \
             -drive file="$PWD/disk.qcow2",if=none,id=disk,format=qcow2 \
             -device virtio-blk-pci,drive=disk \
-            -device VGA -display none -monitor none -no-reboot \
+            -display none -monitor none -no-reboot \
             -serial "unix:/tmp/lingos-serial.sock,server=on,wait=off" > qemu.err 2>&1 &
           QPID=$!
           sleep 2
