@@ -10,8 +10,6 @@ for m in isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk vi
     modprobe -q "$m" 2>/dev/null || true
 done
 
-# debug 模式下 initramfs-tools 把输出重定向到 /run/initramfs/initramfs.debug；
-# 用 cat 循环把它流到串口（不依赖 tail/head 等可能缺失的 busybox applet）。
 case "$(cat /proc/cmdline 2>/dev/null)" in
     *debug*)
         if [ -e /run/initramfs/initramfs.debug ]; then
@@ -25,7 +23,8 @@ for c in /dev/ttyAMA0 /dev/ttyS0; do
     [ -e "$c" ] && printf 'LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > "$c" 2>/dev/null || true
 done
 
-sleep 3
+# 等 udev 冷插拔
+sleep 4
 for c in /dev/ttyAMA0 /dev/ttyS0; do
     [ -e "$c" ] || continue
     {
@@ -38,6 +37,19 @@ for c in /dev/ttyAMA0 /dev/ttyS0; do
         blkid /dev/sr0 2>&1 || true
         echo "-- /sys/block --"
         ls /sys/block 2>&1 || true
+        echo "-- mount test --"
+        mkdir -p /mnt/lingos-probe
+        n=0
+        while [ "$n" -lt 3 ]; do
+            if mount -t iso9660 -o ro /dev/sr0 /mnt/lingos-probe 2>/dev/null; then
+                echo "MOUNT-OK"
+                ls /mnt/lingos-probe/live 2>&1 || true
+                umount /mnt/lingos-probe 2>/dev/null || true
+                break
+            fi
+            n=$((n+1)); sleep 2
+        done
+        [ "$n" -ge 3 ] && echo "MOUNT-FAIL"
         echo "LINGOS-PROBE-END"
     } > "$c" 2>&1
 done
