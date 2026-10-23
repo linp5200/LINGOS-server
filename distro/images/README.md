@@ -122,3 +122,11 @@ Vectras VM（Android ARM64）的完整配置见 [vm/VECTRAS-VM.md](vm/VECTRAS-VM
 | 一直停在安装器某阶段 | 看 `/run/lingos-install/state.json` 与 `/var/log/lingos-install.log`；诊断模式执行 `lingos-diag` |
 | 未发现可安装磁盘 | 需要 ≥8G 非 USB 磁盘；共享文件夹/光驱会被自动排除 |
 | Release 资产是 .part0/.part1 | GitHub 单资产 2GiB 限制；按 `.合并说明.txt` 执行 `cat part* > iso`，并用 `SHA256SUMS.txt` 校验 |
+## v0.9.12 发布（2026-10-23）
+
+- Release: https://github.com/linp5200/LINGOS-server/releases/tag/v0.9.12
+- arm64（Vectras/QEMU UEFI）：下载 `lingos-installer-aarch64.iso.part0/part1`，合并：
+  `cat lingos-installer-aarch64.iso.part* > lingos-installer-aarch64.iso`
+  合并后 sha256 见 `lingos-installer-aarch64.iso.txt`。
+- x86_64：`lingos-installer-x86_64.iso`（UEFI 启动问题仍待修，见进展记录）。
+- CI 启动冒烟已通过：run 40021339089（`qemu_result=installer-writing`，安装器完成分区/格式化）。

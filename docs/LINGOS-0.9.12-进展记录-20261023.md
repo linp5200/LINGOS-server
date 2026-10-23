@@ -124,8 +124,14 @@
 - [x] v0.9.11 故障在 CI 复现并定位到 live-boot
 - [x] 启动日志/进度/菜单/诊断/桌面集成代码完成
 - [x] 容器 CI 通过
-- [ ] 0.9.12 arm64 完整启动冒烟通过（CI 进行中，QEMU TCG 较慢）
-- [ ] v0.9.12 Release 发布
+- [x] **0.9.12 arm64 启动冒烟通过（CI）**：run 40021339089，`qemu_result=installer-writing`，
+      PASS：boot-mode / preflight / 选盘，磁盘已写入（qcow2 7.6MB，分区+格式化阶段）
+- [x] **v0.9.12 Release 已发布**：https://github.com/linp5200/LINGOS-server/releases/tag/v0.9.12
+      - arm64：`lingos-installer-aarch64.iso.part0`（1,992,294,400）+ `part1`（1,069,608,960），
+        合并后 3,061,903,360 字节，sha256 `72b1e456f20eed8d180187aca8aab0e4bc026e7d741e8eef78a56f0870ab68d2`
+      - x86_64：`lingos-installer-x86_64.iso`（1,632,577,536）
+      - `SHA256SUMS.txt`、`lingos-installer-aarch64.iso.txt`（合并说明）
+      - 发布流水线：publish（40023687345）与 publish-fast（40026295197，aria2 并行下载）均成功
 - [ ] 真机 Vectras 验证安装 + 桌面
 
 ## 四、后续
