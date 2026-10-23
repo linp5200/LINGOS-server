@@ -1,0 +1,94 @@
+name: iso-lab
+
+# 诊断实验：下载带 ISO 的 artifact，改写 GRUB cmdline 做多组引导实验（UEFI + 串口）
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: "含 arm64 ISO 的 artifact id"
+        required: true
+        default: "12504494242"
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 qemu-utils xorriso \
+            grub-efi-arm64-bin grub2-common mtools dosfstools rsync
+
+      - name: 下载并解包 artifact 中的 ISO
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work && cd work
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ inputs.artifact_id }}/zip" \
+            -o art.zip
+          ls -lh art.zip
+          unzip -o -q art.zip -d art
+          ISO=$(find art -name '*.iso' | head -1)
+          [ -n "$ISO" ] || { echo "no iso"; exit 1; }
+          ln -sf "$PWD/$ISO" lingos.iso
+          ls -lh lingos.iso
+          # 解出 ISO 树，用于改写 grub.cfg 后重制
+          xorriso -osirrox on -indev lingos.iso -extract / tree >/dev/null 2>&1 || true
+          ls tree | head
+
+      - name: 多组 cmdline 引导实验
+        working-directory: work
+        run: |
+          BASE="boot=live components debug console=tty0 console=ttyAMA0,115200 loglevel=7 video=1024x768@60"
+          run_variant () {
+            NAME="$1"; EXTRA="$2"
+            echo "########## $NAME ##########"
+            mkdir -p tree/boot/grub
+            cat > tree/boot/grub/grub.cfg <<GRUB
+set default=0
+set timeout=3
+menuentry "LING OS lab $NAME" {
+    linux /live/vmlinuz $BASE $EXTRA lingos.mode=install-auto
+    initrd /live/initrd.img
+}
+GRUB
+            rm -f "variant-$NAME.iso"
+            grub-mkrescue --modules="part_gpt part_msdos fat iso9660 normal linux search search_fs_file search_fs_uuid search_label configfile echo serial terminal all_video" \
+              -o "variant-$NAME.iso" tree -- -volid LINGOS >/dev/null 2>&1
+            qemu-img create -f qcow2 "disk-$NAME.qcow2" 12G >/dev/null
+            set +e
+            timeout 150 qemu-system-aarch64 -M virt,virtualization=true -cpu cortex-a76 -m 3072 -smp 2 \
+              -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+              -device nec-usb-xhci,id=xhci \
+              -drive if=none,id=cd,format=raw,media=cdrom,file="$PWD/variant-$NAME.iso" \
+              -device usb-storage,bus=xhci.0,drive=cd \
+              -drive file="$PWD/disk-$NAME.qcow2",if=none,id=disk,format=qcow2 \
+              -device virtio-blk-pci,drive=disk \
+              -device VGA -display none -monitor none -no-reboot \
+              -serial "file:$PWD/serial-$NAME.log" >/dev/null 2>&1
+            echo "qemu_rc=$?"
+            set -e
+            echo "--- markers $NAME ---"
+            grep -aE "INITRAMFS-START|INITRAMFS-BOTTOM|LINGOS-STAGE|LINGOS-BOOT-MODE|BOOT FAILED|Unable to find|Kernel panic|BUSYBOX" "serial-$NAME.log" | head -10 || true
+            echo "disk=$(du -h "disk-$NAME.qcow2" | cut -f1)"
+          }
+          run_variant baseline ""
+          run_variant sr0 "live-media=/dev/sr0"
+          run_variant removable "live-media=removable"
+
+      - name: 上传实验日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-lab-logs
+          path: |
+            work/serial-*.log
+            work/disk-*.qcow2
+            work/grub.cfg
+          if-no-files-found: warn
