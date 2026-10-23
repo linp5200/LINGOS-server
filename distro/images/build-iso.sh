@@ -41,7 +41,7 @@ if [ "$DEBARCH" = "amd64" ]; then
 else
     KCONSOLE="console=tty0 console=ttyAMA0,115200"
 fi
-KCMDLINE="boot=live components debug live-media=/dev/sr0,/dev/sda $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto"
+KCMDLINE="boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto"
 
 WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
 echo "==> live-build 工作目录: $WORK (dist=$DIST arch=$DEBARCH)"
@@ -185,17 +185,9 @@ case "$1" in prereqs) prereqs; exit 0 ;; esac
 for m in isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk virtio_pci; do
     modprobe -q "$m" 2>/dev/null || true
 done
-case "$(cat /proc/cmdline 2>/dev/null)" in
-    *debug*) [ -e /run/initramfs/initramfs.debug ] && ( i=0; while [ "$i" -lt 60 ]; do cat /run/initramfs/initramfs.debug > /dev/ttyAMA0 2>/dev/null; sleep 2; i=$((i+1)); done ) & ;;
-esac
 printf '<6>LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > /dev/kmsg 2>/dev/null || true
 for c in /dev/ttyAMA0 /dev/ttyS0; do
     [ -e "$c" ] && printf 'LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > "$c" 2>/dev/null || true
-done
-sleep 4
-for c in /dev/ttyAMA0 /dev/ttyS0; do
-    [ -e "$c" ] || continue
-    { echo "LINGOS-PROBE-BEGIN"; cat /proc/filesystems 2>/dev/null | grep -E 'iso9660|squashfs|overlay' || true; ls -l /dev/sr* /dev/sd* /dev/vd* 2>&1 || true; blkid /dev/sr0 2>&1 || true; ls /sys/block 2>&1 || true; mkdir -p /mnt/lingos-probe; n=0; while [ "$n" -lt 3 ]; do if mount -t iso9660 -o ro /dev/sr0 /mnt/lingos-probe 2>/dev/null; then echo MOUNT-OK; ls /mnt/lingos-probe/live 2>&1 || true; umount /mnt/lingos-probe 2>/dev/null || true; break; fi; n=$((n+1)); sleep 2; done; [ "$n" -ge 3 ] && echo MOUNT-FAIL; echo "LINGOS-PROBE-END"; } > "$c" 2>&1
 done
 exit 0
 IREPORT
@@ -280,19 +272,19 @@ if [ "$DEBARCH" = "arm64" ]; then
 set default=0
 set timeout=10
 menuentry "LING OS 安装（自动，默认）" {
-    linux /live/vmlinuz boot=live components debug live-media=/dev/sr0,/dev/sda $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
     initrd /live/initrd.img
 }
 menuentry "LING OS 安装（手动选择磁盘）" {
-    linux /live/vmlinuz boot=live components live-media=/dev/sr0,/dev/sda $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-manual
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-manual
     initrd /live/initrd.img
 }
 menuentry "进入 LING OS Live（不安装，可进系统）" {
-    linux /live/vmlinuz boot=live components live-media=/dev/sr0,/dev/sda $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=live
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=live
     initrd /live/initrd.img
 }
 menuentry "诊断模式（收集日志 / 救援 shell）" {
-    linux /live/vmlinuz boot=live components live-media=/dev/sr0,/dev/sda $KCONSOLE loglevel=7 debug lingos.mode=diag
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=7 debug lingos.mode=diag
     initrd /live/initrd.img
 }
 GRUBCFG

@@ -1,5 +1,8 @@
 #!/bin/sh
-# LING OS initramfs 早期标记 + 诊断（init-premount）
+# LING OS initramfs 早期标记（init-premount）
+# 关键：预加载 isofs/squashfs/overlay/loop 等模块。
+# live-boot 的 is_supported_fs 只会 modprobe "iso9660"（模块名实际是 isofs），
+# 不预加载则 /proc/filesystems 无 iso9660，live-boot 会误判“找不到 live 介质”。
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "$1" in
@@ -10,47 +13,8 @@ for m in isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk vi
     modprobe -q "$m" 2>/dev/null || true
 done
 
-case "$(cat /proc/cmdline 2>/dev/null)" in
-    *debug*)
-        if [ -e /run/initramfs/initramfs.debug ]; then
-            ( i=0; while [ "$i" -lt 60 ]; do cat /run/initramfs/initramfs.debug > /dev/ttyAMA0 2>/dev/null; sleep 2; i=$((i+1)); done ) &
-        fi
-        ;;
-esac
-
 printf '<6>LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > /dev/kmsg 2>/dev/null || true
 for c in /dev/ttyAMA0 /dev/ttyS0; do
     [ -e "$c" ] && printf 'LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > "$c" 2>/dev/null || true
-done
-
-# 等 udev 冷插拔
-sleep 4
-for c in /dev/ttyAMA0 /dev/ttyS0; do
-    [ -e "$c" ] || continue
-    {
-        echo "LINGOS-PROBE-BEGIN"
-        echo "-- filesystems --"
-        cat /proc/filesystems 2>/dev/null | grep -E 'iso9660|squashfs|overlay' || true
-        echo "-- devices --"
-        ls -l /dev/sr* /dev/sd* /dev/vd* 2>&1 || true
-        echo "-- blkid /dev/sr0 --"
-        blkid /dev/sr0 2>&1 || true
-        echo "-- /sys/block --"
-        ls /sys/block 2>&1 || true
-        echo "-- mount test --"
-        mkdir -p /mnt/lingos-probe
-        n=0
-        while [ "$n" -lt 3 ]; do
-            if mount -t iso9660 -o ro /dev/sr0 /mnt/lingos-probe 2>/dev/null; then
-                echo "MOUNT-OK"
-                ls /mnt/lingos-probe/live 2>&1 || true
-                umount /mnt/lingos-probe 2>/dev/null || true
-                break
-            fi
-            n=$((n+1)); sleep 2
-        done
-        [ "$n" -ge 3 ] && echo "MOUNT-FAIL"
-        echo "LINGOS-PROBE-END"
-    } > "$c" 2>&1
 done
 exit 0
