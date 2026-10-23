@@ -1,0 +1,87 @@
+name: publish-fast
+
+# 并行下载 artifacts（aria2 多连接）后发布 Release，避免单连接慢速
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "images workflow run id（含 ISO artifacts）"
+        required: true
+      tag:
+        description: "Release tag（如 v0.9.12）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 aria2
+        run: sudo apt-get update -qq && sudo apt-get install -y aria2 >/dev/null
+
+      - name: 并行下载 ISO artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/isos
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.run_id }}/artifacts?per_page=100" -o /tmp/artifacts.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/artifacts.json'))
+          with open('/tmp/arts.txt', 'w') as f:
+              for a in d.get('artifacts', []):
+                  if a['name'].startswith('lingos-installer-') and not a.get('expired'):
+                      f.write(f"{a['id']} {a['name']}\n")
+          print(open('/tmp/arts.txt').read())
+          PY
+          while read -r id name; do
+            echo "== $name ($id)"
+            LOC=$(curl -sI -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/$id/zip" \
+              | grep -i '^location:' | tr -d '\r' | sed 's/^[Ll]ocation: //')
+            echo "location head: ${LOC:0:80}"
+            aria2c -x 8 -s 8 -k 1M --file-allocation=none --console-log-level=warn \
+              -d /tmp/isos -o "$name.zip" "$LOC"
+            unzip -o -q "/tmp/isos/$name.zip" -d /tmp/isos
+            rm -f "/tmp/isos/$name.zip"
+          done < /tmp/arts.txt
+          find /tmp/isos -name '*.iso' -ls
+
+      - name: 拆分 >2GiB 资产 + 生成校验
+        run: |
+          mkdir -p /tmp/rel
+          for f in $(find /tmp/isos -name "*.iso"); do
+            sz=$(stat -c%s "$f")
+            base=$(basename "$f")
+            sha=$(sha256sum "$f" | awk '{print $1}')
+            if [ "$sz" -gt 1992294400 ]; then
+              split -b 1900M -d -a 1 "$f" "/tmp/rel/$base.part"
+              {
+                echo "文件名: $base"
+                echo "原始大小: $sz 字节"
+                echo "合并后 sha256: $sha"
+                echo "合并方法（Termux/VTERM）: cat $base.part* > $base"
+                echo "校验: sha256sum $base"
+              } > "/tmp/rel/$base.合并说明.txt"
+            else
+              cp -n "$f" /tmp/rel/
+            fi
+          done
+          rm -f /tmp/isos/*.iso
+          cd /tmp/rel && sha256sum * > SHA256SUMS.txt 2>/dev/null || true
+          ls -lh /tmp/rel
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: LING OS ${{ inputs.tag }}
+          files: |
+            /tmp/rel/*
+          generate_release_notes: true
+          overwrite_files: true
