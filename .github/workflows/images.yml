@@ -42,7 +42,7 @@ jobs:
           make 2>&1 | tail -40
 
       - name: 全捆打包
-        run: RELEASE_VER=0.9.12 bash scripts/bundle.sh dist
+        run: RELEASE_VER=0.9.13 bash scripts/bundle.sh dist
 
       - name: 构建容器镜像
         run: |
@@ -109,7 +109,7 @@ jobs:
           make 2>&1 | tail -40
 
       - name: 全捆打包
-        run: RELEASE_VER=0.9.12 bash scripts/bundle.sh dist
+        run: RELEASE_VER=0.9.13 bash scripts/bundle.sh dist
 
       - name: 构建 x86_64 ISO
         run: sudo bash distro/images/build-iso.sh x86_64
@@ -160,7 +160,7 @@ jobs:
           make 2>&1 | tail -40
 
       - name: 全捆打包
-        run: RELEASE_VER=0.9.12 bash scripts/bundle.sh dist
+        run: RELEASE_VER=0.9.13 bash scripts/bundle.sh dist
 
       - name: 构建 arm64 ISO
         run: sudo bash distro/images/build-iso.sh aarch64

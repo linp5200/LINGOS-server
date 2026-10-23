@@ -23,8 +23,46 @@ lsmod > "$D/lsmod.txt" 2>/dev/null || true
 ls -la /run/live > "$D/run-live.txt" 2>/dev/null || true
 cp -f /var/log/lingos-install.log "$D/install.log" 2>/dev/null || true
 cp -f /run/lingos-install/state.json "$D/install-state.json" 2>/dev/null || true
+# ---------- 已安装系统的日志（可选：找到 ext4 root 分区后只读收集） ----------
+M=/run/lingos-target
+mkdir -p "$M"
+for dev in /dev/vd*[0-9] /dev/sd*[0-9] /dev/nvme*p*[0-9] /dev/mmcblk*p*[0-9]; do
+    [ -b "$dev" ] || continue
+    fs=$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)
+    [ "$fs" = "ext4" ] || continue
+    mount -o ro "$dev" "$M" 2>/dev/null || continue
+    if [ -d "$M/etc" ] && [ -d "$M/var" ]; then
+        T="$D/target"
+        mkdir -p "$T"
+        cp -f "$M/etc/default/grub" "$T/default-grub.txt" 2>/dev/null || true
+        cp -f "$M/boot/grub/grub.cfg" "$T/grub.cfg" 2>/dev/null || true
+        cp -f "$M/etc/lingos-image-info" "$T/image-info.txt" 2>/dev/null || true
+        cp -f "$M/var/log/lingos-desktop-report.txt" "$T/desktop-report.txt" 2>/dev/null || true
+        cp -f "$M/var/log/lingos-install.log" "$T/install.log" 2>/dev/null || true
+        cp -f "$M/home/lingos/.local/share/labwc-boot.log" "$T/labwc-boot.log" 2>/dev/null || true
+        cp -f "$M/home/lingos/.local/share/x11-boot.log" "$T/x11-boot.log" 2>/dev/null || true
+        cp -f "$M/var/log/Xorg.0.log" "$T/Xorg.0.log" 2>/dev/null || true
+        journalctl --directory="$M/var/log/journal" -b --no-pager >"$T/journal.txt" 2>/dev/null || true
+        systemctl --root="$M" list-unit-files >"$T/units.txt" 2>/dev/null || true
+        cp -f "$M/LINGOS/system/config/install-report.json" "$T/install-report.json" 2>/dev/null || true
+        _emit "LINGOS-DIAG-TARGET-MOUNTED=$dev"
+        umount "$M" 2>/dev/null || true
+        break
+    fi
+    umount "$M" 2>/dev/null || true
+done
 tar czf "$OUT" -C "$D" . 2>/dev/null || true
 rm -rf "$D"
+# 把已安装系统报告直接显示到 tty0（VGA），便于拍照
+if [ -f "$D/target/desktop-report.txt" ]; then
+    {
+        echo "===== LINGOS TARGET DESKTOP REPORT ====="
+        head -c 20000 "$D/target/desktop-report.txt"
+        echo
+        echo "===== LINGOS TARGET JOURNAL (err) ====="
+        head -c 20000 "$D/target/journal.txt" 2>/dev/null || true
+    } > /dev/tty0 2>/dev/null || true
+fi
 _emit "LINGOS-DIAG-READY=$OUT"
 if find_share; then
     cp -f "$OUT" "$LINGOS_SHARE/" 2>/dev/null && _emit "LINGOS-DIAG-SHARE=$LINGOS_SHARE/$(basename "$OUT")"

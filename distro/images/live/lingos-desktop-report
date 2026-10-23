@@ -1,0 +1,39 @@
+#!/bin/bash
+# LING OS 安装后桌面诊断上报：
+# 每次开机收集 DRM/KMS、labwc/X11 日志、journal 错误、failed units，
+# 写到 /var/log/lingos-desktop-report.txt，并尽量复制到 Vectras 共享文件夹/串口。
+set -u
+OUT=/var/log/lingos-desktop-report.txt
+mkdir -p /var/log /run/lingos-share 2>/dev/null || true
+{
+    echo "== LING OS desktop report $(date -u +%FT%TZ) =="
+    echo; echo "== cmdline =="; cat /proc/cmdline 2>/dev/null
+    echo; echo "== image =="; cat /etc/lingos-image-info 2>/dev/null
+    echo; echo "== uname =="; uname -a 2>/dev/null
+    echo; echo "== drm =="; ls -l /sys/class/drm/ 2>/dev/null
+    for c in /sys/class/drm/card*/status; do [ -e "$c" ] && echo "$c: $(cat "$c" 2>/dev/null)"; done
+    echo; echo "== fb =="; cat /proc/fb 2>/dev/null
+    echo; echo "== modules =="; lsmod 2>/dev/null | grep -iE 'drm|bochs|virtio_gpu|fb|simpledrm|simple-framebuffer' || true
+    echo; echo "== dmesg drm =="; dmesg 2>/dev/null | grep -iE 'drm|fb0|vga|bochs|virtio|simple-framebuffer|edid|atomic' | tail -120
+    echo; echo "== journal errors =="; journalctl -b -p err --no-pager 2>/dev/null | tail -120
+    echo; echo "== failed units =="; systemctl --failed --no-pager 2>/dev/null
+    echo; echo "== sessions =="; loginctl --no-pager 2>/dev/null; who 2>/dev/null
+    echo; echo "== labwc log =="; cat /home/lingos/.local/share/labwc-boot.log 2>/dev/null
+    echo; echo "== x11 log =="; cat /home/lingos/.local/share/x11-boot.log 2>/dev/null
+    echo; echo "== xorg log =="; tail -150 /var/log/Xorg.0.log 2>/dev/null
+} > "$OUT" 2>&1
+# Vectras 共享文件夹通常是可写 vfat（/dev/sda 或 /dev/sdb）
+for d in /dev/sd*; do
+    [ -b "$d" ] || continue
+    mount -o rw "$d" /run/lingos-share 2>/dev/null || continue
+    cp -f "$OUT" /run/lingos-share/ 2>/dev/null || true
+    cp -f /home/lingos/.local/share/labwc-boot.log /run/lingos-share/ 2>/dev/null || true
+    cp -f /home/lingos/.local/share/x11-boot.log /run/lingos-share/ 2>/dev/null || true
+    umount /run/lingos-share 2>/dev/null || true
+    break
+done
+# 串口也输出一份（best-effort）
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -c "$c" ] && cat "$OUT" > "$c" 2>/dev/null || true
+done
+exit 0

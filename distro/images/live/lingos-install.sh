@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# LING OS 安装器（live ISO 内运行；0.9.12 带阶段日志/进度/回传）
+# LING OS 安装器（live ISO 内运行；0.9.13 带阶段日志/进度/回传）
 # 用法：
 #   lingos-install --auto        自动：选最大 >=8G 内置磁盘（排除 USB）
 #   lingos-install --manual      交互：whiptail 选盘 + 确认
@@ -184,6 +184,41 @@ if [ "$UEFI" = "1" ]; then
 else
     chroot "$TARGET" grub-install --target=i386-pc "$DISK"
 fi
+# ---------- 安装后安全启动项（文本 / X11 回退 / 详细日志） ----------
+ROOT_UUID=$(blkid -s UUID -o value "$P2" 2>/dev/null || true)
+KVER=$(basename "$(ls "$TARGET"/boot/vmlinuz-* 2>/dev/null | head -1)" 2>/dev/null | sed 's/^vmlinuz-//')
+if [ -n "$ROOT_UUID" ] && [ -n "$KVER" ]; then
+    mkdir -p "$TARGET/etc/grub.d" "$TARGET/etc/default"
+    {
+        echo '#!/bin/sh'
+        echo 'exec tail -n +3 $0'
+        echo "menuentry 'LING OS（文本调试，不启动桌面）' --class ubuntu --class gnu-linux --class os {"
+        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=7 systemd.unit=multi-user.target lingos.desktop=0"
+        echo "    initrd /boot/initrd.img-$KVER"
+        echo '}'
+        echo "menuentry 'LING OS（X11 安全图形回退）' --class ubuntu --class gnu-linux --class os {"
+        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=5 lingos.session=x11"
+        echo "    initrd /boot/initrd.img-$KVER"
+        echo '}'
+        echo "menuentry 'LING OS（详细启动日志）' --class ubuntu --class gnu-linux --class os {"
+        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=7 systemd.show_status=1"
+        echo "    initrd /boot/initrd.img-$KVER"
+        echo '}'
+    } > "$TARGET/etc/grub.d/40_custom"
+    chmod +x "$TARGET/etc/grub.d/40_custom"
+    touch "$TARGET/etc/default/grub"
+    if grep -q '^GRUB_TIMEOUT=' "$TARGET/etc/default/grub"; then
+        sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=8/' "$TARGET/etc/default/grub"
+    else
+        echo 'GRUB_TIMEOUT=8' >> "$TARGET/etc/default/grub"
+    fi
+    if grep -q '^GRUB_TIMEOUT_STYLE=' "$TARGET/etc/default/grub"; then
+        sed -i 's/^GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=menu/' "$TARGET/etc/default/grub"
+    else
+        echo 'GRUB_TIMEOUT_STYLE=menu' >> "$TARGET/etc/default/grub"
+    fi
+    sed -i 's/ video=[^ "]*//g' "$TARGET/etc/default/grub" 2>/dev/null || true
+fi
 chroot "$TARGET" update-grub
 umount "$TARGET/dev" "$TARGET/sys" "$TARGET/proc" 2>/dev/null || true
 log "GRUB 安装完成（target=$GRUBTARGET uefi=$UEFI）"
@@ -206,7 +241,7 @@ printf '%s\n' '{"system_configured": true, "last_config_time": "1970-01-01T00:00
 printf '%s\n' '{"schema_version": 1, "ai": {"ai_config": {"backend": "deepseek", "language": "zh"}, "provider": {"active": "deepseek", "deepseek": {"api_key": "", "model": "deepseek-v4-pro", "base_url": "https://api.deepseek.com"}}}}' \
     > "$TARGET/LINGOS/system/config/config.json"
 cat > "$TARGET/LINGOS/system/config/install-report.json" <<REPORT
-{"version":"0.9.12","mode":"$LINGOS_MODE","disk":"$DISK","uefi":$UEFI,"root_uuid":"$ROOT_UUID","installed_at":"$(date -u +%FT%TZ)"}
+{"version":"0.9.13","mode":"$LINGOS_MODE","disk":"$DISK","uefi":$UEFI,"root_uuid":"$ROOT_UUID","installed_at":"$(date -u +%FT%TZ)"}
 REPORT
 mkdir -p "$TARGET/var/log"
 cp -f "$LINGOS_LOG" "$TARGET/var/log/lingos-install.log" 2>/dev/null || true
@@ -230,7 +265,10 @@ ExecStart=-/sbin/agetty --autologin lingos --noclear %I $TERM
 AUTOLOGIN
 ln -sf /lib/systemd/system/getty@.service \
     "$TARGET/etc/systemd/system/getty.target.wants/getty@tty1.service"
-log "桌面用户 lingos + tty1 自动登录已配置"
+chmod +x "$TARGET/usr/local/sbin/lingos-desktop-report" 2>/dev/null || true
+ln -sf /etc/systemd/system/lingos-desktop-report.service \
+    "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-desktop-report.service"
+log "桌面用户 lingos + tty1 自动登录已配置（含桌面诊断上报服务）"
 log "配置写入完成"
 
 # ---------- 完成 ----------

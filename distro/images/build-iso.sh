@@ -111,6 +111,17 @@ libsqlite3-0
 libmosquitto1
 libmicrohttpd12
 libssl3
+# X11 安全图形回退（Vectras / 无 KMS 的 simple-framebuffer 环境下 labwc 无法启动）
+xserver-xorg-core
+xserver-xorg-video-fbdev
+xserver-xorg-input-libinput
+xinit
+openbox
+xterm
+x11-xserver-utils
+x11-utils
+xfonts-base
+xauth
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -127,7 +138,7 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/hooks
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
 chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
-for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session; do
+for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/sbin/$f"
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done
@@ -144,6 +155,8 @@ mkdir -p config/includes.chroot/etc/skel/.config/labwc \
          config/includes.chroot/etc/skel/.config/waybar \
          config/includes.chroot/etc/skel/.config/wofi
 cp "$ROOT/distro/desktop/skel/.bash_profile"        config/includes.chroot/etc/skel/.bash_profile
+cp "$ROOT/distro/desktop/skel/.xinitrc"             config/includes.chroot/etc/skel/.xinitrc
+chmod +x config/includes.chroot/etc/skel/.xinitrc
 cp "$ROOT/distro/desktop/skel/.config/labwc/autostart" config/includes.chroot/etc/skel/.config/labwc/autostart
 cp "$ROOT/distro/desktop/labwc/rc.xml"              config/includes.chroot/etc/skel/.config/labwc/rc.xml
 cp "$ROOT/distro/desktop/waybar/config.jsonc"       config/includes.chroot/etc/skel/.config/waybar/config.jsonc
@@ -151,9 +164,10 @@ cp "$ROOT/distro/desktop/waybar/style.css"          config/includes.chroot/etc/s
 cp "$ROOT/distro/desktop/wofi/style.css"            config/includes.chroot/etc/skel/.config/wofi/style.css
 cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
+cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chroot/etc/systemd/system/lingos-desktop-report.service
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
 cat > config/includes.chroot/etc/lingos-image-info <<INFO
-LINGOS_VERSION=0.9.12
+LINGOS_VERSION=0.9.13
 LINGOS_ARCH=$ARCH
 LINGOS_GIT=$GITREV
 LINGOS_BUILD_TS=$BUILD_TS
