@@ -124,7 +124,7 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/includes.chroot/etc/initramfs-tools/scripts/init-premount \
          config/includes.chroot/etc/initramfs-tools/scripts/init-bottom \
          config/includes.chroot/LINGOS/offline \
-         config/hooks/normal
+         config/hooks
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
 chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
 for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session; do
@@ -161,7 +161,7 @@ LINGOS_KCMDLINE=$KCMDLINE
 INFO
 
 # ---------- chroot hook：安装全捆 + 启用自动安装器 + initramfs 日志 ----------
-cat > config/hooks/normal/0100-lingos.hook.chroot <<'HOOK'
+cat > config/hooks/0100-lingos.chroot <<'HOOK'
 #!/bin/sh
 set -e
 if [ -f /LINGOS/offline/lingos_bundle.tar.gz ]; then
@@ -239,7 +239,7 @@ fi
 update-initramfs -u -k all >/dev/null 2>&1 || echo "!! update-initramfs 失败（继续构建）"
 echo "LINGOS live root prepared"
 HOOK
-chmod +x config/hooks/normal/0100-lingos.hook.chroot
+chmod +x config/hooks/0100-lingos.chroot
 
 echo "==> lb build（10-30 分钟，需网络）"
 lb build
