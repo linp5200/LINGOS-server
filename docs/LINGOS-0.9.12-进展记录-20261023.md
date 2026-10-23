@@ -20,6 +20,39 @@
 
 结论：问题在 live-boot 找不到/挂载不了 live 介质，而不是 ISO 烧录/合并问题。
 
+### 1.1 根因（2026-10-23 已确认）
+
+用 initramfs probe（init-premount 直接写串口）拿到确凿证据：
+
+    -- filesystems --
+        iso9660            # isofs 已加载
+    -- devices --
+    brw------- 1 11, 0 /dev/sr0
+    -- blkid /dev/sr0 --
+    /dev/sr0: BLOCK_SIZE="2048" LABEL="LINGOS" TYPE="iso9660" PTTYPE="PMBR"
+    -- mount test --
+    MOUNT-OK
+
+而 live-boot 的 `is_supported_fs()` 逻辑是：先 `grep iso9660 /proc/filesystems`，
+不满足再 `modprobe -q -b iso9660`——**但 iso9660 的模块名是 isofs，modprobe iso9660 永远失败**，
+于是 live-boot 判定“不支持该文件系统”，直接跳过挂载，最终报
+`Unable to find a medium containing a live file system`。
+
+另外两个与 live-boot（Ubuntu noble 版本）相关的坑：
+
+1. `live-media=/dev/sr0,/dev/sda` 这种**逗号列表**在 `check_dev` 里会被拆开后取最后一个
+   （devname=/dev/sda，不存在）→ 强制设备失败；
+2. 一旦设置了 `live-media=`，该版本 live-boot **不再扫描其他块设备**，所以设错等于直接放弃。
+
+### 1.2 修复
+
+- ISO 的 initramfs 增加 `/scripts/init-premount/lingos-report`：在 live-boot 之前显式
+  `modprobe isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk virtio_pci`；
+- 增加 initramfs hook `lingos-tools`，用 `copy_exec` 保证 `blkid`/`udevadm` 及其依赖库进入 initrd
+  （live-boot 的 `get_fstype` 依赖 blkid）；
+- **不使用** `live-media=` 参数，让 live-boot 正常扫描设备；
+- 生产内核参数去掉 `debug`（避免 initramfs 日志重定向与额外开销），诊断模式保留 `debug`。
+
 ## 二、本轮修复（0.9.12）
 
 ### 1. 启动可观测性

@@ -41,7 +41,7 @@ if [ "$DEBARCH" = "amd64" ]; then
 else
     KCONSOLE="console=tty0 console=ttyAMA0,115200"
 fi
-KCMDLINE="boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto"
+KCMDLINE="boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto"
 
 WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
 echo "==> live-build 工作目录: $WORK (dist=$DIST arch=$DEBARCH)"
@@ -272,18 +272,21 @@ if [ "$DEBARCH" = "arm64" ]; then
 set default=0
 set timeout=10
 menuentry "LING OS 安装（自动，默认）" {
-    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
+    linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
     initrd /live/initrd.img
 }
 menuentry "LING OS 安装（手动选择磁盘）" {
-    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-manual
+    linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-manual
     initrd /live/initrd.img
 }
 menuentry "进入 LING OS Live（不安装，可进系统）" {
-    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=live
+    linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=live
     initrd /live/initrd.img
 }
 menuentry "诊断模式（收集日志 / 救援 shell）" {
+    linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto-usb
+}
+menuentry "诊断模式（收集日志 / 救援 shell，自动扫描介质）" {
     linux /live/vmlinuz boot=live components $KCONSOLE loglevel=7 debug lingos.mode=diag
     initrd /live/initrd.img
 }
