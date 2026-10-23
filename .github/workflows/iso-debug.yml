@@ -1,6 +1,6 @@
 name: iso-debug
 
-# 手动调试：用 init=/bin/bash 启动 live ISO，通过串口交互执行安装器，抓取挂起点
+# 手动调试：init=/bin/bash 启动 live ISO，串口交互执行安装器，抓取挂起点
 on:
   workflow_dispatch:
     inputs:
@@ -37,14 +37,7 @@ jobs:
       - name: 改写 GRUB 为 init=/bin/bash
         working-directory: work
         run: |
-          {
-            echo 'set default=0'
-            echo 'set timeout=1'
-            echo 'menuentry "debug bash" {'
-            echo '    linux /live/vmlinuz boot=live components live-media=/dev/sr0 console=tty0 console=ttyAMA0,115200 loglevel=5 init=/bin/bash'
-            echo '    initrd /live/initrd.img'
-            echo '}'
-          } > grub.cfg
+          printf '%s\n' 'set default=0' 'set timeout=1' 'menuentry "debug bash" {' '    linux /live/vmlinuz boot=live components live-media=/dev/sr0 console=tty0 console=ttyAMA0,115200 loglevel=5 init=/bin/bash rw' '    initrd /live/initrd.img' '}' > grub.cfg
           xorriso -indev in.iso -outdev dbg.iso -boot_image any replay -map grub.cfg /boot/grub/grub.cfg -commit 2>&1 | tail -3
           ls -lh dbg.iso
 
@@ -52,8 +45,8 @@ jobs:
         working-directory: work
         run: |
           qemu-img create -f qcow2 disk.qcow2 12G >/dev/null
-          rm -f serial.sock
-          timeout 240 qemu-system-aarch64 -M virt,virtualization=true -cpu cortex-a76 -m 3072 -smp 2 \
+          rm -f /tmp/lingos-serial.sock
+          timeout 300 qemu-system-aarch64 -M virt,virtualization=true -cpu cortex-a76 -m 3072 -smp 2 \
             -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
             -device nec-usb-xhci,id=xhci \
             -drive if=none,id=cd,format=raw,media=cdrom,file="$PWD/dbg.iso" \
@@ -61,69 +54,63 @@ jobs:
             -drive file="$PWD/disk.qcow2",if=none,id=disk,format=qcow2 \
             -device virtio-blk-pci,drive=disk \
             -device VGA -display none -monitor none -no-reboot \
-            -serial "unix:$PWD/serial.sock,server=on,wait=off" >/dev/null 2>&1 &
+            -serial "unix:/tmp/lingos-serial.sock,server=on,wait=off" > qemu.err 2>&1 &
           QPID=$!
+          sleep 2
+          ls -l /tmp/lingos-serial.sock || true
+          cat qemu.err || true
           python3 - <<'PYEOF' > manual.log 2>&1 || true
           import socket, time, sys
           sock = None
-          for _ in range(60):
+          for i in range(180):
               try:
                   sock = socket.socket(socket.AF_UNIX)
-                  sock.settimeout(2)
-                  sock.connect("serial.sock")
+                  sock.settimeout(3)
+                  sock.connect("/tmp/lingos-serial.sock")
                   break
               except Exception:
                   sock = None
-                  time.sleep(2)
+                  time.sleep(1)
           if not sock:
-              print("no serial socket")
+              print("NO-SERIAL-SOCKET after 180s")
               sys.exit(0)
+          print("serial connected")
           buf = ""
-          def read_until(token, timeout=90):
+          def pump(seconds):
               global buf
-              end = time.time() + timeout
+              end = time.time() + seconds
               while time.time() < end:
                   try:
-                      data = sock.recv(4096)
+                      d = sock.recv(65536)
                   except Exception:
-                      data = b""
-                  if not data:
-                      continue
-                  buf += data.decode("utf-8", "replace")
-                  if token in buf:
-                      return True
-              return False
-          read_until("login:", 120)
-          print("=== serial ready ===")
-          sock.sendall(b"root\n")
-          time.sleep(3)
-          read_until("#", 20)
+                      d = b""
+                  if d:
+                      buf += d.decode("utf-8", "replace")
+          pump(90)
+          print("=== initial serial (tail) ===")
+          print(buf[-8000:])
           cmds = [
               "mount -t proc proc /proc",
               "mount -t sysfs sys /sys",
               "mount -t devtmpfs dev /dev 2>/dev/null || true",
-              "echo LINGOS-MANUAL-TEST",
+              "echo LINGOS-MANUAL-MARK",
               "bash -x /usr/local/sbin/lingos-install --auto",
           ]
           for c in cmds:
+              print("SENDING:", c)
               sock.sendall((c + "\n").encode())
-              time.sleep(4)
-              read_until("LINGOS-", 5)
-          time.sleep(120)
-          try:
-              sock.settimeout(1)
-              while True:
-                  d = sock.recv(65536)
-                  if not d:
-                      break
-                  buf += d.decode("utf-8", "replace")
-          except Exception:
-              pass
-          print(buf[-120000:])
+              time.sleep(2)
+              pump(3)
+          pump(150)
+          print("=== final serial (tail 150000) ===")
+          print(buf[-150000:])
           PYEOF
           kill $QPID 2>/dev/null || true
           wait $QPID 2>/dev/null || true
-          tail -c 80000 manual.log
+          echo "=== qemu.err ==="
+          cat qemu.err || true
+          echo "=== manual.log tail ==="
+          tail -c 120000 manual.log
 
       - name: 上传日志
         if: always()
@@ -132,5 +119,6 @@ jobs:
           name: iso-debug-log
           path: |
             work/manual.log
+            work/qemu.err
             work/grub.cfg
           if-no-files-found: warn
