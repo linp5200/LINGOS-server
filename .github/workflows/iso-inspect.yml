@@ -24,7 +24,7 @@ jobs:
       - name: 安装工具
         run: |
           sudo apt-get update
-          sudo apt-get install -y xorriso initramfs-tools
+          sudo apt-get install -y xorriso initramfs-tools squashfs-tools
 
       - name: 下载 artifact（含 ISO）
         env:
@@ -76,6 +76,22 @@ jobs:
             strings vmlinuz 2>/dev/null | grep -m2 -E 'Linux version 6\.' || true
           } | tee initrd-check.txt
 
+      - name: 检查 squashfs 内的服务/桌面文件
+        working-directory: work
+        run: |
+          xorriso -osirrox on -indev lingos.iso -extract /live/filesystem.squashfs fs.squashfs 2>/dev/null || true
+          ls -lh fs.squashfs 2>/dev/null || true
+          {
+            echo "=== systemd wants / units ==="
+            unsquashfs -l fs.squashfs 2>/dev/null | grep -E "multi-user.target.wants|lingos-(installer|service|boot-mode|log\.sh)|lingos-image-info"
+            echo "=== 详情 ==="
+            unsquashfs -ll fs.squashfs 2>/dev/null | grep -E "lingos-(installer\.service|boot-mode|log\.sh)" | head
+            echo "=== skel ==="
+            unsquashfs -l fs.squashfs 2>/dev/null | grep -E "skel|\.bash_profile|labwc|waybar" | head -20
+            echo "=== LINGOS 目录 ==="
+            unsquashfs -l fs.squashfs 2>/dev/null | grep -E "^squashfs-root/LINGOS" | head -10
+          } | tee squashfs-check.txt
+
       - name: 上传检查结果
         if: always()
         uses: actions/upload-artifact@v4
@@ -84,4 +100,5 @@ jobs:
           path: |
             work/initrd-check.txt
             work/grub.cfg
+            work/squashfs-check.txt
           if-no-files-found: warn
