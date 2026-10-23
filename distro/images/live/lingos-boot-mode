@@ -1,0 +1,18 @@
+#!/bin/bash
+# LING OS live 启动模式分发（由 lingos-installer.service 调用）
+# 内核参数：lingos.mode=install-auto|install-manual|live|diag（默认 install-auto）
+set -u
+MODE=install-auto
+for a in $(cat /proc/cmdline 2>/dev/null); do
+    case "$a" in
+        lingos.mode=*) MODE="${a#*=}" ;;
+    esac
+done
+export LINGOS_MODE="$MODE"
+case "$MODE" in
+    install-auto|auto)              exec /usr/local/sbin/lingos-install --auto ;;
+    install-manual|manual|install)  exec /usr/local/sbin/lingos-install --manual ;;
+    live)                           exec /usr/local/sbin/lingos-live-session ;;
+    diag|diagnostics)               exec /usr/local/sbin/lingos-diag-session ;;
+    *)                              exec /usr/local/sbin/lingos-install --auto ;;
+esac

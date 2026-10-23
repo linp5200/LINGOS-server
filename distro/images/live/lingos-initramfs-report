@@ -1,0 +1,18 @@
+#!/bin/sh
+# LING OS initramfs 早期标记（init-premount，不阻塞启动）
+# 写入 kmsg 与串口，便于 CI/真机确认内核与 initramfs 已启动。
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in
+    prereqs) prereqs; exit 0 ;;
+esac
+
+msg="LINGOS-INITRAMFS-START kernel=$(uname -r)"
+printf '<6>%s\n' "$msg" > /dev/kmsg 2>/dev/null || true
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$c" ] && printf '%s\n' "$msg" > "$c" 2>/dev/null || true
+done
+if [ -d /run/live ]; then
+    printf '<6>LINGOS-INITRAMFS-LIVE-DIR-OK\n' > /dev/kmsg 2>/dev/null || true
+fi
+exit 0

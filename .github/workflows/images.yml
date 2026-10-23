@@ -33,7 +33,7 @@ jobs:
           make 2>&1 | tail -40
 
       - name: 全捆打包
-        run: RELEASE_VER=0.9.0 bash scripts/bundle.sh dist
+        run: RELEASE_VER=0.9.12 bash scripts/bundle.sh dist
 
       - name: 构建容器镜像
         run: |
@@ -100,7 +100,7 @@ jobs:
           make 2>&1 | tail -40
 
       - name: 全捆打包
-        run: RELEASE_VER=0.9.0 bash scripts/bundle.sh dist
+        run: RELEASE_VER=0.9.12 bash scripts/bundle.sh dist
 
       - name: 构建 x86_64 ISO
         run: sudo bash distro/images/build-iso.sh x86_64
@@ -111,6 +111,21 @@ jobs:
         with:
           name: lingos-installer-x86_64
           path: dist/images/lingos-installer-x86_64.iso
+          if-no-files-found: warn
+
+      - name: 启动冒烟测试（UEFI + 串口）
+        if: always()
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+          sudo bash distro/images/test-boot.sh x86_64 dist/images/lingos-installer-x86_64.iso 600 boot || true
+
+      - name: 上传启动日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log-x86_64
+          path: dist/images/boot-test-x86_64/
           if-no-files-found: warn
 
   iso-arm64:
@@ -134,7 +149,7 @@ jobs:
           make 2>&1 | tail -40
 
       - name: 全捆打包
-        run: RELEASE_VER=0.9.0 bash scripts/bundle.sh dist
+        run: RELEASE_VER=0.9.12 bash scripts/bundle.sh dist
 
       - name: 构建 arm64 ISO
         run: sudo bash distro/images/build-iso.sh aarch64
@@ -145,6 +160,21 @@ jobs:
         with:
           name: lingos-installer-arm64
           path: dist/images/lingos-installer-aarch64.iso
+          if-no-files-found: warn
+
+      - name: 启动冒烟测试（UEFI + 串口）
+        if: always()
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm qemu-efi-aarch64
+          sudo bash distro/images/test-boot.sh aarch64 dist/images/lingos-installer-aarch64.iso 900 boot || true
+
+      - name: 上传启动日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log-arm64
+          path: dist/images/boot-test-aarch64/
           if-no-files-found: warn
 
   release:
@@ -167,16 +197,27 @@ jobs:
           for f in $(find /tmp/isos -name "*.iso"); do
             sz=$(stat -c%s "$f")
             base=$(basename "$f")
+            sha=$(sha256sum "$f" | awk '{print $1}')
             if [ "$sz" -gt 1992294400 ]; then
               split -b 1900M -d -a 1 "$f" "/tmp/rel/$base.part"
-              echo "split $base ($sz bytes)" > "/tmp/rel/$base.合并说明.txt"
-              echo "在 Termux/VTERM 中执行：" >> "/tmp/rel/$base.合并说明.txt"
-              echo "cat $base.part* > $base" >> "/tmp/rel/$base.合并说明.txt"
+              {
+                echo "文件名: $base"
+                echo "原始大小: $sz 字节"
+                echo "合并后 sha256: $sha"
+                echo "合并方法（Termux/VTERM）: cat $base.part* > $base"
+                echo "校验: sha256sum $base"
+              } > "/tmp/rel/$base.合并说明.txt"
             else
               cp -n "$f" /tmp/rel/
             fi
           done
           ls -lh /tmp/rel
+
+      - name: 生成 SHA256SUMS.txt
+        run: |
+          cd /tmp/rel
+          sha256sum * > SHA256SUMS.txt 2>/dev/null || true
+          cat SHA256SUMS.txt
 
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2

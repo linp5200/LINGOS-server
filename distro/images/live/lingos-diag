@@ -1,0 +1,33 @@
+#!/bin/bash
+# LING OS 诊断日志收集：串口/共享文件夹/控制台均输出路径
+set -u
+export LINGOS_MODE="${LINGOS_MODE:-diag}"
+export LINGOS_LOG="${LINGOS_LOG:-/var/log/lingos-diag.log}"
+LINGOS_LIB=/usr/local/sbin/lingos-log.sh
+[ -f "$LINGOS_LIB" ] && . "$LINGOS_LIB"
+mkdir -p /var/log
+TS=$(date +%Y%m%d-%H%M%S)
+D="/run/lingos-diag-$TS"
+OUT="/var/log/lingos-diag-$TS.tar.gz"
+mkdir -p "$D"
+cp -f /proc/cmdline "$D/cmdline.txt" 2>/dev/null || true
+cp -f /etc/lingos-image-info "$D/image-info.txt" 2>/dev/null || true
+uname -a > "$D/uname.txt" 2>/dev/null || true
+dmesg > "$D/dmesg.txt" 2>/dev/null || true
+journalctl -b --no-pager > "$D/journal.txt" 2>/dev/null || true
+lsblk -a > "$D/lsblk.txt" 2>/dev/null || true
+blkid > "$D/blkid.txt" 2>/dev/null || true
+findmnt > "$D/findmnt.txt" 2>/dev/null || true
+ip a > "$D/ip.txt" 2>/dev/null || true
+lsmod > "$D/lsmod.txt" 2>/dev/null || true
+ls -la /run/live > "$D/run-live.txt" 2>/dev/null || true
+cp -f /var/log/lingos-install.log "$D/install.log" 2>/dev/null || true
+cp -f /run/lingos-install/state.json "$D/install-state.json" 2>/dev/null || true
+tar czf "$OUT" -C "$D" . 2>/dev/null || true
+rm -rf "$D"
+_emit "LINGOS-DIAG-READY=$OUT"
+if find_share; then
+    cp -f "$OUT" "$LINGOS_SHARE/" 2>/dev/null && _emit "LINGOS-DIAG-SHARE=$LINGOS_SHARE/$(basename "$OUT")"
+fi
+report_net "LINGOS-DIAG-READY=$OUT"
+exit 0
