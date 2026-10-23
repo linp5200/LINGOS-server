@@ -205,6 +205,7 @@ cp -f "$LINGOS_STATE" "$TARGET/LINGOS/system/config/install-state.json" 2>/dev/n
 mkdir -p "$TARGET/etc/systemd/system/multi-user.target.wants"
 ln -sf /etc/systemd/system/lingos.service "$TARGET/etc/systemd/system/multi-user.target.wants/lingos.service"
 rm -f "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-installer.service"
+rm -f "$TARGET/etc/systemd/system/lingos-installer.service" "$TARGET/etc/lingos-live"
 chroot "$TARGET" passwd -d root 2>/dev/null || true
 
 # 桌面用户（useradd -m 会复制 /etc/skel 中的 labwc/waybar/wofi 配置）

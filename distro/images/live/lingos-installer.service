@@ -1,6 +1,6 @@
 [Unit]
 Description=LING OS ISO Boot Mode (installer / live / diagnostics)
-ConditionPathExists=/run/live
+ConditionPathExists=/etc/lingos-live
 After=live-config.service systemd-user-sessions.service local-fs.target
 Wants=network-online.target
 

@@ -171,6 +171,7 @@ rm -rf /tmp/lingos_bundle
 rm -f /LINGOS/offline/lingos_bundle.tar.gz
 chmod +x /usr/local/sbin/lingos-* 2>/dev/null || true
 chmod 644 /usr/local/sbin/lingos-log.sh 2>/dev/null || true
+touch /etc/lingos-live
 mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sf /etc/systemd/system/lingos-installer.service /etc/systemd/system/multi-user.target.wants/lingos-installer.service
 
@@ -249,6 +250,12 @@ if [ "$DEBARCH" = "arm64" ]; then
     BIN_DIR="$WORK/binary"
     CHROOT_DIR="$WORK/chroot"
     rm -f "$CHROOT_DIR/filesystem.squashfs"
+    # 保险：确保 installer 服务已启用 + live 标记存在（includes/chroot hook 顺序差异可能导致 symlink 丢失）
+    mkdir -p "$CHROOT_DIR/etc/systemd/system/multi-user.target.wants"
+    ln -sf /etc/systemd/system/lingos-installer.service \
+        "$CHROOT_DIR/etc/systemd/system/multi-user.target.wants/lingos-installer.service"
+    touch "$CHROOT_DIR/etc/lingos-live"
+    ls -l "$CHROOT_DIR/etc/systemd/system/multi-user.target.wants/lingos-installer.service" || true
     mkdir -p "$BIN_DIR/live"
     KERNEL=$(ls "$CHROOT_DIR"/boot/vmlinuz-* 2>/dev/null | head -1 || true)
     INITRD=$(ls "$CHROOT_DIR"/boot/initrd.img-* 2>/dev/null | head -1 || true)
