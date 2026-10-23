@@ -1,0 +1,82 @@
+name: iso-inspect
+
+# 诊断：下载某次 workflow 产物 artifact 里的 ISO，解包检查 initrd 组件（离线，不启动）
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: "Actions artifact id（产物 zip）"
+        required: true
+      arch:
+        description: "架构标签（仅用于文件名/日志）"
+        required: false
+        default: "aarch64"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xorriso initramfs-tools
+
+      - name: 下载 artifact（含 ISO）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work && cd work
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ inputs.artifact_id }}/zip" \
+            -o artifact.zip
+          ls -lh artifact.zip
+          unzip -o -q artifact.zip -d art || true
+          find art -maxdepth 3 -type f -ls | head
+          ISO=$(find art -name '*.iso' | head -1)
+          echo "ISO=$ISO"
+          [ -n "$ISO" ] || { echo "artifact 中没有 ISO"; exit 1; }
+          ln -sf "$PWD/$ISO" lingos.iso
+
+      - name: ISO / initrd 检查
+        working-directory: work
+        run: |
+          echo "=== ISO 根/ live ==="
+          xorriso -indev lingos.iso -find /live -exec lsdl 2>&1 | head -10
+          echo "=== grub.cfg（若有） ==="
+          xorriso -osirrox on -indev lingos.iso -extract /boot/grub/grub.cfg grub.cfg 2>/dev/null || true
+          cat grub.cfg 2>/dev/null | head -20 || true
+          echo "=== 解包 initrd ==="
+          xorriso -osirrox on -indev lingos.iso -extract /live/initrd.img initrd.img 2>/dev/null || true
+          xorriso -osirrox on -indev lingos.iso -extract /live/vmlinuz vmlinuz 2>/dev/null || true
+          rm -rf ird && mkdir ird
+          unmkinitramfs initrd.img ird >/dev/null 2>&1 || true
+          {
+            echo "=== live-boot ==="
+            find ird -name live-boot 2>/dev/null | head -3
+            echo "=== tools ==="
+            for f in blkid udevadm cdrom_id mount modprobe; do echo "-- $f --"; find ird -name "$f" 2>/dev/null | head -2; done
+            echo "=== modules ==="
+            for m in squashfs sr_mod sd_mod virtio_blk usb-storage isofs overlay loop; do
+              n=$(find ird -name "*${m}.ko*" 2>/dev/null | wc -l)
+              echo "$m = $n"
+            done
+            echo "=== initrd kernel modules dir ==="
+            ls ird/main/lib/modules 2>/dev/null || ls ird/lib/modules 2>/dev/null || true
+            echo "=== vmlinuz version ==="
+            strings vmlinuz 2>/dev/null | grep -m2 -E 'Linux version 6\.' || true
+          } | tee initrd-check.txt
+
+      - name: 上传检查结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-inspect-${{ inputs.arch }}
+          path: |
+            work/initrd-check.txt
+            work/grub.cfg
+          if-no-files-found: warn
