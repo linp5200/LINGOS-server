@@ -60,7 +60,7 @@ jobs:
             -drive file="$PWD/disk.qcow2",if=none,id=disk,format=qcow2 \
             -device virtio-blk-pci,drive=disk \
             -netdev user,id=n0 -device e1000,netdev=n0 \
-            -device VGA -display none -monitor none -no-reboot \
+            -device virtio-gpu-pci -display none -monitor none -no-reboot \
             -serial "file:$PWD/serial.log"
           echo "qemu_exit=$?"
           ls -l serial.log disk.qcow2 || true
@@ -78,14 +78,18 @@ jobs:
             echo "$m = $c"
           done
           echo "=== disk ==="
-          du -h disk.qcow2 2>/dev/null || true
+          { du -h disk.qcow2 2>/dev/null || true; qemu-system-aarch64 --version; } > disk-info.txt
+          cat disk-info.txt
 
       - name: 上传日志 artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: boot-log-arm64
-          path: work/
+          path: |
+            work/serial.log
+            work/sha256.txt
+            work/disk-info.txt
           if-no-files-found: warn
 
   x86_64:
@@ -141,12 +145,16 @@ jobs:
             c=$(grep -c -i "$m" serial.log 2>/dev/null || true)
             echo "$m = $c"
           done
-          du -h disk.qcow2 2>/dev/null || true
+          { du -h disk.qcow2 2>/dev/null || true; qemu-system-x86_64 --version; } > disk-info.txt
+          cat disk-info.txt
 
       - name: 上传日志 artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: boot-log-x86_64
-          path: work/
+          path: |
+            work/serial.log
+            work/sha256.txt
+            work/disk-info.txt
           if-no-files-found: warn
