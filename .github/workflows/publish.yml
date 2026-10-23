@@ -40,6 +40,7 @@ jobs:
             curl -sL -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/$id/zip" -o "/tmp/isos/$name.zip"
             unzip -o -q "/tmp/isos/$name.zip" -d /tmp/isos
+            rm -f "/tmp/isos/$name.zip"
           done < /tmp/arts.txt
           find /tmp/isos -name '*.iso' -ls
 
@@ -63,6 +64,7 @@ jobs:
               cp -n "$f" /tmp/rel/
             fi
           done
+          rm -f /tmp/isos/*.iso
           cd /tmp/rel && sha256sum * > SHA256SUMS.txt 2>/dev/null || true
           ls -lh /tmp/rel
           cat SHA256SUMS.txt
