@@ -19,7 +19,9 @@ export LINGOS_LOG="${LINGOS_LOG:-/var/log/lingos-install.log}"
 export LINGOS_TOTAL_STAGES=10
 LINGOS_LIB=/usr/local/sbin/lingos-log.sh
 if [ -f "$LINGOS_LIB" ]; then . "$LINGOS_LIB"; else echo "缺少 $LINGOS_LIB" >&2; exit 1; fi
+for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-LIB-OK\n' > "$_c" 2>/dev/null || true; done
 : > "$LINGOS_LOG" 2>/dev/null || true
+for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-LOG-TRUNCATE-OK\n' > "$_c" 2>/dev/null || true; done
 
 trap 'rc=$?; for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf "LINGOS-INSTALL-ERROR line=%s rc=%s cmd=%s\n" "$LINENO" "$rc" "$BASH_COMMAND" > "$_c" 2>/dev/null || true; done; set +e; fail_msg "$rc" "命令失败: $BASH_COMMAND"; exit $rc' ERR
 
@@ -36,7 +38,9 @@ for arg in "$@"; do
 done
 export TERM="${TERM:-linux}"
 
+for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-BOOTINFO-BEGIN\n' > "$_c" 2>/dev/null || true; done
 boot_info
+for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-BOOTINFO-END\n' > "$_c" 2>/dev/null || true; done
 stage 1 preflight "环境检查"
 [ "$(id -u)" = "0" ] || { fail_msg 3 "需要 root"; exit 3; }
 [ -d /run/live ] || { fail_msg 4 "未检测到 live 环境（/run/live 不存在）"; exit 4; }

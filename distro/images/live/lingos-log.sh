@@ -42,6 +42,7 @@ _LINGOS_LAST_NET_PCT=-1
 mkdir -p "$LINGOS_STATE_DIR" 2>/dev/null || true
 mkdir -p "$(dirname "$LINGOS_LOG")" 2>/dev/null || true
 touch "$LINGOS_LOG" 2>/dev/null || true
+true
 
 _now() { date +%s; }
 _stamp() { date '+%F %T'; }
@@ -49,17 +50,17 @@ _stamp() { date '+%F %T'; }
 # 输出到：日志文件 + 所有控制台 + 串口 + kmsg
 _emit() {
     local line="$1" t
-    printf '%s\n' "$line" 2>/dev/null >> "$LINGOS_LOG" || true
-    printf '<6>%s\n' "$line" 2>/dev/null > /dev/kmsg || true
-    # 串口直接写（CI/真机调试依赖）；tty0/tty1 用 timeout 保护，避免 getty/console buffer 阻塞整个安装
+    # 串口最先写（CI/真机调试依赖，且绝不阻塞）
     for t in /dev/ttyAMA0 /dev/ttyS0; do
         [ -c "$t" ] && { printf '%s\n' "$line" 2>/dev/null > "$t" || true; }
     done
+    printf '%s\n' "$line" 2>/dev/null >> "$LINGOS_LOG" || true
+    # tty0/tty1 用 timeout 保护，避免 getty/console buffer 阻塞整个安装
     for t in /dev/tty0 /dev/tty1; do
         [ -c "$t" ] || continue
         printf '%s\n' "$line" 2>/dev/null | timeout 1 tee -a "$t" >/dev/null 2>&1 || true
     done
-    printf '%s\n' "$line" >&2
+    printf '%s\n' "$line" >&2 || true
 }
 
 log()  { _emit "[$(_stamp)] [INFO] $*"; }
