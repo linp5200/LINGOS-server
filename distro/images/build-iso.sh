@@ -264,9 +264,13 @@ if [ "$DEBARCH" = "arm64" ]; then
         cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
     fi
     cp -f "$INITRD" "$BIN_DIR/live/initrd.img"
-    echo "==> mksquashfs chroot -> binary/live/filesystem.squashfs（xz，排除缓存/文档；保留 /boot）"
+    echo "==> mksquashfs chroot -> binary/live/filesystem.squashfs（xz，排除缓存/文档；保留 /boot 与 /dev /proc /sys /run /tmp 空目录）"
+    # 关键：live-boot 的 init-bottom 需要把 /dev /proc /sys /run 从 initramfs 移动进新根，
+    # 若 squashfs 里没有这些目录会 mount --move 失败 -> systemd 打不开 /dev/console -> init panic。
+    mkdir -p "$CHROOT_DIR"/dev "$CHROOT_DIR"/proc "$CHROOT_DIR"/sys "$CHROOT_DIR"/run "$CHROOT_DIR"/tmp
+    rm -rf "$CHROOT_DIR"/tmp/* 2>/dev/null || true
     mksquashfs "$CHROOT_DIR" "$BIN_DIR/live/filesystem.squashfs" -comp xz -noappend \
-        -e proc sys dev run tmp var/cache/apt var/lib/apt/lists var/log usr/share/doc usr/share/man filesystem.squashfs >/dev/null
+        -e var/cache/apt var/lib/apt/lists var/log usr/share/doc usr/share/man filesystem.squashfs >/dev/null
     mkdir -p "$BIN_DIR/boot/grub"
     cat > "$BIN_DIR/boot/grub/grub.cfg" <<GRUBCFG
 set default=0
@@ -283,11 +287,12 @@ menuentry "进入 LING OS Live（不安装，可进系统）" {
     linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=live
     initrd /live/initrd.img
 }
-menuentry "诊断模式（收集日志 / 救援 shell）" {
-    linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto-usb
-}
 menuentry "诊断模式（收集日志 / 救援 shell，自动扫描介质）" {
     linux /live/vmlinuz boot=live components $KCONSOLE loglevel=7 debug lingos.mode=diag
+    initrd /live/initrd.img
+}
+menuentry "安装（USB 介质 /dev/sda）" {
+    linux /live/vmlinuz boot=live components live-media=/dev/sda $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
     initrd /live/initrd.img
 }
 GRUBCFG
