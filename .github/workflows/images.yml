@@ -11,6 +11,10 @@ on:
         description: "可选：构建成功后创建/更新该 Release（如 v0.9.12）；留空只构建"
         required: false
         default: ""
+      test_mode:
+        description: "启动测试模式：boot（快，引导+安装器启动）/ full（完整安装到桌面）"
+        required: false
+        default: "boot"
   push:
     tags: ['v*']
 
@@ -123,7 +127,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 ovmf xorriso initramfs-tools netpbm
-          sudo bash distro/images/test-boot.sh x86_64 dist/images/lingos-installer-x86_64.iso 600 boot || true
+          MODE="${{ inputs.test_mode || 'boot' }}"
+          TMO=1200; [ "$MODE" = "full" ] && TMO=2400
+          sudo bash distro/images/test-boot.sh x86_64 dist/images/lingos-installer-x86_64.iso "$TMO" "$MODE" || true
 
       - name: 上传启动日志
         if: always()
@@ -172,7 +178,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 xorriso initramfs-tools netpbm seabios
-          sudo bash distro/images/test-boot.sh aarch64 dist/images/lingos-installer-aarch64.iso 1800 boot || true
+          MODE="${{ inputs.test_mode || 'boot' }}"
+          TMO=1800; [ "$MODE" = "full" ] && TMO=3600
+          sudo bash distro/images/test-boot.sh aarch64 dist/images/lingos-installer-aarch64.iso "$TMO" "$MODE" || true
 
       - name: 上传启动日志
         if: always()

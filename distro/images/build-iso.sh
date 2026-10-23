@@ -41,7 +41,7 @@ if [ "$DEBARCH" = "amd64" ]; then
 else
     KCONSOLE="console=tty0 console=ttyAMA0,115200"
 fi
-KCMDLINE="boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=install-auto"
+KCMDLINE="boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto"
 
 WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
 echo "==> live-build 工作目录: $WORK (dist=$DIST arch=$DEBARCH)"
@@ -182,10 +182,13 @@ cat > /etc/initramfs-tools/scripts/init-premount/lingos-report <<'IREPORT'
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
-msg="LINGOS-INITRAMFS-START kernel=$(uname -r)"
-printf '<6>%s\n' "$msg" > /dev/kmsg 2>/dev/null || true
+# live-boot 的 is_supported_fs 依赖 /proc/filesystems：先预加载文件系统/存储模块
+for m in isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk virtio_pci; do
+    modprobe -q "$m" 2>/dev/null || true
+done
+printf '<6>LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > /dev/kmsg 2>/dev/null || true
 for c in /dev/ttyAMA0 /dev/ttyS0; do
-    [ -e "$c" ] && printf '%s\n' "$msg" > "$c" 2>/dev/null || true
+    [ -e "$c" ] && printf 'LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > "$c" 2>/dev/null || true
 done
 exit 0
 IREPORT
@@ -255,19 +258,19 @@ if [ "$DEBARCH" = "arm64" ]; then
 set default=0
 set timeout=10
 menuentry "LING OS 安装（自动，默认）" {
-    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=install-auto
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
     initrd /live/initrd.img
 }
 menuentry "LING OS 安装（手动选择磁盘）" {
-    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=install-manual
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-manual
     initrd /live/initrd.img
 }
 menuentry "进入 LING OS Live（不安装，可进系统）" {
-    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=live
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=live
     initrd /live/initrd.img
 }
 menuentry "诊断模式（收集日志 / 救援 shell）" {
-    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=diag
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=7 debug lingos.mode=diag
     initrd /live/initrd.img
 }
 GRUBCFG

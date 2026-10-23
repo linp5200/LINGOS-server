@@ -46,24 +46,28 @@ fi
 # ---------- initrd 组件检查（live-boot 依赖的模块/工具） ----------
 echo "==> initrd 组件检查"
 if command -v xorriso >/dev/null 2>&1 && command -v unmkinitramfs >/dev/null 2>&1; then
-    xorriso -osirrox on -indev "$ISO" -extract /live/initrd.img "$OUT/initrd.img" 2>/dev/null || true
-    rm -rf "$OUT/ird" && mkdir -p "$OUT/ird"
-    unmkinitramfs "$OUT/initrd.img" "$OUT/ird" >/dev/null 2>&1 || true
+    IRD=$(mktemp -d /tmp/lingos-ird-XXXXXX)
+    xorriso -osirrox on -indev "$ISO" -extract /live/initrd.img "$IRD.img" 2>/dev/null || true
+    rm -rf "$IRD" && mkdir -p "$IRD"
+    unmkinitramfs "$IRD.img" "$IRD" >/dev/null 2>&1 || true
     {
         echo "=== live-boot 脚本 ==="
-        find "$OUT/ird" -name live-boot 2>/dev/null | head -3
+        find "$IRD" -name live-boot 2>/dev/null | head -3
         echo "=== 关键工具 ==="
         for f in blkid udevadm cdrom_id; do
-            echo "-- $f --"; find "$OUT/ird" -name "$f" 2>/dev/null | head -2
+            echo "-- $f --"; find "$IRD" -name "$f" 2>/dev/null | head -2
         done
         echo "=== 关键内核模块 ==="
         for m in squashfs sr_mod sd_mod virtio_blk usb-storage isofs overlay; do
-            n=$(find "$OUT/ird" -name "*${m}.ko*" 2>/dev/null | wc -l)
+            n=$(find "$IRD" -name "*${m}.ko*" 2>/dev/null | wc -l)
             echo "$m = $n"
         done
         echo "=== 内核版本 ==="
-        ls "$OUT/ird/main/lib/modules" 2>/dev/null || true
+        ls "$IRD/main/lib/modules" 2>/dev/null || true
+        echo "=== /conf/modules 预加载清单 ==="
+        cat "$IRD"/*/conf/modules 2>/dev/null | head -30 || true
     } | tee "$OUT/initrd-check.txt"
+    rm -rf "$IRD" "$IRD.img"
     for m in squashfs sr_mod sd_mod; do
         if ! grep -q "^$m = [1-9]" "$OUT/initrd-check.txt"; then
             echo "WARN: initrd 缺少模块 $m（live-boot/安装器可能失败）"
@@ -149,8 +153,10 @@ while [ "$i" -lt "$TIMEOUT" ]; do
     if [ "$MODE" = "full" ]; then
         if grep -aq "LINGOS-INSTALL-DONE" "$LOG"; then RESULT="install-done"; break; fi
     else
-        if grep -aq "LINGOS-STAGE=2/10" "$LOG"; then RESULT="installer-started"; sleep 3; break; fi
+        # 进入“写盘阶段”（分区/格式化）即视为引导链通过，不必等完整安装
+        if grep -aq "LINGOS-STAGE=[5-9]/10\|LINGOS-STAGE=10/10" "$LOG"; then RESULT="installer-writing"; sleep 2; break; fi
     fi
+    if grep -aq "LINGOS-INSTALL-FAIL" "$LOG"; then RESULT="install-failed"; break; fi
     if grep -aq "Unable to find a medium\|BOOT FAILED\|Kernel panic\|not syncing" "$LOG"; then
         RESULT="boot-failed"; break
     fi
@@ -174,6 +180,9 @@ if [ "$MODE" = "full" ]; then
     need "LINGOS-INSTALL-DONE" "安装完成（INSTALL-DONE）"
 else
     need "LINGOS-STAGE=2/10" "进入磁盘选择"
+    if [ "$FAIL" = "0" ] && ! grep -aq "LINGOS-STAGE=[5-9]/10\|LINGOS-STAGE=10/10" "$LOG"; then
+        echo "WARN: 未观察到写盘阶段（5/10），但已进入安装器"
+    fi
 fi
 DISK_SZ=$(stat -c%s "$DISK" 2>/dev/null || echo 0)
 echo "disk.qcow2=$DISK_SZ bytes"

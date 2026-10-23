@@ -36,6 +36,7 @@ jobs:
           ln -sf "$PWD/$ISO" lingos.iso
           ls -lh lingos.iso
           xorriso -osirrox on -indev lingos.iso -extract / tree >/dev/null 2>&1 || true
+          chmod -R u+w tree 2>/dev/null || true
           ls tree | head
 
       - name: 多组 cmdline 引导实验
