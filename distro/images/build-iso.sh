@@ -124,7 +124,7 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/includes.chroot/etc/initramfs-tools/scripts/init-premount \
          config/includes.chroot/etc/initramfs-tools/scripts/init-bottom \
          config/includes.chroot/LINGOS/offline \
-         config/hooks/live
+         config/hooks/normal
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
 chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
 for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session; do
@@ -161,14 +161,17 @@ LINGOS_KCMDLINE=$KCMDLINE
 INFO
 
 # ---------- chroot hook：安装全捆 + 启用自动安装器 + initramfs 日志 ----------
-cat > config/hooks/live/0100-lingos.hook.chroot <<'HOOK'
+cat > config/hooks/normal/0100-lingos.hook.chroot <<'HOOK'
 #!/bin/sh
 set -e
-mkdir -p /tmp/lingos_bundle
-tar xzf /LINGOS/offline/lingos_bundle.tar.gz -C /tmp/lingos_bundle --strip-components=1
-bash /tmp/lingos_bundle/install.sh /LINGOS
-rm -rf /tmp/lingos_bundle
-rm -f /LINGOS/offline/lingos_bundle.tar.gz
+if [ -f /LINGOS/offline/lingos_bundle.tar.gz ]; then
+    rm -rf /tmp/lingos_bundle
+    mkdir -p /tmp/lingos_bundle
+    tar xzf /LINGOS/offline/lingos_bundle.tar.gz -C /tmp/lingos_bundle --strip-components=1
+    bash /tmp/lingos_bundle/install.sh /LINGOS
+    rm -rf /tmp/lingos_bundle
+    rm -f /LINGOS/offline/lingos_bundle.tar.gz
+fi
 chmod +x /usr/local/sbin/lingos-* 2>/dev/null || true
 chmod 644 /usr/local/sbin/lingos-log.sh 2>/dev/null || true
 touch /etc/lingos-live
@@ -236,7 +239,7 @@ fi
 update-initramfs -u -k all >/dev/null 2>&1 || echo "!! update-initramfs 失败（继续构建）"
 echo "LINGOS live root prepared"
 HOOK
-chmod +x config/hooks/live/0100-lingos.hook.chroot
+chmod +x config/hooks/normal/0100-lingos.hook.chroot
 
 echo "==> lb build（10-30 分钟，需网络）"
 lb build
@@ -256,6 +259,13 @@ if [ "$DEBARCH" = "arm64" ]; then
         "$CHROOT_DIR/etc/systemd/system/multi-user.target.wants/lingos-installer.service"
     touch "$CHROOT_DIR/etc/lingos-live"
     ls -l "$CHROOT_DIR/etc/systemd/system/multi-user.target.wants/lingos-installer.service" || true
+    # 构建期校验：hook 必须真正执行过（否则 /LINGOS 运行时缺失）
+    for _f in /LINGOS/bin/lingos_linux /LINGOS/lingos.sh /usr/local/sbin/lingos-boot-mode; do
+        if [ ! -e "$CHROOT_DIR$_f" ]; then
+            echo "错误：chroot 缺少 $_f（chroot hook 未执行？）" >&2
+            exit 1
+        fi
+    done
     mkdir -p "$BIN_DIR/live"
     KERNEL=$(ls "$CHROOT_DIR"/boot/vmlinuz-* 2>/dev/null | head -1 || true)
     INITRD=$(ls "$CHROOT_DIR"/boot/initrd.img-* 2>/dev/null | head -1 || true)
