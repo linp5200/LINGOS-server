@@ -87,7 +87,7 @@ if [ "$ARCH" = "aarch64" ]; then
         -drive file="$DISK",if=none,id=disk,format=qcow2 \
         -device virtio-blk-pci,drive=disk \
         -netdev user,id=n0 -device e1000,netdev=n0 \
-        -device virtio-gpu-pci -display none -monitor none -no-reboot \
+        -device VGA -display none -monitor "unix:$OUT/mon.sock,server=on,wait=off" -no-reboot \
         -serial "file:$LOG" >"$OUT/qemu.err" 2>&1 &
     QPID=$!
 else
@@ -105,10 +105,41 @@ else
         -cdrom "$ISO" \
         -drive file="$DISK",if=virtio,format=qcow2 \
         -netdev user,id=n0 -device e1000,netdev=n0 \
-        -display none -monitor none -no-reboot \
+        -display none -monitor "unix:$OUT/mon.sock,server=on,wait=off" -no-reboot \
         -serial "file:$LOG" >"$OUT/qemu.err" 2>&1 &
     QPID=$!
 fi
+
+# 后台定时截屏（VNC/VGA 画面；用于确认 tty0 上到底显示了什么）
+capture_screens() {
+    local n=0
+    while [ "$n" -lt 24 ]; do
+        sleep 15
+        n=$((n + 1))
+        python3 - "$OUT/mon.sock" "$OUT/screen-$n.ppm" <<'PYEOF' >/dev/null 2>&1 || true
+import socket, sys, time
+try:
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(5)
+    s.connect(sys.argv[1])
+    try: s.recv(4096)
+    except Exception: pass
+    s.sendall(("screendump " + sys.argv[2] + "\n").encode())
+    time.sleep(0.5)
+    try: s.recv(4096)
+    except Exception: pass
+    s.close()
+except Exception:
+    pass
+PYEOF
+        if command -v pnmtopng >/dev/null 2>&1 && [ -f "$OUT/screen-$n.ppm" ]; then
+            pnmtopng "$OUT/screen-$n.ppm" > "$OUT/screen-$n.png" 2>/dev/null || true
+            rm -f "$OUT/screen-$n.ppm"
+        fi
+    done
+}
+capture_screens &
+CAPPID=$!
 
 RESULT="timeout"
 i=0
@@ -127,6 +158,7 @@ while [ "$i" -lt "$TIMEOUT" ]; do
 done
 kill "$QPID" 2>/dev/null || true
 wait "$QPID" 2>/dev/null || true
+kill "$CAPPID" 2>/dev/null || true
 ELAPSED=$(( $(date +%s) - START ))
 echo "qemu_result=$RESULT elapsed=${ELAPSED}s"
 echo "=== serial.log 末尾 ==="

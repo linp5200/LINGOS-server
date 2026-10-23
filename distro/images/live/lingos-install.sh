@@ -206,6 +206,21 @@ mkdir -p "$TARGET/etc/systemd/system/multi-user.target.wants"
 ln -sf /etc/systemd/system/lingos.service "$TARGET/etc/systemd/system/multi-user.target.wants/lingos.service"
 rm -f "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-installer.service"
 chroot "$TARGET" passwd -d root 2>/dev/null || true
+
+# 桌面用户（useradd -m 会复制 /etc/skel 中的 labwc/waybar/wofi 配置）
+chroot "$TARGET" useradd -m -s /bin/bash -G video,render,input,audio lingos 2>/dev/null \
+    || chroot "$TARGET" useradd -m -s /bin/bash lingos 2>/dev/null || true
+chroot "$TARGET" passwd -d lingos 2>/dev/null || true
+mkdir -p "$TARGET/etc/systemd/system/getty@tty1.service.d" \
+         "$TARGET/etc/systemd/system/getty.target.wants"
+cat > "$TARGET/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<AUTOLOGIN
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin lingos --noclear %I \$TERM
+AUTOLOGIN
+ln -sf /lib/systemd/system/getty@tty1.service \
+    "$TARGET/etc/systemd/system/getty.target.wants/getty@tty1.service"
+log "桌面用户 lingos + tty1 自动登录已配置"
 log "配置写入完成"
 
 # ---------- 完成 ----------

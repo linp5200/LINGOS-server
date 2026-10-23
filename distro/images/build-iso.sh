@@ -36,7 +36,7 @@ fi
 GITREV=$(cd "$ROOT" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TS=$(date -u +%FT%TZ)
 # 0.9.12 统一内核参数：不静默、开日志、双串口 + VGA 控制台、默认自动安装
-KCMDLINE="boot=live components debug console=ttyAMA0,115200 console=ttyS0,115200 console=tty0 loglevel=7 video=1024x768@60 lingos.mode=install-auto"
+KCMDLINE="boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=install-auto"
 
 WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
 echo "==> live-build 工作目录: $WORK (dist=$DIST arch=$DEBARCH)"
@@ -93,6 +93,11 @@ grub-efi-amd64-signed
 grub-pc-bin
 syslinux
 syslinux-utils
+labwc
+waybar
+wofi
+foot
+fonts-noto-cjk
 espeak-ng
 ffmpeg
 libcurl4
@@ -112,6 +117,7 @@ fi
 mkdir -p config/includes.chroot/usr/local/sbin \
          config/includes.chroot/etc/systemd/system \
          config/includes.chroot/etc/initramfs-tools/scripts/init-premount \
+         config/includes.chroot/etc/initramfs-tools/scripts/init-bottom \
          config/includes.chroot/LINGOS/offline \
          config/hooks/live
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
@@ -125,6 +131,19 @@ chmod 644 "config/includes.chroot/usr/local/sbin/lingos-log.sh"
 cp "$ROOT/distro/images/live/lingos-initramfs-report" \
    "config/includes.chroot/etc/initramfs-tools/scripts/init-premount/lingos-report"
 chmod +x "config/includes.chroot/etc/initramfs-tools/scripts/init-premount/lingos-report"
+cp "$ROOT/distro/images/live/lingos-initramfs-bottom" \
+   "config/includes.chroot/etc/initramfs-tools/scripts/init-bottom/lingos-bottom"
+chmod +x "config/includes.chroot/etc/initramfs-tools/scripts/init-bottom/lingos-bottom"
+# 桌面配置（安装后由 installer 创建 lingos 用户，useradd -m 会复制 /etc/skel）
+mkdir -p config/includes.chroot/etc/skel/.config/labwc \
+         config/includes.chroot/etc/skel/.config/waybar \
+         config/includes.chroot/etc/skel/.config/wofi
+cp "$ROOT/distro/desktop/skel/.bash_profile"        config/includes.chroot/etc/skel/.bash_profile
+cp "$ROOT/distro/desktop/skel/.config/labwc/autostart" config/includes.chroot/etc/skel/.config/labwc/autostart
+cp "$ROOT/distro/desktop/labwc/rc.xml"              config/includes.chroot/etc/skel/.config/labwc/rc.xml
+cp "$ROOT/distro/desktop/waybar/config.jsonc"       config/includes.chroot/etc/skel/.config/waybar/config.jsonc
+cp "$ROOT/distro/desktop/waybar/style.css"          config/includes.chroot/etc/skel/.config/waybar/style.css
+cp "$ROOT/distro/desktop/wofi/style.css"            config/includes.chroot/etc/skel/.config/wofi/style.css
 cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
@@ -167,6 +186,25 @@ exit 0
 IREPORT
 fi
 chmod +x /etc/initramfs-tools/scripts/init-premount/lingos-report
+mkdir -p /etc/initramfs-tools/scripts/init-bottom
+if [ ! -f /etc/initramfs-tools/scripts/init-bottom/lingos-bottom ]; then
+cat > /etc/initramfs-tools/scripts/init-bottom/lingos-bottom <<'IBOTTOM'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+printf '<6>LINGOS-INITRAMFS-BOTTOM\n' > /dev/kmsg 2>/dev/null || true
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$c" ] && printf 'LINGOS-INITRAMFS-BOTTOM\n' > "$c" 2>/dev/null || true
+done
+exit 0
+IBOTTOM
+fi
+chmod +x /etc/initramfs-tools/scripts/init-bottom/lingos-bottom
+# 显式保证 live-boot 所需模块进入 initrd（MODULES=most 之外再兜底）
+for m in squashfs loop overlay sr_mod sd_mod usb-storage uas isofs virtio_blk virtio_pci; do
+    grep -qx "$m" /etc/initramfs-tools/modules 2>/dev/null || echo "$m" >> /etc/initramfs-tools/modules
+done
 if grep -q '^MODULES=' /etc/initramfs-tools/initramfs.conf 2>/dev/null; then
     sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf
 else
@@ -212,19 +250,19 @@ if [ "$DEBARCH" = "arm64" ]; then
 set default=0
 set timeout=10
 menuentry "LING OS 安装（自动，默认）" {
-    linux /live/vmlinuz boot=live components debug console=ttyAMA0,115200 console=ttyS0,115200 console=tty0 loglevel=7 video=1024x768@60 lingos.mode=install-auto
+    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=install-auto
     initrd /live/initrd.img
 }
 menuentry "LING OS 安装（手动选择磁盘）" {
-    linux /live/vmlinuz boot=live components debug console=ttyAMA0,115200 console=ttyS0,115200 console=tty0 loglevel=7 video=1024x768@60 lingos.mode=install-manual
+    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=install-manual
     initrd /live/initrd.img
 }
 menuentry "进入 LING OS Live（不安装，可进系统）" {
-    linux /live/vmlinuz boot=live components debug console=ttyAMA0,115200 console=ttyS0,115200 console=tty0 loglevel=7 video=1024x768@60 lingos.mode=live
+    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=live
     initrd /live/initrd.img
 }
 menuentry "诊断模式（收集日志 / 救援 shell）" {
-    linux /live/vmlinuz boot=live components debug console=ttyAMA0,115200 console=ttyS0,115200 console=tty0 loglevel=7 video=1024x768@60 lingos.mode=diag
+    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=diag
     initrd /live/initrd.img
 }
 GRUBCFG
