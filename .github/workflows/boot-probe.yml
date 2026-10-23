@@ -1,0 +1,152 @@
+name: boot-probe
+
+# 诊断用：下载已发布的 ISO，在 CI 里用 QEMU UEFI + 串口复现启动过程。
+# 目的：拿到真机黑屏对应的内核/live-boot/安装器日志（不重新构建 ISO）。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要诊断的 Release tag"
+        required: true
+        default: v0.9.11
+      boot_timeout:
+        description: "QEMU 运行超时（秒）"
+        required: true
+        default: "420"
+
+permissions:
+  contents: read
+
+env:
+  BOOT_TIMEOUT: ${{ inputs.boot_timeout }}
+
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 QEMU + AAVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 qemu-utils
+
+      - name: 下载并合并 arm64 ISO
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work && cd work
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" -p 'lingos-installer-aarch64.iso*' || true
+          ls -l
+          if [ -f lingos-installer-aarch64.iso.part0 ]; then
+            cat lingos-installer-aarch64.iso.part* > lingos.iso
+          elif [ -f lingos-installer-aarch64.iso ]; then
+            mv lingos-installer-aarch64.iso lingos.iso
+          fi
+          ls -l lingos.iso
+          sha256sum lingos.iso | tee sha256.txt
+
+      - name: QEMU 启动（USB CD + VGA，串口日志）
+        working-directory: work
+        run: |
+          qemu-img create -f qcow2 disk.qcow2 10G
+          set +e
+          timeout "${{ inputs.boot_timeout }}" qemu-system-aarch64 \
+            -M virt,virtualization=true -cpu cortex-a76 -m 3072 -smp 2 \
+            -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+            -device nec-usb-xhci,id=xhci \
+            -drive if=none,id=cd,format=raw,media=cdrom,file="$PWD/lingos.iso" \
+            -device usb-storage,bus=xhci.0,drive=cd \
+            -drive file="$PWD/disk.qcow2",if=none,id=disk,format=qcow2 \
+            -device virtio-blk-pci,drive=disk \
+            -netdev user,id=n0 -device e1000,netdev=n0 \
+            -device VGA -display none -monitor none -no-reboot \
+            -serial "file:$PWD/serial.log"
+          echo "qemu_exit=$?"
+          ls -l serial.log disk.qcow2 || true
+          du -h disk.qcow2 || true
+
+      - name: 摘要
+        if: always()
+        working-directory: work
+        run: |
+          echo "=== serial.log (最后 300 行) ==="
+          tail -300 serial.log 2>/dev/null || echo "(no serial.log)"
+          echo "=== 关键标记 ==="
+          for m in "EFI stub" "Booting Linux" "Linux version" "live-boot" "live-config" "LINGOS" "install" "squashfs" "Unable to find" "Kernel panic" "not syncing" "reboot: Power down"; do
+            c=$(grep -c -i "$m" serial.log 2>/dev/null || true)
+            echo "$m = $c"
+          done
+          echo "=== disk ==="
+          du -h disk.qcow2 2>/dev/null || true
+
+      - name: 上传日志 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log-arm64
+          path: work/
+          if-no-files-found: warn
+
+  x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 QEMU + OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf qemu-utils
+
+      - name: 下载 x86_64 ISO
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work && cd work
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" -p 'lingos-installer-x86_64.iso*' || true
+          ls -l
+          if [ -f lingos-installer-x86_64.iso ]; then mv lingos-installer-x86_64.iso lingos.iso; fi
+          # 若被拆分（未来版本）
+          if [ -f lingos-installer-x86_64.iso.part0 ]; then cat lingos-installer-x86_64.iso.part* > lingos.iso; fi
+          ls -l lingos.iso
+          sha256sum lingos.iso | tee sha256.txt
+
+      - name: QEMU 启动（UEFI，串口日志）
+        working-directory: work
+        run: |
+          qemu-img create -f qcow2 disk.qcow2 10G
+          OVMF_CODE=$(ls /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd 2>/dev/null | head -1)
+          OVMF_VARS_SRC=$(ls /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd 2>/dev/null | head -1)
+          cp "$OVMF_VARS_SRC" vars.fd
+          set +e
+          timeout "${{ inputs.boot_timeout }}" qemu-system-x86_64 \
+            -machine q35 -m 2048 -smp 2 \
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+            -drive if=pflash,format=raw,file="$PWD/vars.fd" \
+            -cdrom "$PWD/lingos.iso" \
+            -drive file="$PWD/disk.qcow2",if=virtio,format=qcow2 \
+            -netdev user,id=n0 -device e1000,netdev=n0 \
+            -display none -monitor none -no-reboot \
+            -serial "file:$PWD/serial.log"
+          echo "qemu_exit=$?"
+          ls -l serial.log disk.qcow2 || true
+
+      - name: 摘要
+        if: always()
+        working-directory: work
+        run: |
+          echo "=== serial.log (最后 300 行) ==="
+          tail -300 serial.log 2>/dev/null || echo "(no serial.log)"
+          for m in "EFI stub" "Booting Linux" "Linux version" "live-boot" "live-config" "LINGOS" "install" "squashfs" "Unable to find" "Kernel panic" "not syncing"; do
+            c=$(grep -c -i "$m" serial.log 2>/dev/null || true)
+            echo "$m = $c"
+          done
+          du -h disk.qcow2 2>/dev/null || true
+
+      - name: 上传日志 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log-x86_64
+          path: work/
+          if-no-files-found: warn
