@@ -83,8 +83,14 @@ Vectras 的“自定义参数”在部分版本/设置下不会生效（实测 p
 
 - 重启后从硬盘启动（Vectras 里把“启动自”改为硬盘，或移除 ISO）。
 - 系统内 lingos.service 会自动拉起 LINGOS（/LINGOS 数据根，WebUI 8080）。
+- **桌面（0.9.12+）**：安装器会创建 lingos 用户并配置 tty1 自动登录，启动后自动执行 labwc；
+  VNC 画面应看到 waybar 顶栏 + 桌面。可 `Super`（或 wofi 快捷键）打开应用启动器，`foot` 打开终端。
 - 安装记录：/LINGOS/system/config/install-report.json；
   安装日志：/var/log/lingos-install.log。
+
+> 性能提示：Vectras 用 TCG 软件模拟 ARM64，首次启动/安装会明显慢于真机；
+> 0.9.12 的安装进度会写到屏幕与共享文件夹，按“进度文件”判断，不要只看 qcow2 大小。
+> 若黑屏时间较长，先等 5–10 分钟，并查看共享文件夹里的进度文件。
 
 ## 七、本地 QEMU（桌面 Linux）等价验证
 

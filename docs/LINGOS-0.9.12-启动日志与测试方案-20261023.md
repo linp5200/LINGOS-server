@@ -29,7 +29,8 @@
 
     boot=live components debug console=ttyAMA0,115200 console=ttyS0,115200 console=tty0     loglevel=7 video=1024x768@60 lingos.mode=<mode>
 
-- console=tty0 放最后 → /dev/console 是 VGA 控制台（VNC 可见）；
+- 串口 console 放最后（arm64=ttyAMA0 / x86=ttyS0）→ /dev/console 是串口，live-boot/systemd 的早期输出
+  能进入串口日志（CI 可抓）；VGA 的 tty0 仍由内核 printk 与安装器显式写入，VNC 可见；
 - 去掉了 quiet splash → 内核与安装器输出不再被吞；
 - debug → live-boot 详细日志（0.9 调试期保留，稳定后可去掉）。
 
@@ -41,6 +42,7 @@
 | LINGOS-BOOT-INFO kernel=... arch=... cmdline=... | 引导环境 |
 | LINGOS-IMAGE-INFO ... | 构建版本/架构/git/构建时间 |
 | LINGOS-INITRAMFS-START kernel=... | initramfs 已执行（L0 通过） |
+| LINGOS-INITRAMFS-BOTTOM | live-boot 已挂载 live 根、即将 switch_root（L0.5 通过） |
 | LINGOS-STAGE=<n>/<total> percent=<p> eta=<s> <消息> | 安装阶段进度 |
 | LINGOS-INSTALL-DONE | 安装完成（rsync/GRUB/配置全部成功） |
 | LINGOS-INSTALL-FAIL=code=<n> <消息> | 安装失败（含错误码与原因） |
@@ -113,7 +115,8 @@
 | T6 | 失败路径 | 不给磁盘 / 磁盘 <8G / 破坏 ISO | 明确失败码 + 提示，不静默 |
 
 CI 集成：images workflow 的 iso-x86_64 / iso-arm64 在构建后自动执行 T1/T2，
-启动日志上传为 artifact（boot-log-x86_64 / boot-log-arm64）。
+启动日志 + 定时 VGA 截屏（monitor screendump）上传为 artifact（boot-log-x86_64 / boot-log-arm64）。
+测试脚本命中 LINGOS-STAGE=2/10 或 BOOT FAILED 会提前结束 QEMU，避免空等超时。
 
 ## 八、0.9 验收清单
 

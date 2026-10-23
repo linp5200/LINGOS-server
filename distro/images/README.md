@@ -75,7 +75,9 @@
 
 - 首启由 systemd `lingos.service` 拉起 LINGOS（/LINGOS 数据根，WebUI 8080）。
 - `/LINGOS/system/config/install-report.json` 记录安装模式/磁盘/时间；`install-state.json` 记录最终进度。
-- 桌面（labwc/waybar/wofi + WebUI kiosk）资产在 `distro/desktop/`，正在并入 ISO。
+- 桌面（0.9.12+）：ISO 已内置 labwc/waybar/wofi/foot 与中文 Noto 字体；安装器创建 `lingos` 用户并配置
+  tty1 自动登录，`~/.bash_profile` 自动执行 labwc —— 安装后重启即进入 Wayland 桌面（VNC/QEMU 画面可见）。
+  WebUI kiosk（chromium）在 0.10 接入，当前可用 `foot` 终端 + WebUI 浏览器手动访问。
 
 ### 2.5 写盘方式
 

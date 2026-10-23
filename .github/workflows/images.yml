@@ -6,6 +6,11 @@ name: images
 #   release    —— tag v* 时把 ISO 附加到 GitHub Release
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "可选：构建成功后创建/更新该 Release（如 v0.9.12）；留空只构建"
+        required: false
+        default: ""
   push:
     tags: ['v*']
 
@@ -179,7 +184,7 @@ jobs:
 
   release:
     needs: [iso-x86_64, iso-arm64]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
     runs-on: ubuntu-latest
     steps:
       - name: 下载 ISO artifacts
@@ -222,6 +227,8 @@ jobs:
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: LING OS ${{ inputs.release_tag || github.ref_name }}
           files: |
             /tmp/rel/*
           generate_release_notes: true

@@ -3,6 +3,11 @@
 if [ -z "${WAYLAND_DISPLAY:-}" ] && [ "$(tty 2>/dev/null || true)" = "/dev/tty1" ]; then
     export XDG_SESSION_TYPE=wayland
     export MOZ_ENABLE_WAYLAND=1
-    export WLR_RENDERER=${WLR_RENDERER:-pixman}
-    exec labwc
+    export WLR_RENDERER="${WLR_RENDERER:-pixman}"
+    if command -v labwc >/dev/null 2>&1; then
+        mkdir -p "$HOME/.local/share"
+        exec labwc >>"$HOME/.local/share/labwc-boot.log" 2>&1
+    else
+        echo "LING OS: 未找到 labwc，回退到 shell（检查桌面包是否安装）" >&2
+    fi
 fi
