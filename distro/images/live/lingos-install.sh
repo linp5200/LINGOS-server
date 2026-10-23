@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# LING OS 安装器（live ISO 内运行；0.9.13 带阶段日志/进度/回传）
+# LING OS 安装器（live ISO 内运行；0.9.14 带阶段日志/进度/回传）
 # 用法：
 #   lingos-install --auto        自动：选最大 >=8G 内置磁盘（排除 USB）
 #   lingos-install --manual      交互：whiptail 选盘 + 确认
@@ -108,6 +108,26 @@ fi
 # ---------- 分区 ----------
 stage 4 partition "分区（GPT: EFI 512M + root ext4）"
 UEFI=0; [ -d /sys/firmware/efi ] && UEFI=1
+# 清理目标盘上的挂载/签名（Vectras 等可能把预格式化 vfat 分区挂成共享文件夹；
+# 设备 busy 会让 parted mklabel 失败）
+for _p in $(lsblk -ln -o NAME,TYPE "$DISK" 2>/dev/null | awk '$2=="part"{print $1}'); do
+    umount -f "/dev/$_p" 2>/dev/null || true
+done
+if [ -n "${LINGOS_SHARE:-}" ]; then
+    _src=$(findmnt -n -o SOURCE "$LINGOS_SHARE" 2>/dev/null || true)
+    if [ -n "$_src" ]; then
+        _pk=$(lsblk -no PKNAME "$_src" 2>/dev/null | head -1)
+        if [ "$_src" = "$DISK" ] || { [ -n "$_pk" ] && [ "/dev/$_pk" = "$DISK" ]; }; then
+            umount -f "$LINGOS_SHARE" 2>/dev/null || true
+            LINGOS_SHARE=""
+            _emit "LINGOS-SHARE-RELEASED=$DISK"
+        fi
+    fi
+fi
+swapoff -a 2>/dev/null || true
+wipefs -a "$DISK" >/dev/null 2>&1 || true
+partprobe "$DISK" 2>/dev/null || true
+_emit "LINGOS-DISK-PREPARE=$DISK"
 case "$DISK" in
     *nvme*|*mmcblk*) P1="${DISK}p1"; P2="${DISK}p2" ;;
     *)               P1="${DISK}1";  P2="${DISK}2" ;;
@@ -241,7 +261,7 @@ printf '%s\n' '{"system_configured": true, "last_config_time": "1970-01-01T00:00
 printf '%s\n' '{"schema_version": 1, "ai": {"ai_config": {"backend": "deepseek", "language": "zh"}, "provider": {"active": "deepseek", "deepseek": {"api_key": "", "model": "deepseek-v4-pro", "base_url": "https://api.deepseek.com"}}}}' \
     > "$TARGET/LINGOS/system/config/config.json"
 cat > "$TARGET/LINGOS/system/config/install-report.json" <<REPORT
-{"version":"0.9.13","mode":"$LINGOS_MODE","disk":"$DISK","uefi":$UEFI,"root_uuid":"$ROOT_UUID","installed_at":"$(date -u +%FT%TZ)"}
+{"version":"0.9.14","mode":"$LINGOS_MODE","disk":"$DISK","uefi":$UEFI,"root_uuid":"$ROOT_UUID","installed_at":"$(date -u +%FT%TZ)"}
 REPORT
 mkdir -p "$TARGET/var/log"
 cp -f "$LINGOS_LOG" "$TARGET/var/log/lingos-install.log" 2>/dev/null || true

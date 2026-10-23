@@ -167,7 +167,7 @@ cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/et
 cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chroot/etc/systemd/system/lingos-desktop-report.service
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
 cat > config/includes.chroot/etc/lingos-image-info <<INFO
-LINGOS_VERSION=0.9.13
+LINGOS_VERSION=0.9.14
 LINGOS_ARCH=$ARCH
 LINGOS_GIT=$GITREV
 LINGOS_BUILD_TS=$BUILD_TS

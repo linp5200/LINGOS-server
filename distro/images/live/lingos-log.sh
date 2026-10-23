@@ -85,6 +85,20 @@ find_share() {
         case "$fstype" in vfat|exfat|msdos) ;; *) continue ;; esac
         dev="/dev/$part"
         [ "$dev" = "$live_src" ] && continue
+        # 跳过“大容量非 USB 磁盘”上的 vfat 分区：它通常是安装目标盘（被误当共享文件夹挂载后，
+        # parted mklabel 会因设备 busy 失败）。真正的 Vectras 共享文件夹是小容量 vvfat 盘。
+        _pk=$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1)
+        if [ -n "$_pk" ]; then
+            _psz=$(lsblk -bdno SIZE "/dev/$_pk" 2>/dev/null || echo 0)
+            _ptran=$(lsblk -dno TRAN "/dev/$_pk" 2>/dev/null || true)
+        else
+            _psz=$(lsblk -bdno SIZE "$dev" 2>/dev/null || echo 0)
+            _ptran=$(lsblk -dno TRAN "$dev" 2>/dev/null || true)
+        fi
+        case "$_ptran" in
+            usb) ;;
+            *) [ "${_psz:-0}" -ge 8589934592 ] 2>/dev/null && continue ;;
+        esac
         mount -t vfat -o rw,umask=0000 "$dev" "$LINGOS_SHARE_MNT" 2>/dev/null || continue
         if touch "$LINGOS_SHARE_MNT/.lingos-write-test" 2>/dev/null; then
             rm -f "$LINGOS_SHARE_MNT/.lingos-write-test" 2>/dev/null || true
