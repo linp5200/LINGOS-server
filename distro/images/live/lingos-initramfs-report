@@ -1,7 +1,5 @@
 #!/bin/sh
-# LING OS initramfs 早期标记（init-premount，不阻塞启动）
-# 写入 kmsg 与串口，便于 CI/真机确认内核与 initramfs 已启动；
-# 同时预加载 live-boot 所需的文件系统/存储模块（其 is_supported_fs 检查 /proc/filesystems）。
+# LING OS initramfs 早期标记 + 诊断（init-premount）
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "$1" in
@@ -12,12 +10,35 @@ for m in isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk vi
     modprobe -q "$m" 2>/dev/null || true
 done
 
-msg="LINGOS-INITRAMFS-START kernel=$(uname -r) modules=$(cat /proc/filesystems 2>/dev/null | tr '\n' ',' | head -c 200)"
-printf '<6>%s\n' "LINGOS-INITRAMFS-START kernel=$(uname -r)" > /dev/kmsg 2>/dev/null || true
+# debug 模式下 initramfs-tools 把输出重定向到 /run/initramfs/initramfs.debug；
+# 用 cat 循环把它流到串口（不依赖 tail/head 等可能缺失的 busybox applet）。
+case "$(cat /proc/cmdline 2>/dev/null)" in
+    *debug*)
+        if [ -e /run/initramfs/initramfs.debug ]; then
+            ( i=0; while [ "$i" -lt 60 ]; do cat /run/initramfs/initramfs.debug > /dev/ttyAMA0 2>/dev/null; sleep 2; i=$((i+1)); done ) &
+        fi
+        ;;
+esac
+
+printf '<6>LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > /dev/kmsg 2>/dev/null || true
 for c in /dev/ttyAMA0 /dev/ttyS0; do
     [ -e "$c" ] && printf 'LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > "$c" 2>/dev/null || true
 done
-if [ -d /run/live ]; then
-    printf '<6>LINGOS-INITRAMFS-LIVE-DIR-OK\n' > /dev/kmsg 2>/dev/null || true
-fi
+
+sleep 3
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$c" ] || continue
+    {
+        echo "LINGOS-PROBE-BEGIN"
+        echo "-- filesystems --"
+        cat /proc/filesystems 2>/dev/null | grep -E 'iso9660|squashfs|overlay' || true
+        echo "-- devices --"
+        ls -l /dev/sr* /dev/sd* /dev/vd* 2>&1 || true
+        echo "-- blkid /dev/sr0 --"
+        blkid /dev/sr0 2>&1 || true
+        echo "-- /sys/block --"
+        ls /sys/block 2>&1 || true
+        echo "LINGOS-PROBE-END"
+    } > "$c" 2>&1
+done
 exit 0

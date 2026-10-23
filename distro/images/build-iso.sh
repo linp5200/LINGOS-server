@@ -41,7 +41,7 @@ if [ "$DEBARCH" = "amd64" ]; then
 else
     KCONSOLE="console=tty0 console=ttyAMA0,115200"
 fi
-KCMDLINE="boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto"
+KCMDLINE="boot=live components debug $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto"
 
 WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
 echo "==> live-build 工作目录: $WORK (dist=$DIST arch=$DEBARCH)"
@@ -182,16 +182,38 @@ cat > /etc/initramfs-tools/scripts/init-premount/lingos-report <<'IREPORT'
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
-# live-boot 的 is_supported_fs 依赖 /proc/filesystems：先预加载文件系统/存储模块
 for m in isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk virtio_pci; do
     modprobe -q "$m" 2>/dev/null || true
 done
+case "$(cat /proc/cmdline 2>/dev/null)" in
+    *debug*) [ -e /run/initramfs/initramfs.debug ] && ( i=0; while [ "$i" -lt 60 ]; do cat /run/initramfs/initramfs.debug > /dev/ttyAMA0 2>/dev/null; sleep 2; i=$((i+1)); done ) & ;;
+esac
 printf '<6>LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > /dev/kmsg 2>/dev/null || true
 for c in /dev/ttyAMA0 /dev/ttyS0; do
     [ -e "$c" ] && printf 'LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > "$c" 2>/dev/null || true
 done
+sleep 3
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$c" ] || continue
+    { echo "LINGOS-PROBE-BEGIN"; cat /proc/filesystems 2>/dev/null | grep -E 'iso9660|squashfs|overlay' || true; ls -l /dev/sr* /dev/sd* /dev/vd* 2>&1 || true; blkid /dev/sr0 2>&1 || true; ls /sys/block 2>&1 || true; echo "LINGOS-PROBE-END"; } > "$c" 2>&1
+done
 exit 0
 IREPORT
+
+# 确保 blkid / udevadm 及其依赖库进入 initramfs（live-boot 的 get_fstype 依赖 blkid）
+mkdir -p /etc/initramfs-tools/hooks
+cat > /etc/initramfs-tools/hooks/lingos-tools <<'ITOOLS'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+copy_exec /usr/sbin/blkid /usr/sbin
+copy_exec /usr/bin/udevadm /usr/bin
+copy_exec /bin/mount /bin
+exit 0
+ITOOLS
+chmod +x /etc/initramfs-tools/hooks/lingos-tools
 fi
 chmod +x /etc/initramfs-tools/scripts/init-premount/lingos-report
 mkdir -p /etc/initramfs-tools/scripts/init-bottom
@@ -258,7 +280,7 @@ if [ "$DEBARCH" = "arm64" ]; then
 set default=0
 set timeout=10
 menuentry "LING OS 安装（自动，默认）" {
-    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
+    linux /live/vmlinuz boot=live components debug $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
     initrd /live/initrd.img
 }
 menuentry "LING OS 安装（手动选择磁盘）" {
