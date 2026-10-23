@@ -117,7 +117,7 @@ jobs:
         if: always()
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf
+          sudo apt-get install -y qemu-system-x86 ovmf xorriso initramfs-tools
           sudo bash distro/images/test-boot.sh x86_64 dist/images/lingos-installer-x86_64.iso 600 boot || true
 
       - name: 上传启动日志
@@ -166,7 +166,7 @@ jobs:
         if: always()
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-arm qemu-efi-aarch64
+          sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 xorriso initramfs-tools
           sudo bash distro/images/test-boot.sh aarch64 dist/images/lingos-installer-aarch64.iso 900 boot || true
 
       - name: 上传启动日志
