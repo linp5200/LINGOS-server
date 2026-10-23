@@ -35,7 +35,12 @@ if ! command -v lb >/dev/null 2>&1; then
 fi
 GITREV=$(cd "$ROOT" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TS=$(date -u +%FT%TZ)
-# 0.9.12 统一内核参数：不静默、开日志、双串口 + VGA 控制台、默认自动安装
+# 0.9.12 统一内核参数：不静默、开日志、串口放最后（/dev/console -> 串口，CI/真机可抓 live-boot 日志）
+if [ "$DEBARCH" = "amd64" ]; then
+    KCONSOLE="console=tty0 console=ttyS0,115200"
+else
+    KCONSOLE="console=tty0 console=ttyAMA0,115200"
+fi
 KCMDLINE="boot=live components debug $KCONSOLE loglevel=7 video=1024x768@60 lingos.mode=install-auto"
 
 WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
