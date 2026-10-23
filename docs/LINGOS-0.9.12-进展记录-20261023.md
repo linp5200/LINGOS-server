@@ -50,8 +50,19 @@
   `modprobe isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk virtio_pci`；
 - 增加 initramfs hook `lingos-tools`，用 `copy_exec` 保证 `blkid`/`udevadm` 及其依赖库进入 initrd
   （live-boot 的 `get_fstype` 依赖 blkid）；
-- **不使用** `live-media=` 参数，让 live-boot 正常扫描设备；
+- `live-media=/dev/sr0` **必须用单一设备名**（逗号列表会被 live-boot 拆成最后一项 /dev/sda 而失败）；
+  实测不设置该参数时 live-boot 的 CD 扫描分支也未能找到介质，单一 sr0 可直接命中；
+- **squashfs 必须保留 /dev /proc /sys /run /tmp 目录**：live-boot 的 init-bottom 会把 initramfs 中的挂载点
+  `mount --move` 到新根；若这些目录被 squashfs 排除，会报
+  `mount: mounting /dev on /root/dev failed` → `can't open /root/dev/console` →
+  `Kernel panic - Attempted to kill init`。已在 mksquashfs 阶段修正；
 - 生产内核参数去掉 `debug`（避免 initramfs 日志重定向与额外开销），诊断模式保留 `debug`。
+- **live-build 本地 chroot hook 必须命名为 `config/hooks/*.chroot`**（直接放在 config/hooks 下、
+  `.chroot` 后缀）；原 `config/hooks/live/*.hook.chroot` 从未被执行，导致：
+  1) `/LINGOS` 运行时（二进制/venv/WebUI）没有装进 ISO；
+  2) `lingos-installer.service` 没有被 enable；
+  3) 安装后的系统缺少 LINGOS 服务。
+  已改为 `config/hooks/0100-lingos.chroot`，并在构建期校验 `/LINGOS/bin/lingos_linux` 存在（缺失即构建失败）。
 
 ## 二、本轮修复（0.9.12）
 

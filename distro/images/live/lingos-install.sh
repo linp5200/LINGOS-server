@@ -9,6 +9,11 @@
 # ============================================================
 set -Eeuo pipefail
 
+# 最早期调试标记（即使后续 source/依赖失败也能在串口看到）
+for _c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$_c" ] && printf 'LINGOS-INSTALL-SCRIPT-START\n' > "$_c" 2>/dev/null || true
+done
+
 export LINGOS_MODE="${LINGOS_MODE:-install-auto}"
 export LINGOS_LOG="${LINGOS_LOG:-/var/log/lingos-install.log}"
 export LINGOS_TOTAL_STAGES=10
@@ -16,7 +21,7 @@ LINGOS_LIB=/usr/local/sbin/lingos-log.sh
 if [ -f "$LINGOS_LIB" ]; then . "$LINGOS_LIB"; else echo "缺少 $LINGOS_LIB" >&2; exit 1; fi
 : > "$LINGOS_LOG" 2>/dev/null || true
 
-trap 'rc=$?; set +e; fail_msg "$rc" "命令失败: $BASH_COMMAND"; exit $rc' ERR
+trap 'rc=$?; for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf "LINGOS-INSTALL-ERROR line=%s rc=%s cmd=%s\n" "$LINENO" "$rc" "$BASH_COMMAND" > "$_c" 2>/dev/null || true; done; set +e; fail_msg "$rc" "命令失败: $BASH_COMMAND"; exit $rc' ERR
 
 AUTO=0
 case "$LINGOS_MODE" in

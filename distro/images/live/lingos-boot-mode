@@ -9,6 +9,9 @@ for a in $(cat /proc/cmdline 2>/dev/null); do
     esac
 done
 export LINGOS_MODE="$MODE"
+for _c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$_c" ] && printf 'LINGOS-BOOT-MODE-START mode=%s\n' "$MODE" > "$_c" 2>/dev/null || true
+done
 case "$MODE" in
     install-auto|auto)              exec /usr/local/sbin/lingos-install --auto ;;
     install-manual|manual|install)  exec /usr/local/sbin/lingos-install --manual ;;

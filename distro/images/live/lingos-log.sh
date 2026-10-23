@@ -49,11 +49,12 @@ _stamp() { date '+%F %T'; }
 # 输出到：日志文件 + 所有控制台 + 串口 + kmsg
 _emit() {
     local line="$1" t
-    printf '%s\n' "$line" >> "$LINGOS_LOG" 2>/dev/null || true
-    for t in $LINGOS_CONSOLE; do
-        [ -c "$t" ] && printf '%s\n' "$line" > "$t" 2>/dev/null || true
+    printf '%s\n' "$line" 2>/dev/null >> "$LINGOS_LOG" || true
+    printf '<6>%s\n' "$line" 2>/dev/null > /dev/kmsg || true
+    # 串口优先（CI/真机调试依赖），再写 tty0/tty1
+    for t in /dev/ttyAMA0 /dev/ttyS0 /dev/tty0 /dev/tty1; do
+        [ -c "$t" ] && { printf '%s\n' "$line" 2>/dev/null > "$t" || true; }
     done
-    printf '<6>%s\n' "$line" > /dev/kmsg 2>/dev/null || true
     printf '%s\n' "$line" >&2
 }
 
@@ -101,7 +102,7 @@ report_share() {
         printf '进度: %s%%\n' "$2"
         printf '消息: %s\n' "$3"
         printf '更新时间: %s\n' "$(_stamp)"
-    } > "$LINGOS_SHARE/lingos-install-progress.txt" 2>/dev/null || true
+    } 2>/dev/null > "$LINGOS_SHARE/lingos-install-progress.txt" || true
     cp -f "$LINGOS_STATE" "$LINGOS_SHARE/lingos-install-state.json" 2>/dev/null || true
     cp -f "$LINGOS_LOG"   "$LINGOS_SHARE/lingos-install.log" 2>/dev/null || true
 }
@@ -140,7 +141,7 @@ write_state() {
     json=$(printf '{"ok":true,"mode":"%s","stage":%s,"stage_name":"%s","total":%s,"percent":%s,"message":"%s","eta_seconds":%s,"elapsed_seconds":%s,"ts":"%s"%s}' \
         "$(json_escape "$LINGOS_MODE")" "$LINGOS_STAGE" "$(json_escape "$name")" "$LINGOS_TOTAL_STAGES" "$percent" \
         "$(json_escape "$msg")" "$eta_json" "$elapsed" "$(date -u +%FT%TZ)" "$extra")
-    printf '%s\n' "$json" > "$LINGOS_STATE.tmp" 2>/dev/null && mv "$LINGOS_STATE.tmp" "$LINGOS_STATE" 2>/dev/null || true
+    printf '%s\n' "$json" 2>/dev/null > "$LINGOS_STATE.tmp" && mv "$LINGOS_STATE.tmp" "$LINGOS_STATE" 2>/dev/null || true
     _emit "LINGOS-STAGE=$LINGOS_STAGE/$LINGOS_TOTAL_STAGES percent=$percent eta=${eta_json}s $msg"
     report_share "进行中" "$percent" "$msg"
     if [ "$percent" != "$_LINGOS_LAST_NET_PCT" ] && [ $(( percent % 10 )) -eq 0 ]; then

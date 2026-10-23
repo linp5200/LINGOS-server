@@ -6,7 +6,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/lingos-boot-mode
+ExecStartPre=/bin/sh -c 'echo LINGOS-INSTALLER-SERVICE-START > /dev/ttyAMA0 2>/dev/null || true'
+ExecStart=/bin/bash -c 'exec /usr/local/sbin/lingos-boot-mode >>/dev/ttyAMA0 2>&1'
 StandardInput=tty
 StandardOutput=tty
 StandardError=tty
