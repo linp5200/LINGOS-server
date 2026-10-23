@@ -6,14 +6,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# 注意：不要用 TTYPath/StandardOutput=tty 绑定 tty1——
+# live-config 会在 tty1 自动登录 user，服务进程写 tty1 会触发 SIGTTOU 被挂起（表现为静默卡死）。
+# 安装器自己通过 /dev/tty0、串口显式输出进度。
 ExecStartPre=/bin/sh -c 'echo LINGOS-INSTALLER-SERVICE-START > /dev/ttyAMA0 2>/dev/null || true'
 ExecStart=/bin/bash -c 'exec /usr/local/sbin/lingos-boot-mode >>/dev/ttyAMA0 2>&1'
-StandardInput=tty
-StandardOutput=tty
-StandardError=tty
-TTYPath=/dev/tty1
-TTYReset=no
-TTYVHangup=no
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
 Restart=no
 
 [Install]

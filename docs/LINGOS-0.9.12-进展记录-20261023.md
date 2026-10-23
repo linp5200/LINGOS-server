@@ -92,6 +92,26 @@
 - 安装器创建用户并配置自动登录，`~/.bash_profile` 自动 exec labwc；
 - 安装后重启应进入 Wayland 桌面（VNC/QEMU 画面）。
 
+### 4.5 安装器启动后停滞（systemd tty 绑定导致 SIGTTOU 挂起）
+
+- **最终根因（交互式串口调试确认）**：安装器脚本本身完全正常——手动在 live 串口 shell 里执行
+  `bash -x /usr/local/sbin/lingos-install --auto` 可正常走到分区/rsync（5MB/s）。
+  但由 systemd 服务启动时，unit 里 `StandardInput=tty`/`TTYPath=/dev/tty1` 会让进程控制终端绑到 tty1，
+  而 live-config 已在 tty1 自动登录 user；服务进程写 tty1 时触发 **SIGTTOU**，进程被挂起（stopped），
+  于是出现“service Started 后静默卡死、qcow2 不增长”。
+- **修复**：unit 改为 `StandardInput=null`、`StandardOutput=journal`、`StandardError=journal`，
+  不再绑定 tty1；安装器通过 `/dev/tty0`、串口显式输出进度（写入均带 timeout 保护）。
+- 旧记录（tty 写入阻塞）保留如下：
+
+### 4.5 旧分析：安装器启动后停滞（tty 写入阻塞）
+
+- 现象：systemd 显示 `Started lingos-installer.service`，串口出现
+  `LINGOS-BOOT-MODE=install-auto` 后**再无任何进度**，qcow2 不增长。
+- 原因：安装器 `_emit()` 会同时写 tty0/tty1；live-config 在 tty1 自动登录了 `user`
+  （或 getty 持有 tty1），安装器向 tty1 写日志时**阻塞**，后续 stage 全部卡住。
+- 修复：`_emit()` 改为**串口优先**，tty0/tty1 写入用 `timeout 1 tee` 保护；
+  另加 service `ExecStartPre`、boot-mode/install 脚本最早期串口标记与 ERR trap，任何失败都能在串口看到。
+
 ### 5. 测试
 
 - `distro/images/test-boot.sh`：ISO 内容检查 + initrd 组件检查 + QEMU UEFI 启动 +
