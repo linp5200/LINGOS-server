@@ -67,7 +67,7 @@ jobs:
                 echo "合并后 sha256: $sha"
                 echo "合并方法（Termux/VTERM）: cat $base.part* > $base"
                 echo "校验: sha256sum $base"
-              } > "/tmp/rel/$base.合并说明.txt"
+              } > "/tmp/rel/$base.merge.txt"
             else
               cp -n "$f" /tmp/rel/
             fi
