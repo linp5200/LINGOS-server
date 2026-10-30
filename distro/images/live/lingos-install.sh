@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# LING OS 安装器（live ISO 内运行；0.10.0-alpha.1 带阶段日志/进度/回传）
+# LING OS 安装器（live ISO 内运行；0.10.0-alpha.2 带阶段日志/进度/回传）
 # 用法：
 #   lingos-install --auto        自动：选最大 >=8G 内置磁盘（排除 USB）
 #   lingos-install --manual      交互：whiptail 选盘 + 确认
