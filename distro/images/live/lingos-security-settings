@@ -1,0 +1,96 @@
+#!/bin/bash
+# LING OS 安全/隐私设置入口（0.10）：仅允许本地控制台修改
+# 用法：
+#   lingos-security-settings status
+#   lingos-security-settings set-level L0|L1|L2|L3|L4 --confirm-local
+#   lingos-security-settings set-flag <name> <on|off> --confirm-local
+set -Eeuo pipefail
+POLICY_DIR=/etc/lingos
+POLICY="$POLICY_DIR/security-policy.json"
+AUDIT=/var/log/lingos-security-audit.log
+HEAD="$POLICY_DIR/security-audit.head"
+
+fail() { printf '拒绝: %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || fail "需要 root（本地控制台）"
+[ -n "${SSH_CONNECTION:-}" ] && fail "SSH 远程会话不允许修改安全设置"
+[ -n "${LINGOS_REMOTE:-}" ] && fail "远程会话不允许修改安全设置"
+
+SID="${XDG_SESSION_ID:-}"
+if [ -z "$SID" ]; then
+    SID=$(loginctl list-sessions --no-legend 2>/dev/null | awk -v t="$(tty 2>/dev/null || true)" '$3==t {print $1; exit}' || true)
+fi
+if [ -n "$SID" ]; then
+    _remote=$(loginctl show-session "$SID" -p Remote --value 2>/dev/null || true)
+    _seat=$(loginctl show-session "$SID" -p Seat --value 2>/dev/null || true)
+    _type=$(loginctl show-session "$SID" -p Type --value 2>/dev/null || true)
+    [ "$_remote" = "no" ] || fail "远程会话(remote=$_remote)不允许修改"
+    case "$_seat" in seat0|"") ;; *) fail "非本地 seat($_seat) 不允许修改" ;; esac
+    case "$_type" in tty|wayland|x11|"") ;; *) fail "会话类型($_type)不允许修改" ;; esac
+fi
+
+CONFIRM=0
+for a in "$@"; do [ "$a" = "--confirm-local" ] && CONFIRM=1; done
+[ "$CONFIRM" = "1" ] || fail "缺少 --confirm-local：必须在本地控制台键入确认"
+
+mkdir -p "$POLICY_DIR"
+if [ ! -f "$POLICY" ]; then
+    printf '%s\n' '{"schema_version":1,"privacy_level":"L1","local_only":true,"flags":{}}' > "$POLICY"
+fi
+
+audit() {
+    local action="$1" detail="$2" prev line hash
+    prev=$(cat "$HEAD" 2>/dev/null || echo 0000000000000000000000000000000000000000000000000000000000000000)
+    line="$(date -u +%FT%TZ)|action=$action|detail=$detail|prev=$prev"
+    hash=$(printf '%s' "$line" | sha256sum | awk '{print $1}')
+    printf '%s\n' "$line" >> "$AUDIT" 2>/dev/null || true
+    printf '%s\n' "$hash" > "$HEAD"
+}
+
+case "${1:-}" in
+    status)
+        [ -f "$POLICY" ] && cat "$POLICY"
+        ;;
+    set-level)
+        level="${2:-}"
+        case "$level" in L0|L1|L2|L3|L4) ;; *) fail "等级必须是 L0/L1/L2/L3/L4" ;; esac
+        tmp=$(mktemp)
+        python3 - "$POLICY" "$level" > "$tmp" <<'PY'
+import json,sys,datetime
+p=sys.argv[1]; level=sys.argv[2]
+d=json.load(open(p))
+d["privacy_level"]=level
+d["local_only"]=True
+d["updated_at"]=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+print(json.dumps(d,ensure_ascii=False))
+PY
+        mv "$tmp" "$POLICY"
+        chmod 600 "$POLICY"
+        sha256sum "$POLICY" | awk '{print $1}' > "$POLICY.sha256"
+        audit "set-level" "$level"
+        echo "已设置隐私等级: $level"
+        ;;
+    set-flag)
+        name="${2:-}"; value="${3:-}"
+        [ -n "$name" ] || fail "缺少 flag 名称"
+        case "$value" in on|off) ;; *) fail "flag 值必须是 on/off" ;; esac
+        tmp=$(mktemp)
+        python3 - "$POLICY" "$name" "$value" > "$tmp" <<'PY'
+import json,sys,datetime
+p=sys.argv[1]; name=sys.argv[2]; value=sys.argv[3]
+d=json.load(open(p))
+d.setdefault("flags",{})[name]=(value=="on")
+d["updated_at"]=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+print(json.dumps(d,ensure_ascii=False))
+PY
+        mv "$tmp" "$POLICY"
+        chmod 600 "$POLICY"
+        sha256sum "$POLICY" | awk '{print $1}' > "$POLICY.sha256"
+        audit "set-flag" "$name=$value"
+        echo "已设置 $name=$value"
+        ;;
+    *)
+        echo "用法: lingos-security-settings status | set-level L0-L4 | set-flag <name> on|off（均需 --confirm-local）" >&2
+        exit 2
+        ;;
+esac

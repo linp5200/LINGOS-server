@@ -141,6 +141,8 @@ xdg-utils
 adwaita-icon-theme
 shared-mime-info
 desktop-file-utils
+cryptsetup
+cryptsetup-initramfs
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -157,10 +159,13 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/hooks
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
 chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
-for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch; do
+for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch lingos-security-settings; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/sbin/$f"
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done
+mkdir -p config/includes.chroot/usr/local/bin
+cp "$ROOT/distro/images/live/lingos-version" "config/includes.chroot/usr/local/bin/lingos-version"
+chmod +x "config/includes.chroot/usr/local/bin/lingos-version"
 cp "$ROOT/distro/images/live/lingos-log.sh" "config/includes.chroot/usr/local/sbin/lingos-log.sh"
 chmod 644 "config/includes.chroot/usr/local/sbin/lingos-log.sh"
 cp "$ROOT/distro/images/live/lingos-initramfs-report" \

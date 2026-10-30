@@ -19,6 +19,11 @@ export LINGOS_LOG="${LINGOS_LOG:-/var/log/lingos-install.log}"
 export LINGOS_TOTAL_STAGES=10
 LINGOS_VERSION=$(sed -n 's/^LINGOS_VERSION=//p' /etc/lingos-image-info 2>/dev/null | head -1)
 export LINGOS_VERSION="${LINGOS_VERSION:-unknown}"
+ENCRYPT=0
+LUKS_PASS=""
+CRYPT_NAME="lingos_crypt"
+ROOT_DEV=""
+LUKS_UUID=""
 LINGOS_LIB=/usr/local/sbin/lingos-log.sh
 if [ -f "$LINGOS_LIB" ]; then . "$LINGOS_LIB"; else echo "缺少 $LINGOS_LIB" >&2; exit 1; fi
 for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-LIB-OK\n' > "$_c" 2>/dev/null || true; done
@@ -38,6 +43,15 @@ for arg in "$@"; do
         --manual) AUTO=0 ;;
     esac
 done
+for arg in $(cat /proc/cmdline 2>/dev/null || true); do
+    case "$arg" in
+        lingos.encrypt=1) ENCRYPT=1 ;;
+    esac
+done
+if [ -n "${LINGOS_LUKS_PASSPHRASE:-}" ]; then
+    ENCRYPT=1
+    LUKS_PASS="$LINGOS_LUKS_PASSPHRASE"
+fi
 export TERM="${TERM:-linux}"
 
 for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-BOOTINFO-BEGIN\n' > "$_c" 2>/dev/null || true; done
@@ -107,6 +121,25 @@ if [ "$AUTO" != "1" ]; then
     whiptail --title "LING OS $LINGOS_VERSION 确认" --yesno "将清空 $DISK 并安装 LING OS，继续？" 10 60         || { fail_msg 10 "用户取消安装"; exit 10; }
 fi
 
+# ---------- 全盘加密选项（LUKS2；默认关闭，避免 TCG 设备过慢） ----------
+if [ "$AUTO" != "1" ] && [ "$ENCRYPT" = "0" ]; then
+    if whiptail --title "LING OS $LINGOS_VERSION 全盘加密" --yesno "是否启用 LUKS2 全盘加密？\n\n推荐开启，可保护设备丢失时的数据。\n软件模拟设备（如 Vectras）下会明显变慢。" 12 64; then
+        ENCRYPT=1
+    fi
+fi
+if [ "$ENCRYPT" = "1" ] && [ -z "$LUKS_PASS" ]; then
+    if [ "$AUTO" = "1" ]; then
+        log "自动模式未提供 LINGOS_LUKS_PASSPHRASE，回退为不加密"
+        ENCRYPT=0
+    else
+        LUKS_PASS=$(whiptail --title "LING OS $LINGOS_VERSION 加密口令" --passwordbox "设置 LUKS2 解锁口令（至少 8 位）：" 10 64 3>&1 1>&2 2>&3) || { fail_msg 12 "用户取消口令输入"; exit 12; }
+        LUKS_PASS2=$(whiptail --title "LING OS $LINGOS_VERSION 加密口令" --passwordbox "再次输入口令：" 10 64 3>&1 1>&2 2>&3) || { fail_msg 12 "用户取消口令输入"; exit 12; }
+        [ "$LUKS_PASS" = "$LUKS_PASS2" ] || { fail_msg 13 "两次口令不一致"; exit 13; }
+        [ ${#LUKS_PASS} -ge 8 ] || { fail_msg 14 "口令至少 8 位"; exit 14; }
+    fi
+fi
+log "全盘加密: $ENCRYPT"
+
 # ---------- 分区 ----------
 stage 4 partition "分区（GPT: EFI 512M + root ext4）"
 UEFI=0; [ -d /sys/firmware/efi ] && UEFI=1
@@ -154,14 +187,24 @@ stage 5 format "格式化文件系统"
 if [ "$UEFI" = "1" ]; then
     mkfs.vfat -F32 -n LINGOS_EFI "$P1" >/dev/null
 fi
-mkfs.ext4 -F -L LINGOS_ROOT "$P2" >/dev/null
+if [ "$ENCRYPT" = "1" ]; then
+    command -v cryptsetup >/dev/null 2>&1 || { fail_msg 15 "缺少 cryptsetup，无法加密安装"; exit 15; }
+    printf '%s\n' "$LUKS_PASS" | cryptsetup luksFormat --type luks2 --pbkdf argon2id --iter-time 1000 --batch-mode "$P2" - || { fail_msg 16 "luksFormat 失败"; exit 16; }
+    printf '%s\n' "$LUKS_PASS" | cryptsetup luksOpen "$P2" "$CRYPT_NAME" - || { fail_msg 17 "luksOpen 失败"; exit 17; }
+    ROOT_DEV="/dev/mapper/$CRYPT_NAME"
+    LUKS_UUID=$(blkid -s UUID -o value "$P2")
+    log "LUKS2 已创建: $P2 ($LUKS_UUID) -> $CRYPT_NAME"
+else
+    ROOT_DEV="$P2"
+fi
+mkfs.ext4 -F -L LINGOS_ROOT "$ROOT_DEV" >/dev/null
 log "格式化完成"
 
 # ---------- 挂载 ----------
 stage 6 mount "挂载目标磁盘"
 TARGET=/target
 mkdir -p "$TARGET"
-mount "$P2" "$TARGET"
+mount "$ROOT_DEV" "$TARGET"
 if [ "$UEFI" = "1" ]; then mkdir -p "$TARGET/boot/efi"; mount "$P1" "$TARGET/boot/efi"; fi
 log "已挂载 $P2 -> $TARGET"
 
@@ -207,7 +250,11 @@ else
     chroot "$TARGET" grub-install --target=i386-pc "$DISK"
 fi
 # ---------- 安装后安全启动项（文本 / X11 回退 / 详细日志） ----------
-ROOT_UUID=$(blkid -s UUID -o value "$P2" 2>/dev/null || true)
+ROOT_UUID=$(blkid -s UUID -o value "$ROOT_DEV" 2>/dev/null || true)
+CRYPT_KARGS=""
+if [ "$ENCRYPT" = "1" ] && [ -n "$LUKS_UUID" ]; then
+    CRYPT_KARGS="cryptdevice=UUID=$LUKS_UUID:$CRYPT_NAME"
+fi
 KVER=$(basename "$(ls "$TARGET"/boot/vmlinuz-* 2>/dev/null | head -1)" 2>/dev/null | sed 's/^vmlinuz-//')
 if [ -n "$ROOT_UUID" ] && [ -n "$KVER" ]; then
     mkdir -p "$TARGET/etc/grub.d" "$TARGET/etc/default"
@@ -215,15 +262,15 @@ if [ -n "$ROOT_UUID" ] && [ -n "$KVER" ]; then
         echo '#!/bin/sh'
         echo 'exec tail -n +3 $0'
         echo "menuentry 'LING OS（文本调试，不启动桌面）' --class ubuntu --class gnu-linux --class os {"
-        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=7 systemd.unit=multi-user.target lingos.desktop=0"
+        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=7 $CRYPT_KARGS systemd.unit=multi-user.target lingos.desktop=0"
         echo "    initrd /boot/initrd.img-$KVER"
         echo '}'
         echo "menuentry 'LING OS（X11 安全图形回退）' --class ubuntu --class gnu-linux --class os {"
-        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=5 lingos.session=x11"
+        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=5 $CRYPT_KARGS lingos.session=x11"
         echo "    initrd /boot/initrd.img-$KVER"
         echo '}'
         echo "menuentry 'LING OS（详细启动日志）' --class ubuntu --class gnu-linux --class os {"
-        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=7 systemd.show_status=1"
+        echo "    linux /boot/vmlinuz-$KVER root=UUID=$ROOT_UUID ro loglevel=7 $CRYPT_KARGS systemd.show_status=1"
         echo "    initrd /boot/initrd.img-$KVER"
         echo '}'
     } > "$TARGET/etc/grub.d/40_custom"
@@ -247,7 +294,7 @@ log "GRUB 安装完成（target=$GRUBTARGET uefi=$UEFI）"
 
 # ---------- 配置 ----------
 stage 9 configure "写入配置与首启服务"
-ROOT_UUID=$(blkid -s UUID -o value "$P2")
+ROOT_UUID=$(blkid -s UUID -o value "$ROOT_DEV")
 {
     echo "UUID=$ROOT_UUID  /  ext4  errors=remount-ro  0  1"
     if [ "$UEFI" = "1" ]; then
@@ -255,6 +302,18 @@ ROOT_UUID=$(blkid -s UUID -o value "$P2")
         echo "UUID=$EFI_UUID  /boot/efi  vfat  umask=0077  0  1"
     fi
 } > "$TARGET/etc/fstab"
+if [ "$ENCRYPT" = "1" ] && [ -n "$LUKS_UUID" ]; then
+    printf '%s UUID=%s none luks,discard\n' "$CRYPT_NAME" "$LUKS_UUID" > "$TARGET/etc/crypttab"
+    printf 'GRUB_CMDLINE_LINUX="${GRUB_CMDLINE_LINUX:-} cryptdevice=UUID=%s:%s"\n' "$LUKS_UUID" "$CRYPT_NAME" >> "$TARGET/etc/default/grub"
+    mkdir -p "$TARGET/proc" "$TARGET/sys" "$TARGET/dev"
+    mount --bind /proc "$TARGET/proc" 2>/dev/null || true
+    mount --bind /sys "$TARGET/sys" 2>/dev/null || true
+    mount --bind /dev "$TARGET/dev" 2>/dev/null || true
+    chroot "$TARGET" update-initramfs -u -k all >/dev/null 2>&1 || true
+    chroot "$TARGET" update-grub >/dev/null 2>&1 || true
+    umount "$TARGET/dev" "$TARGET/sys" "$TARGET/proc" 2>/dev/null || true
+    log "加密配置已写入（crypttab/GRUB/initramfs）"
+fi
 echo lingos > "$TARGET/etc/hostname"
 mkdir -p "$TARGET/LINGOS/system/config" "$TARGET/LINGOS/data" "$TARGET/LINGOS/log" \
          "$TARGET/LINGOS/run" "$TARGET/LINGOS/Debug/log"
@@ -298,6 +357,7 @@ stage 10 finish "完成，准备重启"
 sync
 umount "$TARGET/boot/efi" 2>/dev/null || true
 umount "$TARGET" 2>/dev/null || true
+if [ "$ENCRYPT" = "1" ]; then cryptsetup close "$CRYPT_NAME" 2>/dev/null || true; fi
 mark_done
 if [ "$AUTO" = "1" ]; then
     log "自动安装完成，8 秒后重启"
