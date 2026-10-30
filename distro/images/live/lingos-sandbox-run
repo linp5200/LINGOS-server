@@ -1,0 +1,24 @@
+#!/bin/bash
+# 应用沙箱启动器：bubblewrap + 权限清单（默认无网络/无 home 写）
+set -u
+APP=""
+if [ "$1" = "--app" ]; then APP="$2"; shift 2; fi
+[ -n "$APP" ] || { echo "用法: lingos-sandbox-run --app <name> -- <cmd...>" >&2; exit 2; }
+[ "$1" = "--" ] && shift
+command -v bwrap >/dev/null 2>&1 || { echo "缺少 bubblewrap"; exit 3; }
+PERM=/etc/lingos/app-permissions/$APP.json
+NET=0; FILES=0
+if [ -f "$PERM" ]; then
+  NET=$(python3 -c 'import json,sys;print(1 if json.load(open(sys.argv[1])).get("network") else 0)' "$PERM" 2>/dev/null || echo 0)
+  FILES=$(python3 -c 'import json,sys;print(1 if json.load(open(sys.argv[1])).get("files") else 0)' "$PERM" 2>/dev/null || echo 0)
+fi
+ARGS=(--die-with-parent --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup
+      --proc /proc --dev /dev --tmpfs /tmp
+      --ro-bind /usr /usr --ro-bind /etc /etc --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /lib64 /lib64)
+if [ "$NET" = "1" ]; then ARGS+=(--share-net); else ARGS+=(--unshare-net); fi
+if [ "$FILES" = "1" ]; then ARGS+=(--bind "$HOME" "$HOME"); fi
+if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "${XDG_RUNTIME_DIR:-/tmp}/$WAYLAND_DISPLAY" ]; then
+  ARGS+=(--ro-bind "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY")
+fi
+/usr/local/bin/lingos-audit log sandbox-run "app=$APP net=$NET files=$FILES" >/dev/null 2>&1 || true
+exec bwrap "${ARGS[@]}" -- "$@"

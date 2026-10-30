@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "objects": [
+    "network",
+    "location",
+    "usb",
+    "app_source",
+    "files",
+    "ai_tool",
+    "plugin",
+    "remote"
+  ],
+  "matrix": {
+    "L0": {
+      "network": "auto",
+      "location": "off",
+      "usb": "allow",
+      "app_source": "any",
+      "files": "rw",
+      "ai_tool": "auto",
+      "plugin": "allow",
+      "remote": "allow"
+    },
+    "L1": {
+      "network": "trusted",
+      "location": "manual",
+      "usb": "confirm",
+      "app_source": "signed_or_confirm",
+      "files": "ro",
+      "ai_tool": "confirm_write",
+      "plugin": "signed_sandbox",
+      "remote": "lan_only"
+    },
+    "L2": {
+      "network": "trusted_vpn",
+      "location": "manual",
+      "usb": "charge_only",
+      "app_source": "signed",
+      "files": "off",
+      "ai_tool": "local_auto_write_confirm",
+      "plugin": "off",
+      "remote": "off"
+    },
+    "L3": {
+      "network": "vpn_only",
+      "location": "off",
+      "usb": "off_locked",
+      "app_source": "allowlist",
+      "files": "off",
+      "ai_tool": "confirm_all",
+      "plugin": "deny",
+      "remote": "deny"
+    },
+    "L4": {
+      "network": "deny_all",
+      "location": "off",
+      "usb": "deny",
+      "app_source": "confirm",
+      "files": "deny",
+      "ai_tool": "confirm_scope_deadline",
+      "plugin": "deny",
+      "remote": "deny"
+    }
+  }
+}

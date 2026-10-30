@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""AI 工具权限闸门（按 L0-L4）。
+用法：
+  lingos-ai-tool-gate check --tool <id> --purpose <p> --scope <s> [--level Lx]
+  lingos-ai-tool-gate list
+"""
+import argparse, glob, json, os, subprocess, sys
+
+TOOLS_DIR = "/etc/lingos/ai-tools"
+POLICY = "/etc/lingos/security-policy.json"
+
+# 等级 -> 允许自动执行的 capability 集合；写/网络/高危需更高等级确认
+AUTO_ALLOW = {
+    "L0": {"read", "compute"},
+    "L1": {"read", "compute", "network"},
+    "L2": {"read", "compute"},
+    "L3": set(),
+    "L4": set(),
+}
+REQUIRE_CONFIRM = {
+    "L0": {"write", "network", "exec", "device"},
+    "L1": {"write", "exec", "device"},
+    "L2": {"write", "network", "exec", "device"},
+    "L3": {"read", "compute", "write", "network", "exec", "device"},
+    "L4": {"read", "compute", "write", "network", "exec", "device"},
+}
+
+
+def load_level():
+    try:
+        with open(POLICY, encoding="utf-8") as f:
+            return json.load(f).get("privacy_level", "L1")
+    except (OSError, ValueError):
+        return "L1"
+
+
+def load_tool(tool_id):
+    path = os.path.join(TOOLS_DIR, tool_id + ".json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def audit(action, detail):
+    try:
+        subprocess.run(["/usr/local/bin/lingos-audit", "log", action, detail], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def check(tool_id, purpose, scope, level):
+    if not purpose or not scope:
+        return {"allow": False, "reason": "缺少 purpose/scope"}
+    try:
+        tool = load_tool(tool_id)
+    except OSError:
+        return {"allow": False, "reason": "工具不存在"}
+    caps = set(tool.get("capabilities", []))
+    if caps & REQUIRE_CONFIRM.get(level, set()):
+        forced = level in ("L3", "L4") or bool(caps & {"exec", "network", "write"})
+        if forced:
+            audit("ai-tool-require-confirm", "%s level=%s purpose=%s" % (tool_id, level, purpose))
+            return {"allow": False, "reason": "需要用户确认", "level": level,
+                    "capabilities": sorted(caps), "tool": tool_id}
+    audit("ai-tool-allow", "%s level=%s scope=%s" % (tool_id, level, scope))
+    return {"allow": True, "level": level, "capabilities": sorted(caps), "tool": tool_id}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("check")
+    c.add_argument("--tool", required=True)
+    c.add_argument("--purpose", required=True)
+    c.add_argument("--scope", required=True)
+    c.add_argument("--level", default=None)
+    sub.add_parser("list")
+    args = ap.parse_args()
+    if args.cmd == "list":
+        for p in sorted(glob.glob(os.path.join(TOOLS_DIR, "*.json"))):
+            print(os.path.basename(p)[:-5])
+        return 0
+    level = args.level or load_level()
+    res = check(args.tool, args.purpose, args.scope, level)
+    print(json.dumps(res, ensure_ascii=False))
+    return 0 if res.get("allow") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

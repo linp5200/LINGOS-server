@@ -143,6 +143,8 @@ shared-mime-info
 desktop-file-utils
 cryptsetup
 cryptsetup-initramfs
+nftables
+bubblewrap
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -159,13 +161,15 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/hooks
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
 chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
-for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch lingos-security-settings; do
+for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch lingos-security-settings lingos-privacy-policy lingos-sandbox-run; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/sbin/$f"
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done
 mkdir -p config/includes.chroot/usr/local/bin
-cp "$ROOT/distro/images/live/lingos-version" "config/includes.chroot/usr/local/bin/lingos-version"
-chmod +x "config/includes.chroot/usr/local/bin/lingos-version"
+for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate; do
+    cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/bin/$f"
+    chmod +x "config/includes.chroot/usr/local/bin/$f"
+done
 cp "$ROOT/distro/images/live/lingos-log.sh" "config/includes.chroot/usr/local/sbin/lingos-log.sh"
 chmod 644 "config/includes.chroot/usr/local/sbin/lingos-log.sh"
 cp "$ROOT/distro/images/live/lingos-initramfs-report" \
@@ -194,6 +198,19 @@ cp "$ROOT/distro/desktop/skel/Desktop/"*.desktop       config/includes.chroot/et
 cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
 cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chroot/etc/systemd/system/lingos-desktop-report.service
+cp "$ROOT/distro/images/live/lingos-privacy-apply.service" config/includes.chroot/etc/systemd/system/lingos-privacy-apply.service
+cp "$ROOT/distro/images/live/lingos-audit-boot.service" config/includes.chroot/etc/systemd/system/lingos-audit-boot.service
+mkdir -p config/includes.chroot/etc/lingos/ai-tools config/includes.chroot/etc/lingos/app-permissions \
+         config/includes.chroot/usr/share/lingos/geoip config/includes.chroot/etc/firefox/policies
+cp "$ROOT/distro/security/privacy-levels.json"     config/includes.chroot/etc/lingos/privacy-levels.json
+cp "$ROOT/distro/security/trust-policy.json"       config/includes.chroot/etc/lingos/trust-policy.json
+cp "$ROOT/distro/security/ai-tool-manifest-schema.json"   config/includes.chroot/etc/lingos/ai-tool-manifest-schema.json
+cp "$ROOT/distro/security/plugin-manifest-schema.json"    config/includes.chroot/etc/lingos/plugin-manifest-schema.json
+cp "$ROOT/distro/security/ai-tools/"*.json         config/includes.chroot/etc/lingos/ai-tools/
+cp "$ROOT/distro/security/app-permissions-browser.json" config/includes.chroot/etc/lingos/app-permissions/browser.json
+cp "$ROOT/distro/security/geoip-sample.csv"        config/includes.chroot/usr/share/lingos/geoip/city.csv
+cp "$ROOT/distro/security/firefox-policies.json"   config/includes.chroot/etc/firefox/policies/policies.json
+printf '%s\n' '{"schema_version":1,"privacy_level":"L1","local_only":true,"flags":{}}' > config/includes.chroot/etc/lingos/security-policy.json
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
 LINGOS_VERSION=$(cat "$ROOT/VERSION" 2>/dev/null | head -1 | tr -d '[:space:]')
 [ -n "$LINGOS_VERSION" ] || LINGOS_VERSION=0.0.0
@@ -223,6 +240,8 @@ chmod 644 /usr/local/sbin/lingos-log.sh 2>/dev/null || true
 touch /etc/lingos-live
 mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sf /etc/systemd/system/lingos-installer.service /etc/systemd/system/multi-user.target.wants/lingos-installer.service
+ln -sf /etc/systemd/system/lingos-privacy-apply.service /etc/systemd/system/multi-user.target.wants/lingos-privacy-apply.service
+ln -sf /etc/systemd/system/lingos-audit-boot.service /etc/systemd/system/multi-user.target.wants/lingos-audit-boot.service
 # 0.10：屏蔽 TCG/低性能设备上拖慢启动的单元（安装后系统会继承这些 mask）
 for _unit in NetworkManager-wait-online.service systemd-networkd-wait-online.service \
              bluetooth.service ModemManager.service apt-daily.service apt-daily.timer \

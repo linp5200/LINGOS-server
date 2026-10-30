@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LING OS AI Tool Manifest",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version",
+    "capabilities",
+    "data_scope",
+    "risk"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^tool\\.[a-z0-9_.-]+$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "read",
+          "write",
+          "compute",
+          "network",
+          "exec",
+          "device",
+          "account"
+        ]
+      }
+    },
+    "data_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risk": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "confirmation": {
+      "enum": [
+        "auto",
+        "once",
+        "always",
+        "local_typed"
+      ]
+    },
+    "rate_limit": {
+      "type": "string"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 100
+    },
+    "audit": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DisableFormHistory": true,
+    "OfferToSaveLogins": false,
+    "EnableTrackingProtection": {
+      "Value": true,
+      "Locked": true,
+      "Cryptomining": true,
+      "Fingerprinting": true
+    },
+    "Cookies": {
+      "Behavior": "reject-tracker-and-partition-foreign"
+    },
+    "DNSOverHTTPS": {
+      "Enabled": true,
+      "Locked": true
+    },
+    "Permissions": {
+      "Location": {
+        "BlockNewRequests": true,
+        "Locked": true
+      }
+    },
+    "Preferences": {
+      "privacy.resistFingerprinting": {
+        "Value": true,
+        "Status": "locked"
+      },
+      "privacy.globalprivacycontrol.enabled": {
+        "Value": true,
+        "Status": "locked"
+      },
+      "media.peerconnection.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "dom.battery.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "device.sensors.enabled": {
+        "Value": false,
+        "Status": "locked"
+      }
+    }
+  }
+}

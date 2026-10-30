@@ -40,6 +40,13 @@ else
     note "xmllint 不存在，跳过 XML"
 fi
 
+note "== Python 单元测试 =="
+if [ -f tests/test_agent_runtime.py ]; then
+    python3 tests/test_agent_runtime.py 2>/tmp/syntax.err || { bad "agent_runtime 单测"; cat /tmp/syntax.err; }
+else
+    note "无 agent_runtime 单测"
+fi
+
 note "== Desktop Entry =="
 while IFS= read -r f; do
     head -1 "$f" | grep -q '^\[Desktop Entry\]' || bad "$f: 缺少 [Desktop Entry]"
