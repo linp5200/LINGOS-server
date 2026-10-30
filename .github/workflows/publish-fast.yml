@@ -26,17 +26,24 @@ jobs:
       - name: 并行下载 ISO artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
           mkdir -p /tmp/isos
           curl -sL -H "Authorization: token $GH_TOKEN" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.run_id }}/artifacts?per_page=100" -o /tmp/artifacts.json
           python3 - <<'PY'
-          import json
+          import json, os
           d = json.load(open('/tmp/artifacts.json'))
+          tag = os.environ.get('TAG', '').lower()
+          pre = ('alpha' in tag) or ('beta' in tag) or ('rc' in tag)
           with open('/tmp/arts.txt', 'w') as f:
               for a in d.get('artifacts', []):
-                  if a['name'].startswith('lingos-installer-') and not a.get('expired'):
-                      f.write(f"{a['id']} {a['name']}\n")
+                  if not a['name'].startswith('lingos-installer-') or a.get('expired'):
+                      continue
+                  # alpha/beta/rc：x86 构建仍不稳定，只发布 arm64
+                  if pre and not a['name'].startswith('lingos-installer-aarch64'):
+                      continue
+                  f.write(f"{a['id']} {a['name']}\n")
           print(open('/tmp/arts.txt').read())
           PY
           while read -r id name; do
