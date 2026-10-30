@@ -10,6 +10,10 @@ on:
       tag:
         description: "Release tag（如 v0.9.12）"
         required: true
+      include_x86:
+        description: "是否发布 x86_64 ISO（默认 false；x86 构建链修复前不要开启）"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -27,6 +31,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
+          INCLUDE_X86: ${{ inputs.include_x86 }}
         run: |
           mkdir -p /tmp/isos
           curl -sL -H "Authorization: token $GH_TOKEN" \
@@ -35,13 +40,14 @@ jobs:
           import json, os
           d = json.load(open('/tmp/artifacts.json'))
           tag = os.environ.get('TAG', '').lower()
-          pre = ('alpha' in tag) or ('beta' in tag) or ('rc' in tag)
+          include_x86 = str(os.environ.get('INCLUDE_X86', 'false')).lower() in ('1', 'true', 'yes')
           with open('/tmp/arts.txt', 'w') as f:
               for a in d.get('artifacts', []):
                   if not a['name'].startswith('lingos-installer-') or a.get('expired'):
                       continue
                   # alpha/beta/rc：x86 构建仍不稳定，只发布 arm64
-                  if pre and ('aarch64' not in a['name'] and 'arm64' not in a['name']):
+                  # x86 构建链修复前，默认不发布 x86（避免发布损坏 ISO）
+                  if not include_x86 and ('x86' in a['name'] or 'amd64' in a['name']):
                       continue
                   f.write(f"{a['id']} {a['name']}\n")
           print(open('/tmp/arts.txt').read())
