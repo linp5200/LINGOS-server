@@ -195,8 +195,11 @@ cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/et
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
 cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chroot/etc/systemd/system/lingos-desktop-report.service
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
+LINGOS_VERSION=$(cat "$ROOT/VERSION" 2>/dev/null | head -1 | tr -d '[:space:]')
+[ -n "$LINGOS_VERSION" ] || LINGOS_VERSION=0.0.0
+export LINGOS_VERSION
 cat > config/includes.chroot/etc/lingos-image-info <<INFO
-LINGOS_VERSION=0.10.0-alpha.2
+LINGOS_VERSION=$LINGOS_VERSION
 LINGOS_ARCH=$ARCH
 LINGOS_GIT=$GITREV
 LINGOS_BUILD_TS=$BUILD_TS
