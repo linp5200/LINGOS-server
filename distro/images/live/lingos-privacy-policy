@@ -50,6 +50,8 @@ if command -v nft >/dev/null 2>&1; then
     ip protocol icmp accept
     ip6 nexthdr ipv6-icmp accept
     udp dport 68 accept
+    # VNC 兜底（0.9.15+）：仅 L0/L1 允许局域网 VNC；更高等级需显式放开
+    tcp dport 5900 accept
   }
   chain forward { type filter hook forward priority 0; policy drop; }
 }'
