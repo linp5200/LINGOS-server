@@ -16,6 +16,7 @@
       "network",
       "wireplumber",
       "battery",
+      "custom/privacy",
       "custom/version",
       "custom/ai",
       "tray"
@@ -25,6 +26,12 @@
     "format": "LING OS",
     "tooltip": false,
     "on-click": "wofi --show drun"
+  },
+  "custom/privacy": {
+    "exec": "python3 -c 'import json;print(\"隐私 \"+json.load(open(\"/etc/lingos/security-policy.json\")).get(\"privacy_level\",\"L1\"))' 2>/dev/null || echo '隐私 L1'",
+    "format": "{}",
+    "interval": 10,
+    "tooltip": false
   },
   "custom/version": {
     "exec": "sed -n 's/^LINGOS_VERSION=//p' /etc/lingos-image-info 2>/dev/null",

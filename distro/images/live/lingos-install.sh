@@ -140,6 +140,20 @@ if [ "$ENCRYPT" = "1" ] && [ -z "$LUKS_PASS" ]; then
 fi
 log "全盘加密: $ENCRYPT"
 
+# ---------- 隐私等级（L0-L4，默认 L1） ----------
+PRIVACY_LEVEL="${LINGOS_PRIVACY_LEVEL:-}"
+for arg in $(cat /proc/cmdline 2>/dev/null || true); do
+    case "$arg" in
+        lingos.privacy=L[0-4]) PRIVACY_LEVEL="${arg#lingos.privacy=}" ;;
+    esac
+done
+if [ -z "$PRIVACY_LEVEL" ] && [ "$AUTO" != "1" ]; then
+    PRIVACY_LEVEL=$(whiptail --title "LING OS $LINGOS_VERSION 隐私等级" --menu "选择默认隐私等级（安装后可在本地安全设置中修改）：" 16 70 5 \
+        L0 "兼容（功能优先）" L1 "增强（推荐）" L2 "严格" L3 "极端" L4 "MAX（全拒绝）" 3>&1 1>&2 2>&3) || PRIVACY_LEVEL=L1
+fi
+case "$PRIVACY_LEVEL" in L0|L1|L2|L3|L4) ;; *) PRIVACY_LEVEL=L1 ;; esac
+log "隐私等级: $PRIVACY_LEVEL"
+
 # ---------- 分区 ----------
 stage 4 partition "分区（GPT: EFI 512M + root ext4）"
 UEFI=0; [ -d /sys/firmware/efi ] && UEFI=1
@@ -319,6 +333,10 @@ mkdir -p "$TARGET/LINGOS/system/config" "$TARGET/LINGOS/data" "$TARGET/LINGOS/lo
          "$TARGET/LINGOS/run" "$TARGET/LINGOS/Debug/log"
 printf '%s\n' '{"system_configured": true, "last_config_time": "1970-01-01T00:00:00Z"}' \
     > "$TARGET/LINGOS/system/config/state.json"
+mkdir -p "$TARGET/etc/lingos"
+printf '{"schema_version":1,"privacy_level":"%s","local_only":true,"flags":{}}\n' "$PRIVACY_LEVEL" \
+    > "$TARGET/etc/lingos/security-policy.json"
+chmod 600 "$TARGET/etc/lingos/security-policy.json" 2>/dev/null || true
 printf '%s\n' '{"schema_version": 1, "ai": {"ai_config": {"backend": "deepseek", "language": "zh"}, "provider": {"active": "deepseek", "deepseek": {"api_key": "", "model": "deepseek-v4-pro", "base_url": "https://api.deepseek.com"}}}}' \
     > "$TARGET/LINGOS/system/config/config.json"
 cat > "$TARGET/LINGOS/system/config/install-report.json" <<REPORT
