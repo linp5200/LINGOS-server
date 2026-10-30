@@ -41,7 +41,7 @@ jobs:
                   if not a['name'].startswith('lingos-installer-') or a.get('expired'):
                       continue
                   # alpha/beta/rc：x86 构建仍不稳定，只发布 arm64
-                  if pre and not a['name'].startswith('lingos-installer-aarch64'):
+                  if pre and ('aarch64' not in a['name'] and 'arm64' not in a['name']):
                       continue
                   f.write(f"{a['id']} {a['name']}\n")
           print(open('/tmp/arts.txt').read())
@@ -57,7 +57,12 @@ jobs:
             unzip -o -q "/tmp/isos/$name.zip" -d /tmp/isos
             rm -f "/tmp/isos/$name.zip"
           done < /tmp/arts.txt
+          # 统一 arm64 资产名为 aarch64（与历史 Release/文档一致）
+          if [ -f /tmp/isos/lingos-installer-arm64.iso ] && [ ! -f /tmp/isos/lingos-installer-aarch64.iso ]; then
+            mv /tmp/isos/lingos-installer-arm64.iso /tmp/isos/lingos-installer-aarch64.iso
+          fi
           find /tmp/isos -name '*.iso' -ls
+          ls /tmp/isos/*.iso >/dev/null 2>&1 || { echo "错误：没有可发布的 ISO（artifacts 过滤/下载为空）"; exit 1; }
 
       - name: 拆分 >2GiB 资产 + 生成校验
         run: |
@@ -80,7 +85,9 @@ jobs:
             fi
           done
           rm -f /tmp/isos/*.iso
+          ls /tmp/rel/*.iso >/dev/null 2>&1 || ls /tmp/rel/*.part0 >/dev/null 2>&1 || { echo "错误：/tmp/rel 为空"; exit 1; }
           cd /tmp/rel && sha256sum * > SHA256SUMS.txt 2>/dev/null || true
+          [ -s SHA256SUMS.txt ] || { echo "错误：SHA256SUMS 为空"; exit 1; }
           ls -lh /tmp/rel
 
       - name: 发布到 GitHub Release
