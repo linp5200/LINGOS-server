@@ -1,0 +1,4 @@
+# LING OS openbox 会话自启
+xset -dpms 2>/dev/null || true
+xset s off 2>/dev/null || true
+command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop &

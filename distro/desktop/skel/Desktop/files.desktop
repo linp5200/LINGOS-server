@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=文件管理器
+Comment=浏览文件与磁盘。
+Exec=pcmanfm
+Icon=system-file-manager
+Terminal=false
+Categories=Utility;

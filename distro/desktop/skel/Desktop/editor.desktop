@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=文本编辑器
+Comment=轻量文本编辑器。
+Exec=mousepad
+Icon=accessories-text-editor
+Terminal=false
+Categories=Utility;

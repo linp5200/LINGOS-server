@@ -16,6 +16,7 @@
       "network",
       "wireplumber",
       "battery",
+      "custom/version",
       "custom/ai",
       "tray"
     ]
@@ -24,6 +25,12 @@
     "format": "LING OS",
     "tooltip": false,
     "on-click": "wofi --show drun"
+  },
+  "custom/version": {
+    "exec": "sed -n 's/^LINGOS_VERSION=//p' /etc/lingos-image-info 2>/dev/null",
+    "format": "{}",
+    "interval": 3600,
+    "tooltip": false
   },
   "custom/ai": {
     "format": "AI: 在线",

@@ -124,6 +124,23 @@ xfonts-base
 xauth
 xvfb
 x11vnc
+# 桌面应用（0.10：补齐可用的日常应用）
+pcmanfm
+epiphany-browser
+mousepad
+galculator
+xarchiver
+imv
+feh
+zathura
+zathura-pdf-poppler
+mpv
+scrot
+grim
+xdg-utils
+adwaita-icon-theme
+shared-mime-info
+desktop-file-utils
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -155,7 +172,9 @@ chmod +x "config/includes.chroot/etc/initramfs-tools/scripts/init-bottom/lingos-
 # 桌面配置（安装后由 installer 创建 lingos 用户，useradd -m 会复制 /etc/skel）
 mkdir -p config/includes.chroot/etc/skel/.config/labwc \
          config/includes.chroot/etc/skel/.config/waybar \
-         config/includes.chroot/etc/skel/.config/wofi
+         config/includes.chroot/etc/skel/.config/wofi \
+         config/includes.chroot/etc/skel/.config/openbox \
+         config/includes.chroot/etc/skel/Desktop
 cp "$ROOT/distro/desktop/skel/.bash_profile"        config/includes.chroot/etc/skel/.bash_profile
 cp "$ROOT/distro/desktop/skel/.xinitrc"             config/includes.chroot/etc/skel/.xinitrc
 chmod +x config/includes.chroot/etc/skel/.xinitrc
@@ -164,12 +183,15 @@ cp "$ROOT/distro/desktop/labwc/rc.xml"              config/includes.chroot/etc/s
 cp "$ROOT/distro/desktop/waybar/config.jsonc"       config/includes.chroot/etc/skel/.config/waybar/config.jsonc
 cp "$ROOT/distro/desktop/waybar/style.css"          config/includes.chroot/etc/skel/.config/waybar/style.css
 cp "$ROOT/distro/desktop/wofi/style.css"            config/includes.chroot/etc/skel/.config/wofi/style.css
+cp "$ROOT/distro/desktop/skel/.config/openbox/autostart" config/includes.chroot/etc/skel/.config/openbox/autostart
+cp "$ROOT/distro/desktop/skel/.config/openbox/menu.xml"  config/includes.chroot/etc/skel/.config/openbox/menu.xml
+cp "$ROOT/distro/desktop/skel/Desktop/"*.desktop       config/includes.chroot/etc/skel/Desktop/
 cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
 cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chroot/etc/systemd/system/lingos-desktop-report.service
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
 cat > config/includes.chroot/etc/lingos-image-info <<INFO
-LINGOS_VERSION=0.9.15
+LINGOS_VERSION=0.10.0-alpha.1
 LINGOS_ARCH=$ARCH
 LINGOS_GIT=$GITREV
 LINGOS_BUILD_TS=$BUILD_TS
@@ -193,6 +215,13 @@ chmod 644 /usr/local/sbin/lingos-log.sh 2>/dev/null || true
 touch /etc/lingos-live
 mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sf /etc/systemd/system/lingos-installer.service /etc/systemd/system/multi-user.target.wants/lingos-installer.service
+# 0.10：屏蔽 TCG/低性能设备上拖慢启动的单元（安装后系统会继承这些 mask）
+for _unit in NetworkManager-wait-online.service systemd-networkd-wait-online.service \
+             bluetooth.service ModemManager.service apt-daily.service apt-daily.timer \
+             apt-daily-upgrade.service apt-daily-upgrade.timer man-db.service man-db.timer \
+             e2scrub_all.timer unattended-upgrades.service; do
+    ln -sf /dev/null "/etc/systemd/system/$_unit"
+done
 
 # initramfs：加入 LING OS 早期启动标记；MODULES=most 保证 live-boot 能识别 USB/光驱/squashfs
 mkdir -p /etc/initramfs-tools/scripts/init-premount
@@ -308,15 +337,15 @@ if [ "$DEBARCH" = "arm64" ]; then
     cat > "$BIN_DIR/boot/grub/grub.cfg" <<GRUBCFG
 set default=0
 set timeout=10
-menuentry "LING OS 安装（自动，默认）" {
+menuentry "LING OS $LINGOS_VERSION 安装（自动，默认）" {
     linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
     initrd /live/initrd.img
 }
-menuentry "LING OS 安装（手动选择磁盘）" {
+menuentry "LING OS $LINGOS_VERSION 安装（手动选择磁盘）" {
     linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-manual
     initrd /live/initrd.img
 }
-menuentry "进入 LING OS Live（不安装，可进系统）" {
+menuentry "进入 LING OS $LINGOS_VERSION Live（不安装）" {
     linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=live
     initrd /live/initrd.img
 }

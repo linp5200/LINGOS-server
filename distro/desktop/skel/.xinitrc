@@ -6,5 +6,6 @@ xset s noblank 2>/dev/null || true
 xrdb -merge "$HOME/.Xresources" 2>/dev/null || true
 openbox-session >"$HOME/.local/share/openbox.log" 2>&1 &
 sleep 1
+command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop >/dev/null 2>&1 &
 command -v xterm >/dev/null 2>&1 && exec xterm -maximized -fa 'Noto Sans CJK SC' -fs 12
 exec openbox-session

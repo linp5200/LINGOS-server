@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=计算器
+Comment=计算器。
+Exec=galculator
+Icon=accessories-calculator
+Terminal=false
+Categories=Utility;

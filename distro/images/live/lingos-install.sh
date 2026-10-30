@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# LING OS 安装器（live ISO 内运行；0.9.15 带阶段日志/进度/回传）
+# LING OS 安装器（live ISO 内运行；0.10.0-alpha.1 带阶段日志/进度/回传）
 # 用法：
 #   lingos-install --auto        自动：选最大 >=8G 内置磁盘（排除 USB）
 #   lingos-install --manual      交互：whiptail 选盘 + 确认
@@ -17,6 +17,8 @@ done
 export LINGOS_MODE="${LINGOS_MODE:-install-auto}"
 export LINGOS_LOG="${LINGOS_LOG:-/var/log/lingos-install.log}"
 export LINGOS_TOTAL_STAGES=10
+LINGOS_VERSION=$(sed -n 's/^LINGOS_VERSION=//p' /etc/lingos-image-info 2>/dev/null | head -1)
+export LINGOS_VERSION="${LINGOS_VERSION:-unknown}"
 LINGOS_LIB=/usr/local/sbin/lingos-log.sh
 if [ -f "$LINGOS_LIB" ]; then . "$LINGOS_LIB"; else echo "缺少 $LINGOS_LIB" >&2; exit 1; fi
 for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-LIB-OK\n' > "$_c" 2>/dev/null || true; done
@@ -87,7 +89,7 @@ elif [ -z "$DISK" ]; then
         DEV="${row%%:*}"; SZ="${row##*:}"
         MENU="$MENU $DEV $(basename "$DEV") $SZ"
     done
-    DISK=$(whiptail --title "LING OS 安装器" --menu "选择要安装到的磁盘（将被完全清空）" 20 70 10 $MENU 3>&1 1>&2 2>&3)         || { fail_msg 7 "用户取消磁盘选择"; exit 7; }
+    DISK=$(whiptail --title "LING OS $LINGOS_VERSION 安装器" --menu "选择要安装到的磁盘（将被完全清空）" 20 70 10 $MENU 3>&1 1>&2 2>&3)         || { fail_msg 7 "用户取消磁盘选择"; exit 7; }
     log "用户选择磁盘 $DISK"
 else
     log "使用指定磁盘 $DISK"
@@ -102,7 +104,7 @@ esac
 # ---------- 确认 ----------
 stage 3 confirm "确认安装"
 if [ "$AUTO" != "1" ]; then
-    whiptail --title "确认" --yesno "将清空 $DISK 并安装 LING OS，继续？" 10 60         || { fail_msg 10 "用户取消安装"; exit 10; }
+    whiptail --title "LING OS $LINGOS_VERSION 确认" --yesno "将清空 $DISK 并安装 LING OS，继续？" 10 60         || { fail_msg 10 "用户取消安装"; exit 10; }
 fi
 
 # ---------- 分区 ----------
@@ -261,7 +263,7 @@ printf '%s\n' '{"system_configured": true, "last_config_time": "1970-01-01T00:00
 printf '%s\n' '{"schema_version": 1, "ai": {"ai_config": {"backend": "deepseek", "language": "zh"}, "provider": {"active": "deepseek", "deepseek": {"api_key": "", "model": "deepseek-v4-pro", "base_url": "https://api.deepseek.com"}}}}' \
     > "$TARGET/LINGOS/system/config/config.json"
 cat > "$TARGET/LINGOS/system/config/install-report.json" <<REPORT
-{"version":"0.9.15","mode":"$LINGOS_MODE","disk":"$DISK","uefi":$UEFI,"root_uuid":"$ROOT_UUID","installed_at":"$(date -u +%FT%TZ)"}
+{"version":"$LINGOS_VERSION","mode":"$LINGOS_MODE","disk":"$DISK","uefi":$UEFI,"root_uuid":"$ROOT_UUID","installed_at":"$(date -u +%FT%TZ)"}
 REPORT
 mkdir -p "$TARGET/var/log"
 cp -f "$LINGOS_LOG" "$TARGET/var/log/lingos-install.log" 2>/dev/null || true
@@ -305,5 +307,5 @@ if [ "$AUTO" = "1" ]; then
     done
     reboot -f
 else
-    whiptail --title "安装完成" --msgbox "LING OS 已安装到 $DISK，重启后生效。" 10 60 || true
+    whiptail --title "LING OS $LINGOS_VERSION 安装完成" --msgbox "LING OS 已安装到 $DISK，重启后生效。" 10 60 || true
 fi
