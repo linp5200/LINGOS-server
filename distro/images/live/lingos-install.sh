@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# LING OS 安装器（live ISO 内运行；0.9.14 带阶段日志/进度/回传）
+# LING OS 安装器（live ISO 内运行；0.9.15 带阶段日志/进度/回传）
 # 用法：
 #   lingos-install --auto        自动：选最大 >=8G 内置磁盘（排除 USB）
 #   lingos-install --manual      交互：whiptail 选盘 + 确认
@@ -261,7 +261,7 @@ printf '%s\n' '{"system_configured": true, "last_config_time": "1970-01-01T00:00
 printf '%s\n' '{"schema_version": 1, "ai": {"ai_config": {"backend": "deepseek", "language": "zh"}, "provider": {"active": "deepseek", "deepseek": {"api_key": "", "model": "deepseek-v4-pro", "base_url": "https://api.deepseek.com"}}}}' \
     > "$TARGET/LINGOS/system/config/config.json"
 cat > "$TARGET/LINGOS/system/config/install-report.json" <<REPORT
-{"version":"0.9.14","mode":"$LINGOS_MODE","disk":"$DISK","uefi":$UEFI,"root_uuid":"$ROOT_UUID","installed_at":"$(date -u +%FT%TZ)"}
+{"version":"0.9.15","mode":"$LINGOS_MODE","disk":"$DISK","uefi":$UEFI,"root_uuid":"$ROOT_UUID","installed_at":"$(date -u +%FT%TZ)"}
 REPORT
 mkdir -p "$TARGET/var/log"
 cp -f "$LINGOS_LOG" "$TARGET/var/log/lingos-install.log" 2>/dev/null || true

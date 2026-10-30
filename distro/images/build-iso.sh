@@ -122,6 +122,8 @@ x11-xserver-utils
 x11-utils
 xfonts-base
 xauth
+xvfb
+x11vnc
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -138,7 +140,7 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/hooks
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
 chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
-for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report; do
+for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/sbin/$f"
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done
@@ -167,7 +169,7 @@ cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/et
 cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chroot/etc/systemd/system/lingos-desktop-report.service
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
 cat > config/includes.chroot/etc/lingos-image-info <<INFO
-LINGOS_VERSION=0.9.14
+LINGOS_VERSION=0.9.15
 LINGOS_ARCH=$ARCH
 LINGOS_GIT=$GITREV
 LINGOS_BUILD_TS=$BUILD_TS
