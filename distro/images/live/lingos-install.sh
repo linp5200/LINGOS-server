@@ -374,17 +374,21 @@ if [ -z "$USER_PASS" ]; then
 fi
 printf 'lingos:%s\n' "$USER_PASS" | chroot "$TARGET" chpasswd 2>/dev/null || true
 
-# 图形登录（LightDM）；不再使用 tty1 自动登录
+# 图形登录（LightDM）+ 首次启动配置（OOBE）；不再使用 tty1 自动登录
 rm -rf "$TARGET/etc/systemd/system/getty@tty1.service.d"
+chroot "$TARGET" systemctl mask getty@tty1.service >/dev/null 2>&1 || true
 chroot "$TARGET" systemctl enable lightdm >/dev/null 2>&1 \
     || ln -sf /lib/systemd/system/lightdm.service "$TARGET/etc/systemd/system/display-manager.service"
+ln -sf /etc/systemd/system/lingos-oobe.service \
+    "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-oobe.service" 2>/dev/null || true
 # 安装后启动优化：initramfs 精简 + GRUB 快速启动 + mask 慢服务
 mkdir -p "$TARGET/etc/initramfs-tools/conf.d" "$TARGET/etc/default"
 printf 'MODULES=dep\nCOMPRESS=zstd\n' > "$TARGET/etc/initramfs-tools/conf.d/lingos-boot.conf"
 if [ -f "$TARGET/etc/default/grub" ]; then
     sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' "$TARGET/etc/default/grub"
     grep -q '^GRUB_TIMEOUT_STYLE=' "$TARGET/etc/default/grub" || echo 'GRUB_TIMEOUT_STYLE=hidden' >> "$TARGET/etc/default/grub"
-    grep -q 'quiet' "$TARGET/etc/default/grub" || sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=3"/' "$TARGET/etc/default/grub"
+    grep -q 'quiet' "$TARGET/etc/default/grub" || sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3"/' "$TARGET/etc/default/grub"
+grep -q 'splash' "$TARGET/etc/default/grub" || sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3"/' "$TARGET/etc/default/grub"
 fi
 for unit in avahi-daemon.service cups.service cups-browsed.service whoopsie.service apport.service kerneloops.service ModemManager.service bluetooth.service apt-daily.service apt-daily-upgrade.service man-db.service e2scrub_all.service unattended-upgrades.service; do
     chroot "$TARGET" systemctl mask "$unit" >/dev/null 2>&1 || true

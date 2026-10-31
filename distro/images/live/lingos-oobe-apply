@@ -1,0 +1,25 @@
+#!/bin/bash
+# 应用首次启动配置（root 运行）：密码/语言/时区/隐私等级 + 完成标记
+set -u
+CFG="$1"
+[ -f "$CFG" ] || { echo "missing config"; exit 2; }
+get() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(sys.argv[2],""))' "$CFG" "$1"; }
+PASS=$(get password)
+TZ=$(get timezone)
+LOC=$(get locale)
+LEVEL=$(get privacy_level)
+case "$LEVEL" in L0|L1|L2|L3|L4) ;; *) LEVEL=L1 ;; esac
+case "$TZ" in *[!A-Za-z0-9_/+.-]*) TZ=Asia/Shanghai ;; esac
+case "$LOC" in *[!A-Za-z0-9_.@-]*) LOC=zh_CN.UTF-8 ;; esac
+if [ -n "$PASS" ]; then printf 'lingos:%s\n' "$PASS" | chpasswd || exit 3; fi
+if command -v timedatectl >/dev/null 2>&1; then timedatectl set-timezone "$TZ" >/dev/null 2>&1 || true; fi
+if [ -f "/usr/share/zoneinfo/$TZ" ]; then ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime; fi
+printf 'LANG=%s\n' "$LOC" > /etc/default/locale
+mkdir -p /etc/lingos /var/lib/lingos
+printf '{"schema_version":1,"privacy_level":"%s","local_only":true,"flags":{}}\n' "$LEVEL" > /etc/lingos/security-policy.json
+chmod 600 /etc/lingos/security-policy.json 2>/dev/null || true
+date -u > /var/lib/lingos/oobe-done
+systemctl unmask getty@tty1.service >/dev/null 2>&1 || true
+systemctl enable lightdm >/dev/null 2>&1 || true
+/usr/local/bin/lingos-audit log oobe-done "level=$LEVEL tz=$TZ locale=$LOC" >/dev/null 2>&1 || true
+exit 0

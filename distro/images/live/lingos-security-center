@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""LING OS 安全中心（只读）：隐私等级、审计、AI 工具、应用权限。
+无图形环境时输出文本。"""
+import glob
+import json
+import os
+import subprocess
+import sys
+
+POLICY = "/etc/lingos/security-policy.json"
+AUDIT = "/usr/local/bin/lingos-audit"
+AI_TOOLS = "/etc/lingos/ai-tools"
+APP_PERMS = "/etc/lingos/app-permissions"
+
+
+def collect():
+    d = {"level": "L1", "flags": {}, "audit": "", "ai_tools": [], "app_perms": []}
+    try:
+        with open(POLICY, encoding="utf-8") as f:
+            p = json.load(f)
+        d["level"] = p.get("privacy_level", "L1")
+        d["flags"] = p.get("flags", {})
+    except (OSError, ValueError):
+        pass
+    try:
+        r = subprocess.run([AUDIT, "verify"], capture_output=True, text=True, timeout=20)
+        d["audit"] = (r.stdout or "").strip() or (r.stderr or "").strip()
+    except Exception as exc:
+        d["audit"] = "审计不可用: %s" % exc
+    for p in sorted(glob.glob(os.path.join(AI_TOOLS, "*.json"))):
+        try:
+            with open(p, encoding="utf-8") as f:
+                d["ai_tools"].append(json.load(f).get("id", os.path.basename(p)))
+        except (OSError, ValueError):
+            pass
+    for p in sorted(glob.glob(os.path.join(APP_PERMS, "*.json"))):
+        d["app_perms"].append(os.path.basename(p)[:-5])
+    return d
+
+
+def text_mode(d):
+    print("LING OS 安全中心")
+    print("隐私等级:", d["level"])
+    print("审计:", d["audit"])
+    print("AI 工具:", ", ".join(d["ai_tools"]) or "无")
+    print("应用权限:", ", ".join(d["app_perms"]) or "无")
+    return 0
+
+
+def gui_mode(d):
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk, Gdk
+
+    css = """
+    window { background: #0b0d10; }
+    label { color: #e6e9ef; }
+    .h1 { font-size: 22px; font-weight: bold; }
+    .muted { color: #9aa3b2; }
+    .card { background: #151a22; border: 1px solid #2a3040; border-radius: 10px; padding: 14px; }
+    button { background: #1d2635; color: #e6e9ef; border-radius: 6px; padding: 6px 16px; }
+    """
+    win = Gtk.Window(title="LING OS 安全中心")
+    win.set_default_size(720, 560)
+    provider = Gtk.CssProvider()
+    provider.load_from_data(css.encode())
+    Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider,
+                                             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    outer.set_border_width(20)
+    outer.pack_start(Gtk.Label(label="LING OS 安全中心", xalign=0), False, False, 0)
+
+    def refresh(_b=None):
+        dd = collect()
+        level_lbl.set_text("隐私等级：%s（本地唯一可改，远程只读）" % dd["level"])
+        audit_lbl.set_text("审计：" + (dd["audit"] or "未启用"))
+        tools_lbl.set_text("AI 工具：" + (", ".join(dd["ai_tools"]) or "无"))
+        perms_lbl.set_text("应用权限：" + (", ".join(dd["app_perms"]) or "无"))
+
+    cards = []
+    for title, key in (("隐私等级", "level"), ("审计哈希链", "audit"), ("AI 工具权限", "ai"), ("应用沙箱权限", "perms")):
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        b.get_style_context().add_class("card")
+        t = Gtk.Label(label=title, xalign=0); t.get_style_context().add_class("muted")
+        v = Gtk.Label(label="加载中…", xalign=0); v.set_line_wrap(True)
+        b.pack_start(t, False, False, 0); b.pack_start(v, False, False, 0)
+        outer.pack_start(b, False, False, 0)
+        cards.append(v)
+    level_lbl, audit_lbl, tools_lbl, perms_lbl = cards
+    btn = Gtk.Button(label="刷新")
+    btn.connect("clicked", refresh)
+    outer.pack_end(btn, False, False, 0)
+    win.add(outer)
+    win.connect("destroy", Gtk.main_quit)
+    refresh()
+    win.show_all()
+    Gtk.main()
+    return 0
+
+
+def main():
+    d = collect()
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        return text_mode(d)
+    return gui_mode(d)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

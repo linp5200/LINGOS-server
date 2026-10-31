@@ -41,7 +41,7 @@ if [ "$DEBARCH" = "amd64" ]; then
 else
     KCONSOLE="console=tty0 console=ttyAMA0,115200"
 fi
-KCMDLINE="boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto"
+KCMDLINE="boot=live components live-media=/dev/sr0 $KCONSOLE quiet splash loglevel=5 video=1024x768@60 lingos.mode=install-auto"
 
 WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
 echo "==> live-build 工作目录: $WORK (dist=$DIST arch=$DEBARCH)"
@@ -157,6 +157,12 @@ swaylock
 i3lock
 dmz-cursor-theme
 pavucontrol
+python3-gi
+gir1.2-gtk-3.0
+locales
+plymouth
+plymouth-themes
+picom
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -173,12 +179,12 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/hooks
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
 chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
-for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch lingos-security-settings lingos-privacy-policy lingos-sandbox-run lingos-boot-report; do
+for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch lingos-security-settings lingos-privacy-policy lingos-sandbox-run lingos-boot-report lingos-oobe-apply lingos-oobe-session; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/sbin/$f"
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done
 mkdir -p config/includes.chroot/usr/local/bin
-for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate lingos-power-menu lingos-session-wayland lingos-session-x11; do
+for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate lingos-power-menu lingos-session-wayland lingos-session-x11 lingos-oobe lingos-security-center; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/bin/$f"
     chmod +x "config/includes.chroot/usr/local/bin/$f"
 done
@@ -213,6 +219,9 @@ cp "$ROOT/distro/desktop/skel/.config/tint2/tint2rc"      config/includes.chroot
 cp "$ROOT/distro/desktop/skel/.config/mako/config"        config/includes.chroot/etc/skel/.config/mako/config
 cp "$ROOT/distro/desktop/skel/.config/dunst/dunstrc"      config/includes.chroot/etc/skel/.config/dunst/dunstrc
 cp "$ROOT/distro/desktop/skel/.config/wofi/config"        config/includes.chroot/etc/skel/.config/wofi/config
+cp "$ROOT/distro/desktop/skel/Desktop/security-center.desktop" config/includes.chroot/etc/skel/Desktop/security-center.desktop
+mkdir -p config/includes.chroot/usr/share/applications
+cp "$ROOT/distro/desktop/applications/lingos-security-center.desktop" config/includes.chroot/usr/share/applications/lingos-security-center.desktop
 cp "$ROOT/distro/desktop/skel/Desktop/"*.desktop       config/includes.chroot/etc/skel/Desktop/
 cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
@@ -220,6 +229,11 @@ cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chro
 cp "$ROOT/distro/images/live/lingos-privacy-apply.service" config/includes.chroot/etc/systemd/system/lingos-privacy-apply.service
 cp "$ROOT/distro/images/live/lingos-audit-boot.service" config/includes.chroot/etc/systemd/system/lingos-audit-boot.service
 cp "$ROOT/distro/images/live/lingos-boot-report.service" config/includes.chroot/etc/systemd/system/lingos-boot-report.service
+cp "$ROOT/distro/images/live/lingos-oobe.service" config/includes.chroot/etc/systemd/system/lingos-oobe.service
+mkdir -p config/includes.chroot/etc/plymouth config/includes.chroot/usr/local/lib/lingos
+cp "$ROOT/distro/images/live/plymouthd.conf" config/includes.chroot/etc/plymouth/plymouthd.conf
+cp "$ROOT/distro/desktop/picom.conf" config/includes.chroot/etc/picom.conf
+cp "$ROOT/src/python/agent_runtime.py" config/includes.chroot/usr/local/lib/lingos/agent_runtime.py
 mkdir -p config/includes.chroot/usr/share/lingos/wallpapers \
          config/includes.chroot/usr/share/wayland-sessions \
          config/includes.chroot/usr/share/xsessions \
@@ -275,6 +289,7 @@ ln -sf /etc/systemd/system/lingos-installer.service /etc/systemd/system/multi-us
 ln -sf /etc/systemd/system/lingos-privacy-apply.service /etc/systemd/system/multi-user.target.wants/lingos-privacy-apply.service
 ln -sf /etc/systemd/system/lingos-audit-boot.service /etc/systemd/system/multi-user.target.wants/lingos-audit-boot.service
 ln -sf /etc/systemd/system/lingos-boot-report.service /etc/systemd/system/multi-user.target.wants/lingos-boot-report.service
+ln -sf /etc/systemd/system/lingos-oobe.service /etc/systemd/system/multi-user.target.wants/lingos-oobe.service
 # 0.10：屏蔽 TCG/低性能设备上拖慢启动的单元（安装后系统会继承这些 mask）
 for _unit in NetworkManager-wait-online.service systemd-networkd-wait-online.service \
              bluetooth.service ModemManager.service apt-daily.service apt-daily.timer \
