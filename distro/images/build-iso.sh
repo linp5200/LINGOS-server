@@ -145,6 +145,18 @@ cryptsetup
 cryptsetup-initramfs
 nftables
 bubblewrap
+# 0.10.1 桌面壳/登录（Windows 式体验）
+lightdm
+lightdm-gtk-greeter
+tint2
+rofi
+dunst
+mako-notifier
+swaybg
+swaylock
+i3lock
+dmz-cursor-theme
+pavucontrol
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -161,12 +173,12 @@ mkdir -p config/includes.chroot/usr/local/sbin \
          config/hooks
 cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
 chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
-for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch lingos-security-settings lingos-privacy-policy lingos-sandbox-run; do
+for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch lingos-security-settings lingos-privacy-policy lingos-sandbox-run lingos-boot-report; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/sbin/$f"
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done
 mkdir -p config/includes.chroot/usr/local/bin
-for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate; do
+for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate lingos-power-menu lingos-session-wayland lingos-session-x11; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/bin/$f"
     chmod +x "config/includes.chroot/usr/local/bin/$f"
 done
@@ -183,6 +195,9 @@ mkdir -p config/includes.chroot/etc/skel/.config/labwc \
          config/includes.chroot/etc/skel/.config/waybar \
          config/includes.chroot/etc/skel/.config/wofi \
          config/includes.chroot/etc/skel/.config/openbox \
+         config/includes.chroot/etc/skel/.config/tint2 \
+         config/includes.chroot/etc/skel/.config/mako \
+         config/includes.chroot/etc/skel/.config/dunst \
          config/includes.chroot/etc/skel/Desktop
 cp "$ROOT/distro/desktop/skel/.bash_profile"        config/includes.chroot/etc/skel/.bash_profile
 cp "$ROOT/distro/desktop/skel/.xinitrc"             config/includes.chroot/etc/skel/.xinitrc
@@ -194,12 +209,29 @@ cp "$ROOT/distro/desktop/waybar/style.css"          config/includes.chroot/etc/s
 cp "$ROOT/distro/desktop/wofi/style.css"            config/includes.chroot/etc/skel/.config/wofi/style.css
 cp "$ROOT/distro/desktop/skel/.config/openbox/autostart" config/includes.chroot/etc/skel/.config/openbox/autostart
 cp "$ROOT/distro/desktop/skel/.config/openbox/menu.xml"  config/includes.chroot/etc/skel/.config/openbox/menu.xml
+cp "$ROOT/distro/desktop/skel/.config/tint2/tint2rc"      config/includes.chroot/etc/skel/.config/tint2/tint2rc
+cp "$ROOT/distro/desktop/skel/.config/mako/config"        config/includes.chroot/etc/skel/.config/mako/config
+cp "$ROOT/distro/desktop/skel/.config/dunst/dunstrc"      config/includes.chroot/etc/skel/.config/dunst/dunstrc
+cp "$ROOT/distro/desktop/skel/.config/wofi/config"        config/includes.chroot/etc/skel/.config/wofi/config
 cp "$ROOT/distro/desktop/skel/Desktop/"*.desktop       config/includes.chroot/etc/skel/Desktop/
 cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
 cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chroot/etc/systemd/system/lingos-desktop-report.service
 cp "$ROOT/distro/images/live/lingos-privacy-apply.service" config/includes.chroot/etc/systemd/system/lingos-privacy-apply.service
 cp "$ROOT/distro/images/live/lingos-audit-boot.service" config/includes.chroot/etc/systemd/system/lingos-audit-boot.service
+cp "$ROOT/distro/images/live/lingos-boot-report.service" config/includes.chroot/etc/systemd/system/lingos-boot-report.service
+mkdir -p config/includes.chroot/usr/share/lingos/wallpapers \
+         config/includes.chroot/usr/share/wayland-sessions \
+         config/includes.chroot/usr/share/xsessions \
+         config/includes.chroot/etc/lightdm/lightdm.conf.d \
+         config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf.d \
+         config/includes.chroot/etc/environment.d
+cp "$ROOT/distro/desktop/wallpapers/lingos-default.png" config/includes.chroot/usr/share/lingos/wallpapers/lingos-default.png
+cp "$ROOT/distro/desktop/sessions/lingos-wayland.desktop" config/includes.chroot/usr/share/wayland-sessions/lingos-wayland.desktop
+cp "$ROOT/distro/desktop/sessions/lingos-x11.desktop" config/includes.chroot/usr/share/xsessions/lingos-x11.desktop
+cp "$ROOT/distro/desktop/lightdm/50-lingos.conf" config/includes.chroot/etc/lightdm/lightdm.conf.d/50-lingos.conf
+cp "$ROOT/distro/desktop/lightdm/50-lingos-greeter.conf" config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf.d/50-lingos.conf
+cp "$ROOT/distro/desktop/env/99-lingos-desktop.conf" config/includes.chroot/etc/environment.d/99-lingos-desktop.conf
 mkdir -p config/includes.chroot/etc/lingos/ai-tools config/includes.chroot/etc/lingos/app-permissions \
          config/includes.chroot/usr/share/lingos/geoip config/includes.chroot/etc/firefox/policies
 cp "$ROOT/distro/security/privacy-levels.json"     config/includes.chroot/etc/lingos/privacy-levels.json
@@ -242,6 +274,7 @@ mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sf /etc/systemd/system/lingos-installer.service /etc/systemd/system/multi-user.target.wants/lingos-installer.service
 ln -sf /etc/systemd/system/lingos-privacy-apply.service /etc/systemd/system/multi-user.target.wants/lingos-privacy-apply.service
 ln -sf /etc/systemd/system/lingos-audit-boot.service /etc/systemd/system/multi-user.target.wants/lingos-audit-boot.service
+ln -sf /etc/systemd/system/lingos-boot-report.service /etc/systemd/system/multi-user.target.wants/lingos-boot-report.service
 # 0.10：屏蔽 TCG/低性能设备上拖慢启动的单元（安装后系统会继承这些 mask）
 for _unit in NetworkManager-wait-online.service systemd-networkd-wait-online.service \
              bluetooth.service ModemManager.service apt-daily.service apt-daily.timer \

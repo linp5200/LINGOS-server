@@ -1,0 +1,10 @@
+[global]
+font = Noto Sans CJK SC 10
+background = "#12151a"
+foreground = "#cfd3dc"
+frame_color = "#2a3040"
+frame_width = 1
+timeout = 5
+corner_radius = 8
+origin = top-right
+offset = 8x8

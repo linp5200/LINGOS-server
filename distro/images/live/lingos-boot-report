@@ -1,0 +1,17 @@
+#!/bin/bash
+# 记录启动耗时，供启动速度优化对比（TCG 目标 <=30s 到桌面）
+set -u
+OUT=/var/log/lingos/boot-report.txt
+mkdir -p /var/log/lingos 2>/dev/null || true
+{
+    echo "=== LING OS boot report $(date -u) ==="
+    echo "--- cmdline ---"; cat /proc/cmdline 2>/dev/null
+    echo "--- uptime ---"; cat /proc/uptime 2>/dev/null
+    echo "--- systemd-analyze ---"; systemd-analyze 2>/dev/null
+    echo "--- blame top20 ---"; systemd-analyze blame 2>/dev/null | head -20
+    echo "--- critical-chain ---"; systemd-analyze critical-chain 2>/dev/null | head -30
+    echo "--- failed units ---"; systemctl --failed --no-legend 2>/dev/null
+} > "$OUT" 2>&1
+if [ -d /LINGOS/share ]; then cp "$OUT" /LINGOS/share/lingos-boot-report.txt 2>/dev/null || true; fi
+if [ -d /mnt/share ]; then cp "$OUT" /mnt/share/lingos-boot-report.txt 2>/dev/null || true; fi
+exit 0

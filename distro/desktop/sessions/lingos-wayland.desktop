@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=LING OS（Wayland）
+Comment=LING OS 轻量 Wayland 桌面
+Exec=/usr/local/bin/lingos-session-wayland
+Type=Application
+DesktopNames=LINGOS

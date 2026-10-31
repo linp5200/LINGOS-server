@@ -1,0 +1,66 @@
+{
+  "layer": "top",
+  "position": "bottom",
+  "height": 40,
+  "spacing": 4,
+  "margin-bottom": 0,
+  "modules-left": ["custom/start", "wlr/taskbar"],
+  "modules-center": ["wlr/workspaces"],
+  "modules-right": ["tray", "network", "wireplumber", "battery", "custom/privacy", "clock", "custom/power"],
+  "custom/start": {
+    "format": " 开始",
+    "tooltip": false,
+    "on-click": "wofi --show drun --width 720 --height 480"
+  },
+  "wlr/taskbar": {
+    "format": "{icon} {title:.18}",
+    "icon-size": 22,
+    "icon-theme": "Adwaita",
+    "tooltip-format": "{title}",
+    "on-click": "minimize-raise",
+    "on-click-middle": "close",
+    "sort-by-app-id": true,
+    "all-outputs": true
+  },
+  "wlr/workspaces": {
+    "format": "{name}",
+    "on-click": "activate",
+    "on-scroll-up": "workspace next",
+    "on-scroll-down": "workspace prev"
+  },
+  "tray": {
+    "spacing": 8,
+    "icon-size": 20
+  },
+  "network": {
+    "formatWifi": "Wi-Fi",
+    "formatWired": "有线",
+    "formatDisconnected": "离线",
+    "tooltip-format": "{essid} {signalStrength}%"
+  },
+  "wireplumber": {
+    "format": "音量 {volume}%",
+    "on-click": "pavucontrol"
+  },
+  "battery": {
+    "states": {"warning": 20, "critical": 10},
+    "format": "电池 {capacity}%",
+    "format-charging": "充电 {capacity}%"
+  },
+  "custom/privacy": {
+    "exec": "python3 -c 'import json;print(\"隐私 \"+json.load(open(\"/etc/lingos/security-policy.json\")).get(\"privacy_level\",\"L1\"))' 2>/dev/null || echo '隐私 L1'",
+    "format": "{}",
+    "interval": 10,
+    "tooltip": false
+  },
+  "clock": {
+    "format": "{:%H:%M}",
+    "tooltip-format": "<b>{}</b>",
+    "calendar": {"format": {"today": "<b><u>{}</u></b>"}}
+  },
+  "custom/power": {
+    "format": "⏻",
+    "tooltip": false,
+    "on-click": "lingos-power-menu"
+  }
+}

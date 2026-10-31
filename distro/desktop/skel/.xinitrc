@@ -1,11 +1,11 @@
 #!/bin/sh
-# LING OS X11 安全图形回退会话（Vectras / 无 KMS 的 simple-framebuffer 环境）
+# LING OS X11 安全图形会话（Vectras / 无 KMS 的 simple-framebuffer）
 xset -dpms 2>/dev/null || true
 xset s off 2>/dev/null || true
 xset s noblank 2>/dev/null || true
+xsetroot -cursor_name left_ptr 2>/dev/null || true
+export XCURSOR_THEME=Adwaita
+export XCURSOR_SIZE=24
+export XDG_CURRENT_DESKTOP=LINGOS
 xrdb -merge "$HOME/.Xresources" 2>/dev/null || true
-openbox-session >"$HOME/.local/share/openbox.log" 2>&1 &
-sleep 1
-command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop >/dev/null 2>&1 &
-command -v xterm >/dev/null 2>&1 && exec xterm -maximized -fa 'Noto Sans CJK SC' -fs 12
 exec openbox-session

@@ -351,23 +351,52 @@ rm -f "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-installer.servi
 rm -f "$TARGET/etc/systemd/system/lingos-installer.service" "$TARGET/etc/lingos-live"
 chroot "$TARGET" passwd -d root 2>/dev/null || true
 
-# 桌面用户（useradd -m 会复制 /etc/skel 中的 labwc/waybar/wofi 配置）
+# 桌面用户（useradd -m 会复制 /etc/skel 中的桌面配置）
 chroot "$TARGET" useradd -m -s /bin/bash -G video,render,input,audio lingos 2>/dev/null \
     || chroot "$TARGET" useradd -m -s /bin/bash lingos 2>/dev/null || true
-chroot "$TARGET" passwd -d lingos 2>/dev/null || true
-mkdir -p "$TARGET/etc/systemd/system/getty@tty1.service.d" \
-         "$TARGET/etc/systemd/system/getty.target.wants"
-cat > "$TARGET/etc/systemd/system/getty@tty1.service.d/autologin.conf" <<'AUTOLOGIN'
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin lingos --noclear %I $TERM
-AUTOLOGIN
-ln -sf /lib/systemd/system/getty@.service \
-    "$TARGET/etc/systemd/system/getty.target.wants/getty@tty1.service"
+
+# 登录密码：手动安装询问；自动安装用 LINGOS_PASSWORD 或随机生成并写入安装日志
+USER_PASS="$LINGOS_PASSWORD"
+if [ -z "$USER_PASS" ] && [ "$AUTO" != "1" ]; then
+    while :; do
+        P1=$(whiptail --title "LING OS $LINGOS_VERSION 用户密码" --passwordbox "设置桌面用户 lingos 的登录密码（至少 6 位）：" 10 64 3>&1 1>&2 2>&3) || { P1=""; break; }
+        [ -n "$P1" ] || break
+        P2=$(whiptail --title "LING OS $LINGOS_VERSION 用户密码" --passwordbox "请再次输入密码：" 10 64 3>&1 1>&2 2>&3) || { P1=""; break; }
+        if [ "$P1" = "$P2" ] && [ "$(printf '%s' "$P1" | wc -c)" -ge 6 ]; then
+            USER_PASS="$P1"; break
+        fi
+        whiptail --title "LING OS $LINGOS_VERSION" --msgbox "两次输入不一致或密码长度不足 6 位，请重试。" 10 60
+    done
+fi
+if [ -z "$USER_PASS" ]; then
+    USER_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 12)
+    log "自动安装：已生成 lingos 登录密码（见安装日志）：$USER_PASS"
+fi
+printf 'lingos:%s\n' "$USER_PASS" | chroot "$TARGET" chpasswd 2>/dev/null || true
+
+# 图形登录（LightDM）；不再使用 tty1 自动登录
+rm -rf "$TARGET/etc/systemd/system/getty@tty1.service.d"
+chroot "$TARGET" systemctl enable lightdm >/dev/null 2>&1 \
+    || ln -sf /lib/systemd/system/lightdm.service "$TARGET/etc/systemd/system/display-manager.service"
+# 安装后启动优化：initramfs 精简 + GRUB 快速启动 + mask 慢服务
+mkdir -p "$TARGET/etc/initramfs-tools/conf.d" "$TARGET/etc/default"
+printf 'MODULES=dep\nCOMPRESS=zstd\n' > "$TARGET/etc/initramfs-tools/conf.d/lingos-boot.conf"
+if [ -f "$TARGET/etc/default/grub" ]; then
+    sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' "$TARGET/etc/default/grub"
+    grep -q '^GRUB_TIMEOUT_STYLE=' "$TARGET/etc/default/grub" || echo 'GRUB_TIMEOUT_STYLE=hidden' >> "$TARGET/etc/default/grub"
+    grep -q 'quiet' "$TARGET/etc/default/grub" || sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=3"/' "$TARGET/etc/default/grub"
+fi
+for unit in avahi-daemon.service cups.service cups-browsed.service whoopsie.service apport.service kerneloops.service ModemManager.service bluetooth.service apt-daily.service apt-daily-upgrade.service man-db.service e2scrub_all.service unattended-upgrades.service; do
+    chroot "$TARGET" systemctl mask "$unit" >/dev/null 2>&1 || true
+done
+chroot "$TARGET" update-initramfs -u -k all >/dev/null 2>&1 || true
+chroot "$TARGET" update-grub >/dev/null 2>&1 || true
 chmod +x "$TARGET/usr/local/sbin/lingos-desktop-report" 2>/dev/null || true
 ln -sf /etc/systemd/system/lingos-desktop-report.service \
-    "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-desktop-report.service"
-log "桌面用户 lingos + tty1 自动登录已配置（含桌面诊断上报服务）"
+    "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-desktop-report.service" 2>/dev/null || true
+ln -sf /etc/systemd/system/lingos-boot-report.service \
+    "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-boot-report.service" 2>/dev/null || true
+log "桌面用户 lingos + LightDM 图形登录 + 启动优化已配置"
 log "配置写入完成"
 
 # ---------- 完成 ----------

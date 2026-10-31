@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=LING OS（X11 安全图形）
+Comment=LING OS X11 兼容桌面（Vectras/无 KMS 环境）
+Exec=/usr/local/bin/lingos-session-x11
+Type=Application
+DesktopNames=LINGOS

@@ -1,4 +1,8 @@
-# LING OS openbox 会话自启
+# LING OS X11 会话自启（openbox）
 xset -dpms 2>/dev/null || true
 xset s off 2>/dev/null || true
+xsetroot -cursor_name left_ptr 2>/dev/null || true
+command -v feh >/dev/null 2>&1 && feh --bg-fill /usr/share/lingos/wallpapers/lingos-default.png &
+command -v dunst >/dev/null 2>&1 && dunst &
+command -v tint2 >/dev/null 2>&1 && tint2 &
 command -v pcmanfm >/dev/null 2>&1 && pcmanfm --desktop &
