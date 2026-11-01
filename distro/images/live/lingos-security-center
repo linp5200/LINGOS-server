@@ -70,6 +70,17 @@ def gui_mode(d):
     outer.set_border_width(20)
     outer.pack_start(Gtk.Label(label="LING OS 安全中心", xalign=0), False, False, 0)
 
+    def set_flag(_b, name):
+        on = "on" if _b.get_active() else "off"
+        try:
+            r = subprocess.run(["sudo", "-n", "/usr/local/sbin/lingos-security-settings",
+                                "set-flag", name, on, "--confirm-local"],
+                               capture_output=True, text=True, timeout=30)
+            self_status.set_text(("%s=%s" % (name, on)) if r.returncode == 0 else ("设置失败：" + (r.stderr or "").strip()[-160:]))
+        except Exception as exc:
+            self_status.set_text("设置失败：%s" % exc)
+        refresh()
+
     def set_level(_b, lid):
         d = Gtk.MessageDialog(parent=win, flags=Gtk.DialogFlags.MODAL,
                               type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO,
@@ -114,6 +125,16 @@ def gui_mode(d):
         levels.pack_start(b, False, False, 0)
     outer.pack_start(levels, False, False, 0)
     outer.pack_start(self_status, False, False, 0)
+
+    flags_box = Gtk.Box(spacing=8)
+    flags_box.pack_start(Gtk.Label(label="设备/网络开关："), False, False, 0)
+    for fname, label in (("camera", "摄像头"), ("microphone", "麦克风"),
+                         ("usb", "USB 数据"), ("network", "网络"), ("location", "定位")):
+        cb = Gtk.CheckButton(label=label)
+        cb.set_active(collect().get("flags", {}).get(fname, "on") != "off")
+        cb.connect("toggled", self.set_flag, fname)
+        flags_box.pack_start(cb, False, False, 0)
+    outer.pack_start(flags_box, False, False, 0)
     btn = Gtk.Button(label="刷新")
     btn.connect("clicked", refresh)
     outer.pack_end(btn, False, False, 0)

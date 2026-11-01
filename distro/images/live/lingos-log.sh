@@ -103,7 +103,7 @@ find_share() {
         if touch "$LINGOS_SHARE_MNT/.lingos-write-test" 2>/dev/null; then
             rm -f "$LINGOS_SHARE_MNT/.lingos-write-test" 2>/dev/null || true
             LINGOS_SHARE="$LINGOS_SHARE_MNT"
-            log "共享文件夹已启用: $dev -> $LINGOS_SHARE"
+            log "Shared folder enabled: $dev -> $LINGOS_SHARE"
             return 0
         fi
         umount "$LINGOS_SHARE_MNT" 2>/dev/null || true

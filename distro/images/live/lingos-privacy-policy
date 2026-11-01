@@ -4,8 +4,22 @@ set -u
 POLICY=/etc/lingos/security-policy.json
 LEVEL=$(python3 -c 'import json;print(json.load(open("'"$POLICY"'")).get("privacy_level","L1"))' 2>/dev/null || true)
 case "$LEVEL" in L0|L1|L2|L3|L4) ;; *) LEVEL=L1 ;; esac
-mkdir -p /var/log/lingos /etc/lingos /etc/nftables.d /etc/sysctl.d /etc/NetworkManager/conf.d /etc/systemd/resolved.conf.d 2>/dev/null || true
-/usr/local/bin/lingos-audit log privacy-apply "level=$LEVEL" >/dev/null 2>&1 || true
+mkdir -p /var/log/lingos /etc/lingos /etc/nftables.d /etc/sysctl.d /etc/NetworkManager/conf.d /etc/systemd/resolved.conf.d /etc/modprobe.d /etc/udev/rules.d /run/lingos 2>/dev/null || true
+flag() { python3 -c 'import json,sys
+try:
+ d=json.load(open("/etc/lingos/security-policy.json"))
+except Exception:
+ d={}
+print(d.get("flags",{}).get(sys.argv[1],"on"))' "$1" 2>/dev/null || echo on; }
+F_CAM=$(flag camera); F_MIC=$(flag microphone); F_USB=$(flag usb); F_NET=$(flag network); F_LOC=$(flag location)
+printf '{"camera":"%s","microphone":"%s","usb":"%s","network":"%s","location":"%s"}\n' \
+    "$F_CAM" "$F_MIC" "$F_USB" "$F_NET" "$F_LOC" > /run/lingos-privacy-flags.json 2>/dev/null || true
+# 设备开关：默认全部 on；仅当用户在本地安全中心显式关闭时生效
+if [ "$F_CAM" = "off" ]; then printf 'blacklist uvcvideo\n' > /etc/modprobe.d/lingos-camera.conf; modprobe -r uvcvideo 2>/dev/null || true; else rm -f /etc/modprobe.d/lingos-camera.conf; fi
+if [ "$F_MIC" = "off" ]; then printf 'blacklist snd_usb_audio\n' > /etc/modprobe.d/lingos-mic.conf; else rm -f /etc/modprobe.d/lingos-mic.conf; fi
+if [ "$F_USB" = "off" ]; then printf 'SUBSYSTEM=="usb", ATTR{authorized}="0"\n' > /etc/udev/rules.d/99-lingos-usb.rules; udevadm control --reload-rules 2>/dev/null || true; udevadm trigger 2>/dev/null || true; else rm -f /etc/udev/rules.d/99-lingos-usb.rules; fi
+if [ "$F_LOC" = "off" ]; then touch /run/lingos/location-off; else rm -f /run/lingos/location-off; fi
+/usr/local/bin/lingos-audit log privacy-apply "level=$LEVEL camera=$F_CAM mic=$F_MIC usb=$F_USB net=$F_NET loc=$F_LOC" >/dev/null 2>&1 || true
 
 cat > /etc/sysctl.d/99-lingos-privacy.conf <<EOF
 kernel.kptr_restrict=2
@@ -75,6 +89,10 @@ if command -v nft >/dev/null 2>&1; then
   printf '%s\n' "$RULES" > /etc/nftables.d/lingos.nft
   nft flush ruleset 2>/dev/null || true
   nft -f /etc/nftables.d/lingos.nft 2>/dev/null || true
+  if [ "$F_NET" = "off" ]; then
+    nft add chain inet lingos output '{ type filter hook output priority 0; policy accept; }' 2>/dev/null || true
+    nft add rule inet lingos output oifname != "lo" drop 2>/dev/null || true
+  fi
 fi
 
 echo "$LEVEL" > /run/lingos-privacy-level 2>/dev/null || true

@@ -1,0 +1,11 @@
+{
+  "id": "media",
+  "name": "媒体增强",
+  "description": "编解码器、播放器与图像编辑",
+  "packages": [
+    "vlc",
+    "gimp",
+    "ffmpeg"
+  ],
+  "apt_update": true
+}

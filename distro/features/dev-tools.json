@@ -1,0 +1,13 @@
+{
+  "id": "dev-tools",
+  "name": "开发工具",
+  "description": "Git、编译工具链、Python/Node 开发环境",
+  "packages": [
+    "git",
+    "build-essential",
+    "python3-pip",
+    "nodejs",
+    "npm"
+  ],
+  "apt_update": true
+}

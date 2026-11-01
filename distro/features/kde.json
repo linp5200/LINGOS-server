@@ -1,0 +1,9 @@
+{
+  "id": "kde",
+  "name": "KDE Plasma 完整桌面（可选）",
+  "description": "完整 KDE 桌面与组件（体积大，TCG 下较慢）",
+  "packages": [
+    "kde-plasma-desktop"
+  ],
+  "apt_update": true
+}

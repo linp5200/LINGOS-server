@@ -19,6 +19,8 @@ def from_timezone():
 
 
 def lookup():
+    if os.path.exists("/run/lingos/location-off"):
+        return {"source": "disabled", "city": "", "region": "", "lat": None, "lon": None}
     env_city = os.environ.get("LINGOS_CITY", "")
     if env_city and os.path.exists(DB):
         with open(DB, encoding="utf-8") as f:

@@ -192,7 +192,7 @@ for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session li
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done
 mkdir -p config/includes.chroot/usr/local/bin
-for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate lingos-power-menu lingos-oobe lingos-oobe-session-x11 lingos-oobe-tui lingos-security-center lingos-plugin lingos-ai; do
+for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate lingos-power-menu lingos-oobe lingos-oobe-session-x11 lingos-oobe-tui lingos-security-center lingos-plugin lingos-ai lingos-recovery lingos-feature; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/bin/$f"
     chmod +x "config/includes.chroot/usr/local/bin/$f"
 done
@@ -230,6 +230,9 @@ cp "$ROOT/distro/desktop/skel/.config/wofi/config"        config/includes.chroot
 cp "$ROOT/distro/desktop/skel/Desktop/security-center.desktop" config/includes.chroot/etc/skel/Desktop/security-center.desktop
 mkdir -p config/includes.chroot/usr/share/applications
 cp "$ROOT/distro/desktop/applications/lingos-security-center.desktop" config/includes.chroot/usr/share/applications/lingos-security-center.desktop
+mkdir -p config/includes.chroot/usr/share/lingos/features config/includes.chroot/usr/share/lingos/plugins/examples
+cp "$ROOT/distro/features/"*.json config/includes.chroot/usr/share/lingos/features/
+cp -a "$ROOT/distro/plugins/examples/hello" config/includes.chroot/usr/share/lingos/plugins/examples/
 cp "$ROOT/distro/desktop/skel/Desktop/"*.desktop       config/includes.chroot/etc/skel/Desktop/
 cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service

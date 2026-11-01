@@ -1,0 +1,12 @@
+{
+  "id": "office",
+  "name": "办公套件",
+  "description": "LibreOffice 办公与 PDF 编辑",
+  "packages": [
+    "libreoffice-writer",
+    "libreoffice-calc",
+    "libreoffice-impress",
+    "pdfarranger"
+  ],
+  "apt_update": true
+}
