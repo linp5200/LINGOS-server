@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=LING OS（XFCE 轻量/救援）
+Comment=LING OS XFCE 轻量桌面（Vectras 兼容）
+Exec=xfce4-session
+Type=Application
+DesktopNames=LINGOS;XFCE

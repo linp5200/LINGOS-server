@@ -19,6 +19,10 @@ mkdir -p /etc/lingos /var/lib/lingos
 printf '{"schema_version":1,"privacy_level":"%s","local_only":true,"flags":{}}\n' "$LEVEL" > /etc/lingos/security-policy.json
 chmod 600 /etc/lingos/security-policy.json 2>/dev/null || true
 date -u > /var/lib/lingos/oobe-done
+# 首启完成后恢复正常登录，不再自动登录 OOBE
+rm -f /etc/lightdm/lightdm.conf.d/40-lingos-oobe.conf /etc/lightdm/lightdm.conf.d/60-lingos-oobe.conf
+rm -f /etc/sudoers.d/90-lingos-oobe
+rm -f /root/lingos-oobe-password.txt
 systemctl unmask getty@tty1.service >/dev/null 2>&1 || true
 systemctl enable lightdm >/dev/null 2>&1 || true
 /usr/local/bin/lingos-audit log oobe-done "level=$LEVEL tz=$TZ locale=$LOC" >/dev/null 2>&1 || true

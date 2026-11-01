@@ -98,10 +98,6 @@ grub-efi-amd64-signed
 grub-pc-bin
 syslinux
 syslinux-utils
-labwc
-waybar
-wofi
-foot
 fonts-noto-cjk
 espeak-ng
 ffmpeg
@@ -148,21 +144,33 @@ bubblewrap
 # 0.10.1 桌面壳/登录（Windows 式体验）
 lightdm
 lightdm-gtk-greeter
-tint2
-rofi
-dunst
-mako-notifier
-swaybg
-swaylock
-i3lock
 dmz-cursor-theme
 pavucontrol
 python3-gi
 gir1.2-gtk-3.0
+sudo
 locales
 plymouth
 plymouth-themes
 picom
+# 0.10.3 成熟桌面（Cinnamon 默认 + XFCE 轻量/救援）
+cinnamon
+cinnamon-common
+cinnamon-session
+cinnamon-settings-daemon
+muffin
+nemo
+cinnamon-control-center
+cinnamon-screensaver
+xfce4
+xfce4-terminal
+thunar
+xfce4-whiskermenu-plugin
+xfce4-taskmanager
+xfce4-power-manager
+xfce4-notifyd
+network-manager-gnome
+dconf-cli
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -184,7 +192,7 @@ for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session li
     chmod +x "config/includes.chroot/usr/local/sbin/$f"
 done
 mkdir -p config/includes.chroot/usr/local/bin
-for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate lingos-power-menu lingos-session-wayland lingos-session-x11 lingos-oobe lingos-security-center; do
+for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate lingos-power-menu lingos-oobe lingos-oobe-session-x11 lingos-oobe-tui lingos-security-center lingos-plugin lingos-ai; do
     cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/bin/$f"
     chmod +x "config/includes.chroot/usr/local/bin/$f"
 done
@@ -241,11 +249,20 @@ mkdir -p config/includes.chroot/usr/share/lingos/wallpapers \
          config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf.d \
          config/includes.chroot/etc/environment.d
 cp "$ROOT/distro/desktop/wallpapers/lingos-default.png" config/includes.chroot/usr/share/lingos/wallpapers/lingos-default.png
-cp "$ROOT/distro/desktop/sessions/lingos-wayland.desktop" config/includes.chroot/usr/share/wayland-sessions/lingos-wayland.desktop
-cp "$ROOT/distro/desktop/sessions/lingos-x11.desktop" config/includes.chroot/usr/share/xsessions/lingos-x11.desktop
+cp "$ROOT/distro/desktop/sessions/lingos-cinnamon.desktop" config/includes.chroot/usr/share/xsessions/lingos-cinnamon.desktop
+cp "$ROOT/distro/desktop/sessions/lingos-xfce.desktop" config/includes.chroot/usr/share/xsessions/lingos-xfce.desktop
+cp "$ROOT/distro/desktop/sessions/lingos-oobe.desktop" config/includes.chroot/usr/share/xsessions/lingos-oobe.desktop
+mkdir -p config/includes.chroot/etc/dconf/profile config/includes.chroot/etc/dconf/db/local.d \
+         config/includes.chroot/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
+cp "$ROOT/distro/desktop/dconf/profile-user" config/includes.chroot/etc/dconf/profile/user
+cp "$ROOT/distro/desktop/dconf/00-lingos" config/includes.chroot/etc/dconf/db/local.d/00-lingos
+cp "$ROOT/distro/desktop/xfce/xfce4-desktop.xml" config/includes.chroot/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
 cp "$ROOT/distro/desktop/lightdm/50-lingos.conf" config/includes.chroot/etc/lightdm/lightdm.conf.d/50-lingos.conf
 cp "$ROOT/distro/desktop/lightdm/50-lingos-greeter.conf" config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf.d/50-lingos.conf
 cp "$ROOT/distro/desktop/env/99-lingos-desktop.conf" config/includes.chroot/etc/environment.d/99-lingos-desktop.conf
+mkdir -p config/includes.chroot/etc/sudoers.d
+cp "$ROOT/distro/linux/sudoers-lingos-security" config/includes.chroot/etc/sudoers.d/80-lingos-security
+chmod 0440 config/includes.chroot/etc/sudoers.d/80-lingos-security
 mkdir -p config/includes.chroot/etc/lingos/ai-tools config/includes.chroot/etc/lingos/app-permissions \
          config/includes.chroot/usr/share/lingos/geoip config/includes.chroot/etc/firefox/policies
 cp "$ROOT/distro/security/privacy-levels.json"     config/includes.chroot/etc/lingos/privacy-levels.json
@@ -289,7 +306,7 @@ ln -sf /etc/systemd/system/lingos-installer.service /etc/systemd/system/multi-us
 ln -sf /etc/systemd/system/lingos-privacy-apply.service /etc/systemd/system/multi-user.target.wants/lingos-privacy-apply.service
 ln -sf /etc/systemd/system/lingos-audit-boot.service /etc/systemd/system/multi-user.target.wants/lingos-audit-boot.service
 ln -sf /etc/systemd/system/lingos-boot-report.service /etc/systemd/system/multi-user.target.wants/lingos-boot-report.service
-ln -sf /etc/systemd/system/lingos-oobe.service /etc/systemd/system/multi-user.target.wants/lingos-oobe.service
+if command -v dconf >/dev/null 2>&1; then dconf update 2>/dev/null || true; fi
 # 0.10：屏蔽 TCG/低性能设备上拖慢启动的单元（安装后系统会继承这些 mask）
 for _unit in NetworkManager-wait-online.service systemd-networkd-wait-online.service \
              bluetooth.service ModemManager.service apt-daily.service apt-daily.timer \

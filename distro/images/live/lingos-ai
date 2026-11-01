@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""LING OS AI 助手 CLI（本地骨架，DSH 风格运行时）。
+用法：lingos-ai status | tools | demo
+"""
+import json
+import os
+import sys
+
+sys.path.insert(0, "/usr/local/lib/lingos")
+try:
+    from agent_runtime import AgentRuntime, ToolCall, ToolResult, ToolSpec
+except Exception:
+    AgentRuntime = None
+
+
+def level():
+    try:
+        with open("/etc/lingos/security-policy.json", encoding="utf-8") as f:
+            return json.load(f).get("privacy_level", "L1")
+    except (OSError, ValueError):
+        return "L1"
+
+
+def cmd_status():
+    print("LING OS AI")
+    print("privacy level:", level())
+    print("AgentRuntime:", "available" if AgentRuntime else "missing")
+    print("tools dir:", "/etc/lingos/ai-tools")
+    return 0
+
+
+def cmd_tools():
+    d = "/etc/lingos/ai-tools"
+    if os.path.isdir(d):
+        for n in sorted(os.listdir(d)):
+            if n.endswith(".json"):
+                try:
+                    with open(os.path.join(d, n), encoding="utf-8") as f:
+                        m = json.load(f)
+                    print("%-24s %-8s %s" % (m.get("id", n), m.get("risk", "?"),
+                                            ",".join(m.get("capabilities", []))))
+                except (OSError, ValueError):
+                    print(n)
+    return 0
+
+
+def cmd_demo():
+    if AgentRuntime is None:
+        print("agent runtime missing")
+        return 1
+    rt = AgentRuntime(level())
+
+    def handler(call):
+        return ToolResult(ok=True, data={"echo": call.args.get("q", "")})
+
+    rt.register(ToolSpec(id="tool.demo.echo", capabilities=["compute"]),
+                handler)
+    out = rt.run("演示：回显一次", [ToolCall("tool.demo.echo", "演示回显", "local", {"q": "hello"})])
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if cmd == "status":
+        return cmd_status()
+    if cmd == "tools":
+        return cmd_tools()
+    if cmd == "demo":
+        return cmd_demo()
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

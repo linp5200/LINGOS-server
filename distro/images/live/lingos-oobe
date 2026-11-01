@@ -185,7 +185,19 @@ class OOBE(Gtk.Window):
         path = "/tmp/lingos-oobe-config.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False)
-        r = subprocess.run(["/usr/local/sbin/lingos-oobe-apply", path], timeout=120)
+        try:
+            with open("/tmp/lingos-oobe.log", "a", encoding="utf-8") as logf:
+                logf.write("apply %s\n" % path)
+            r = subprocess.run(["sudo", "-n", "/usr/local/sbin/lingos-oobe-apply", path],
+                               timeout=180, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            if r.returncode != 0:
+                raise RuntimeError((r.stdout or b"").decode("utf-8", "ignore")[-500:])
+        except Exception as exc:
+            d = Gtk.MessageDialog(parent=self, flags=Gtk.DialogFlags.MODAL,
+                                  type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK,
+                                  text="配置写入失败: %s" % exc)
+            d.run(); d.destroy()
+            return
         if r.returncode != 0:
             d = Gtk.MessageDialog(parent=self, flags=Gtk.DialogFlags.MODAL,
                                   type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK,

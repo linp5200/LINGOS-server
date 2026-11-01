@@ -25,12 +25,12 @@ CRYPT_NAME="lingos_crypt"
 ROOT_DEV=""
 LUKS_UUID=""
 LINGOS_LIB=/usr/local/sbin/lingos-log.sh
-if [ -f "$LINGOS_LIB" ]; then . "$LINGOS_LIB"; else echo "缺少 $LINGOS_LIB" >&2; exit 1; fi
+if [ -f "$LINGOS_LIB" ]; then . "$LINGOS_LIB"; else echo "Missing $LINGOS_LIB" >&2; exit 1; fi
 for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-LIB-OK\n' > "$_c" 2>/dev/null || true; done
 : > "$LINGOS_LOG" 2>/dev/null || true
 for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-LOG-TRUNCATE-OK\n' > "$_c" 2>/dev/null || true; done
 
-trap 'rc=$?; for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf "LINGOS-INSTALL-ERROR line=%s rc=%s cmd=%s\n" "$LINENO" "$rc" "$BASH_COMMAND" > "$_c" 2>/dev/null || true; done; set +e; fail_msg "$rc" "命令失败: $BASH_COMMAND"; exit $rc' ERR
+trap 'rc=$?; for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf "LINGOS-INSTALL-ERROR line=%s rc=%s cmd=%s\n" "$LINENO" "$rc" "$BASH_COMMAND" > "$_c" 2>/dev/null || true; done; set +e; fail_msg "$rc" "Command failed: $BASH_COMMAND"; exit $rc' ERR
 
 AUTO=0
 case "$LINGOS_MODE" in
@@ -57,10 +57,10 @@ export TERM="${TERM:-linux}"
 for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-BOOTINFO-BEGIN\n' > "$_c" 2>/dev/null || true; done
 boot_info
 for _c in /dev/ttyAMA0 /dev/ttyS0; do [ -e "$_c" ] && printf 'LINGOS-BOOTINFO-END\n' > "$_c" 2>/dev/null || true; done
-stage 1 preflight "环境检查"
-[ "$(id -u)" = "0" ] || { fail_msg 3 "需要 root"; exit 3; }
-[ -d /run/live ] || { fail_msg 4 "未检测到 live 环境（/run/live 不存在）"; exit 4; }
-log "live 环境检查通过（mode=$LINGOS_MODE auto=$AUTO）"
+stage 1 preflight "Preflight"
+[ "$(id -u)" = "0" ] || { fail_msg 3 "Root privileges required"; exit 3; }
+[ -d /run/live ] || { fail_msg 4 "Live environment not found (/run/live missing)"; exit 4; }
+log "Live environment OK (mode=$LINGOS_MODE auto=$AUTO)"
 
 # ---------- 磁盘候选（排除 USB） ----------
 udevadm settle 2>/dev/null || true
@@ -75,11 +75,11 @@ while IFS= read -r row; do
     case "$LIVE_SRC" in "/dev/$NAME"*) log "跳过 live 介质 /dev/$NAME"; continue ;; esac
     CANDIDATES="$CANDIDATES /dev/$NAME:$SIZE"
 done < <(lsblk -bdnP -o NAME,TYPE,TRAN,SIZE 2>/dev/null)
-[ -n "$CANDIDATES" ] || { fail_msg 5 "未发现可安装磁盘（USB 已排除）"; exit 5; }
+[ -n "$CANDIDATES" ] || { fail_msg 5 "No installable disk found (USB excluded)"; exit 5; }
 log "可安装磁盘:$CANDIDATES"
 
 # ---------- 选择磁盘 ----------
-stage 2 select-disk "选择安装磁盘"
+stage 2 select-disk "Select installation disk"
 DISK="${LINGOS_DISK:-}"
 if [ -z "$DISK" ]; then
     DISK=$(read_cmdline_param lingos.disk || true)
@@ -103,10 +103,10 @@ elif [ -z "$DISK" ]; then
         DEV="${row%%:*}"; SZ="${row##*:}"
         MENU="$MENU $DEV $(basename "$DEV") $SZ"
     done
-    DISK=$(whiptail --title "LING OS $LINGOS_VERSION 安装器" --menu "选择要安装到的磁盘（将被完全清空）" 20 70 10 $MENU 3>&1 1>&2 2>&3)         || { fail_msg 7 "用户取消磁盘选择"; exit 7; }
-    log "用户选择磁盘 $DISK"
+    DISK=$(whiptail --title "LING OS $LINGOS_VERSION 安装器" --menu "Select target disk (ALL DATA WILL BE ERASED)" 20 70 10 $MENU 3>&1 1>&2 2>&3)         || { fail_msg 7 "User cancelled disk selection"; exit 7; }
+    log "User selected disk $DISK"
 else
-    log "使用指定磁盘 $DISK"
+    log "Using specified disk $DISK"
 fi
 
 [ -b "$DISK" ] || { fail_msg 8 "不是块设备: $DISK"; exit 8; }
@@ -116,14 +116,14 @@ case "$ROOTSRC" in
 esac
 
 # ---------- 确认 ----------
-stage 3 confirm "确认安装"
+stage 3 confirm "Confirm installation"
 if [ "$AUTO" != "1" ]; then
-    whiptail --title "LING OS $LINGOS_VERSION 确认" --yesno "将清空 $DISK 并安装 LING OS，继续？" 10 60         || { fail_msg 10 "用户取消安装"; exit 10; }
+    whiptail --title "LING OS $LINGOS_VERSION 确认" --yesno "Erase $DISK and install LING OS? Continue?" 10 60         || { fail_msg 10 "User cancelled installation"; exit 10; }
 fi
 
 # ---------- 全盘加密选项（LUKS2；默认关闭，避免 TCG 设备过慢） ----------
 if [ "$AUTO" != "1" ] && [ "$ENCRYPT" = "0" ]; then
-    if whiptail --title "LING OS $LINGOS_VERSION 全盘加密" --yesno "是否启用 LUKS2 全盘加密？\n\n推荐开启，可保护设备丢失时的数据。\n软件模拟设备（如 Vectras）下会明显变慢。" 12 64; then
+    if whiptail --title "LING OS $LINGOS_VERSION Full-disk encryption" --yesno "Enable LUKS2 full-disk encryption?\n\nRecommended for data protection if the device is lost.\nNoticeably slower on emulated devices (e.g. Vectras)." 12 64; then
         ENCRYPT=1
     fi
 fi
@@ -132,15 +132,15 @@ if [ "$ENCRYPT" = "1" ] && [ -z "$LUKS_PASS" ]; then
         log "自动模式未提供 LINGOS_LUKS_PASSPHRASE，回退为不加密"
         ENCRYPT=0
     else
-        LUKS_PASS=$(whiptail --title "LING OS $LINGOS_VERSION 加密口令" --passwordbox "设置 LUKS2 解锁口令（至少 8 位）：" 10 64 3>&1 1>&2 2>&3) || { fail_msg 12 "用户取消口令输入"; exit 12; }
-        LUKS_PASS2=$(whiptail --title "LING OS $LINGOS_VERSION 加密口令" --passwordbox "再次输入口令：" 10 64 3>&1 1>&2 2>&3) || { fail_msg 12 "用户取消口令输入"; exit 12; }
-        [ "$LUKS_PASS" = "$LUKS_PASS2" ] || { fail_msg 13 "两次口令不一致"; exit 13; }
+        LUKS_PASS=$(whiptail --title "LING OS $LINGOS_VERSION Encryption passphrase" --passwordbox "Set LUKS2 passphrase (at least 8 chars):" 10 64 3>&1 1>&2 2>&3) || { fail_msg 12 "User cancelled passphrase entry"; exit 12; }
+        LUKS_PASS2=$(whiptail --title "LING OS $LINGOS_VERSION Encryption passphrase" --passwordbox "Repeat passphrase:" 10 64 3>&1 1>&2 2>&3) || { fail_msg 12 "User cancelled passphrase entry"; exit 12; }
+        [ "$LUKS_PASS" = "$LUKS_PASS2" ] || { fail_msg 13 "Passphrases do not match"; exit 13; }
         [ ${#LUKS_PASS} -ge 8 ] || { fail_msg 14 "口令至少 8 位"; exit 14; }
     fi
 fi
 log "全盘加密: $ENCRYPT"
 
-# ---------- 隐私等级（L0-L4，默认 L1） ----------
+# ---------- Privacy level (L0-L4, default L1) ----------
 PRIVACY_LEVEL="${LINGOS_PRIVACY_LEVEL:-}"
 for arg in $(cat /proc/cmdline 2>/dev/null || true); do
     case "$arg" in
@@ -148,14 +148,14 @@ for arg in $(cat /proc/cmdline 2>/dev/null || true); do
     esac
 done
 if [ -z "$PRIVACY_LEVEL" ] && [ "$AUTO" != "1" ]; then
-    PRIVACY_LEVEL=$(whiptail --title "LING OS $LINGOS_VERSION 隐私等级" --menu "选择默认隐私等级（安装后可在本地安全设置中修改）：" 16 70 5 \
-        L0 "兼容（功能优先）" L1 "增强（推荐）" L2 "严格" L3 "极端" L4 "MAX（全拒绝）" 3>&1 1>&2 2>&3) || PRIVACY_LEVEL=L1
+    PRIVACY_LEVEL=$(whiptail --title "LING OS $LINGOS_VERSION Privacy level" --menu "Select default privacy level (changeable later in local Security settings):" 16 70 5 \
+        L0 "Compatibility" L1 "Enhanced (recommended)" L2 "Strict" L3 "Extreme" L4 "MAX (deny all)" 3>&1 1>&2 2>&3) || PRIVACY_LEVEL=L1
 fi
 case "$PRIVACY_LEVEL" in L0|L1|L2|L3|L4) ;; *) PRIVACY_LEVEL=L1 ;; esac
-log "隐私等级: $PRIVACY_LEVEL"
+log "Privacy level: $PRIVACY_LEVEL"
 
 # ---------- 分区 ----------
-stage 4 partition "分区（GPT: EFI 512M + root ext4）"
+stage 4 partition "Partitioning (GPT: EFI 512M + root ext4)"
 UEFI=0; [ -d /sys/firmware/efi ] && UEFI=1
 # 清理目标盘上的挂载/签名（Vectras 等可能把预格式化 vfat 分区挂成共享文件夹；
 # 设备 busy 会让 parted mklabel 失败）
@@ -197,7 +197,7 @@ sleep 1
 log "分区完成: $P1 / $P2（UEFI=$UEFI）"
 
 # ---------- 格式化 ----------
-stage 5 format "格式化文件系统"
+stage 5 format "Formatting filesystems"
 if [ "$UEFI" = "1" ]; then
     mkfs.vfat -F32 -n LINGOS_EFI "$P1" >/dev/null
 fi
@@ -207,7 +207,7 @@ if [ "$ENCRYPT" = "1" ]; then
     printf '%s\n' "$LUKS_PASS" | cryptsetup luksOpen "$P2" "$CRYPT_NAME" - || { fail_msg 17 "luksOpen 失败"; exit 17; }
     ROOT_DEV="/dev/mapper/$CRYPT_NAME"
     LUKS_UUID=$(blkid -s UUID -o value "$P2")
-    log "LUKS2 已创建: $P2 ($LUKS_UUID) -> $CRYPT_NAME"
+    log "LUKS2 created: $P2 ($LUKS_UUID) -> $CRYPT_NAME"
 else
     ROOT_DEV="$P2"
 fi
@@ -215,20 +215,21 @@ mkfs.ext4 -F -L LINGOS_ROOT "$ROOT_DEV" >/dev/null
 log "格式化完成"
 
 # ---------- 挂载 ----------
-stage 6 mount "挂载目标磁盘"
+stage 6 mount "Mounting target"
 TARGET=/target
 mkdir -p "$TARGET"
 mount "$ROOT_DEV" "$TARGET"
 if [ "$UEFI" = "1" ]; then mkdir -p "$TARGET/boot/efi"; mount "$P1" "$TARGET/boot/efi"; fi
-log "已挂载 $P2 -> $TARGET"
+log "Mounted $P2 -> $TARGET"
 
 # ---------- 复制 live 根 ----------
-stage 7 copy "复制系统文件"
+stage 7 copy "Copying system files"
 RSYNC_START=$(_now)
 set +e
-rsync -aHAX --one-file-system --info=progress2 --no-inc-recursive \
+rsync -aHAX --one-file-system --info=progress2 --no-inc-recursive --stats \
     --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/run --exclude=/tmp --exclude=/mnt \
     --exclude=/media --exclude=/live --exclude=/cdrom --exclude=/var/cache/apt \
+    --exclude=/usr/share/doc --exclude=/usr/share/man --exclude=/usr/share/info \
     --exclude=/var/log/lingos-install.log --exclude=/run/lingos-install \
     / "$TARGET/" 2>&1 | tr '\r' '\n' | while IFS= read -r line; do
         [ -n "$line" ] || continue
@@ -236,18 +237,21 @@ rsync -aHAX --one-file-system --info=progress2 --no-inc-recursive \
         if [ "${line#*%}" != "$line" ]; then
             pct=$(printf '%s\n' "$line" | grep -oE '[0-9]{1,3}%' | tail -1 | tr -d '%' || true)
             if [ -n "${pct:-}" ]; then
-                LINGOS_STAGE=7
-                write_state "copy" "$(( 60 + pct * 25 / 100 ))" "复制系统文件 ${pct}%"
+                if [ -z "${LAST_PCT:-}" ] || [ "$pct" -le 1 ] || [ "$((pct - LAST_PCT))" -ge 5 ]; then
+                    LINGOS_STAGE=7
+                    write_state "copy" "$(( 60 + pct * 25 / 100 ))" "copying system files ${pct}%"
+                    LAST_PCT=$pct
+                fi
             fi
         fi
     done
 rc=${PIPESTATUS[0]:-$?}
 set -e
-if [ "$rc" != "0" ]; then fail_msg 11 "rsync 复制失败（rc=$rc）"; exit 11; fi
-log "系统文件复制完成（$(( $(_now) - RSYNC_START )) 秒）"
+if [ "$rc" != "0" ]; then fail_msg 11 "rsync copy failed (rc=$rc)"; exit 11; fi
+log "System copy finished in $(( $(_now) - RSYNC_START ))s"
 
 # ---------- GRUB ----------
-stage 8 bootloader "安装 GRUB 引导"
+stage 8 bootloader "Installing GRUB bootloader"
 mkdir -p "$TARGET/proc" "$TARGET/sys" "$TARGET/dev"
 mount --bind /proc "$TARGET/proc" 2>/dev/null || true
 mount --bind /sys  "$TARGET/sys"  2>/dev/null || true
@@ -307,7 +311,7 @@ umount "$TARGET/dev" "$TARGET/sys" "$TARGET/proc" 2>/dev/null || true
 log "GRUB 安装完成（target=$GRUBTARGET uefi=$UEFI）"
 
 # ---------- 配置 ----------
-stage 9 configure "写入配置与首启服务"
+stage 9 configure "Writing configuration and first-boot services"
 ROOT_UUID=$(blkid -s UUID -o value "$ROOT_DEV")
 {
     echo "UUID=$ROOT_UUID  /  ext4  errors=remount-ro  0  1"
@@ -326,7 +330,7 @@ if [ "$ENCRYPT" = "1" ] && [ -n "$LUKS_UUID" ]; then
     chroot "$TARGET" update-initramfs -u -k all >/dev/null 2>&1 || true
     chroot "$TARGET" update-grub >/dev/null 2>&1 || true
     umount "$TARGET/dev" "$TARGET/sys" "$TARGET/proc" 2>/dev/null || true
-    log "加密配置已写入（crypttab/GRUB/initramfs）"
+    log "Encryption configuration written (crypttab/GRUB/initramfs)"
 fi
 echo lingos > "$TARGET/etc/hostname"
 mkdir -p "$TARGET/LINGOS/system/config" "$TARGET/LINGOS/data" "$TARGET/LINGOS/log" \
@@ -355,32 +359,22 @@ chroot "$TARGET" passwd -d root 2>/dev/null || true
 chroot "$TARGET" useradd -m -s /bin/bash -G video,render,input,audio lingos 2>/dev/null \
     || chroot "$TARGET" useradd -m -s /bin/bash lingos 2>/dev/null || true
 
-# 登录密码：手动安装询问；自动安装用 LINGOS_PASSWORD 或随机生成并写入安装日志
-USER_PASS="$LINGOS_PASSWORD"
-if [ -z "$USER_PASS" ] && [ "$AUTO" != "1" ]; then
-    while :; do
-        P1=$(whiptail --title "LING OS $LINGOS_VERSION 用户密码" --passwordbox "设置桌面用户 lingos 的登录密码（至少 6 位）：" 10 64 3>&1 1>&2 2>&3) || { P1=""; break; }
-        [ -n "$P1" ] || break
-        P2=$(whiptail --title "LING OS $LINGOS_VERSION 用户密码" --passwordbox "请再次输入密码：" 10 64 3>&1 1>&2 2>&3) || { P1=""; break; }
-        if [ "$P1" = "$P2" ] && [ "$(printf '%s' "$P1" | wc -c)" -ge 6 ]; then
-            USER_PASS="$P1"; break
-        fi
-        whiptail --title "LING OS $LINGOS_VERSION" --msgbox "两次输入不一致或密码长度不足 6 位，请重试。" 10 60
-    done
-fi
-if [ -z "$USER_PASS" ]; then
-    USER_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 12)
-    log "自动安装：已生成 lingos 登录密码（见安装日志）：$USER_PASS"
-fi
+# First-boot OOBE: temporary password + LightDM autologin into the OOBE session.
+# The OOBE sets the final password, then removes autologin/sudoers and exits.
+USER_PASS=$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 12)
 printf 'lingos:%s\n' "$USER_PASS" | chroot "$TARGET" chpasswd 2>/dev/null || true
-
-# 图形登录（LightDM）+ 首次启动配置（OOBE）；不再使用 tty1 自动登录
+printf '%s\n' "$USER_PASS" > "$TARGET/root/lingos-oobe-password.txt"
+chmod 600 "$TARGET/root/lingos-oobe-password.txt" 2>/dev/null || true
+mkdir -p "$TARGET/etc/sudoers.d" "$TARGET/etc/lightdm/lightdm.conf.d"
+printf 'lingos ALL=(root) NOPASSWD: /usr/local/sbin/lingos-oobe-apply\n' > "$TARGET/etc/sudoers.d/90-lingos-oobe"
+chmod 0440 "$TARGET/etc/sudoers.d/90-lingos-oobe"
+printf '[Seat:*]\nautologin-user=lingos\nautologin-user-timeout=0\nuser-session=lingos-oobe\n' \
+    > "$TARGET/etc/lightdm/lightdm.conf.d/60-lingos-oobe.conf"
+chmod 644 "$TARGET/etc/lightdm/lightdm.conf.d/60-lingos-oobe.conf"
 rm -rf "$TARGET/etc/systemd/system/getty@tty1.service.d"
-chroot "$TARGET" systemctl mask getty@tty1.service >/dev/null 2>&1 || true
+rm -f "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-oobe.service"
 chroot "$TARGET" systemctl enable lightdm >/dev/null 2>&1 \
     || ln -sf /lib/systemd/system/lightdm.service "$TARGET/etc/systemd/system/display-manager.service"
-ln -sf /etc/systemd/system/lingos-oobe.service \
-    "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-oobe.service" 2>/dev/null || true
 # 安装后启动优化：initramfs 精简 + GRUB 快速启动 + mask 慢服务
 mkdir -p "$TARGET/etc/initramfs-tools/conf.d" "$TARGET/etc/default"
 printf 'MODULES=dep\nCOMPRESS=zstd\n' > "$TARGET/etc/initramfs-tools/conf.d/lingos-boot.conf"
@@ -400,11 +394,11 @@ ln -sf /etc/systemd/system/lingos-desktop-report.service \
     "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-desktop-report.service" 2>/dev/null || true
 ln -sf /etc/systemd/system/lingos-boot-report.service \
     "$TARGET/etc/systemd/system/multi-user.target.wants/lingos-boot-report.service" 2>/dev/null || true
-log "桌面用户 lingos + LightDM 图形登录 + 启动优化已配置"
+log "User lingos + LightDM login + first-boot OOBE + boot optimizations configured"
 log "配置写入完成"
 
 # ---------- 完成 ----------
-stage 10 finish "完成，准备重启"
+stage 10 finish "Finished - ready to reboot"
 sync
 umount "$TARGET/boot/efi" 2>/dev/null || true
 umount "$TARGET" 2>/dev/null || true
@@ -418,5 +412,5 @@ if [ "$AUTO" = "1" ]; then
     done
     reboot -f
 else
-    whiptail --title "LING OS $LINGOS_VERSION 安装完成" --msgbox "LING OS 已安装到 $DISK，重启后生效。" 10 60 || true
+    whiptail --title "LING OS $LINGOS_VERSION Installation complete" --msgbox "LING OS has been installed to $DISK. Reboot to start." 10 60 || true
 fi

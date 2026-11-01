@@ -22,3 +22,12 @@
 - [ARCHITECTURE_系统类目.md](ARCHITECTURE_系统类目.md)
 - [PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md)
 - [双语与文档一致性报告.md](双语与文档一致性报告.md)
+
+## 0.10.3 / 0.11 / 0.12 状态
+
+- [项目状态](STATE.md)
+- [路线图](ROADMAP.md)
+- [关键决策](DECISIONS.md)
+- [调研记录](RESEARCH.md)
+- [0.10.1 体验与启动整改计划](LINGOS-0.10.1-体验与启动整改计划.md)
+- [AI Agent 架构](LINGOS-AI-Agent架构.md)

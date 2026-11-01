@@ -1,0 +1,20 @@
+#!/bin/bash
+# OOBE 文本兜底（X 会话内 xterm 或 tty 均可运行）
+set -u
+[ -e /var/lib/lingos/oobe-done ] && exit 0
+TZ=$(whiptail --title "LING OS 首次配置" --menu "选择时区：" 16 60 6 \
+    Asia/Shanghai "中国标准时间" Asia/Tokyo "日本" Europe/London "英国" America/New_York "美国东部" UTC "UTC" 3>&1 1>&2 2>&3) || TZ=Asia/Shanghai
+LEVEL=$(whiptail --title "LING OS 首次配置" --menu "选择隐私等级：" 18 70 5 \
+    L0 "兼容" L1 "增强（推荐）" L2 "严格" L3 "极端" L4 "MAX" 3>&1 1>&2 2>&3) || LEVEL=L1
+while :; do
+    P1=$(whiptail --title "LING OS 首次配置" --passwordbox "设置登录密码（至少 6 位）：" 10 60 3>&1 1>&2 2>&3) || { P1=""; break; }
+    [ -n "$P1" ] || break
+    P2=$(whiptail --title "LING OS 首次配置" --passwordbox "再次输入密码：" 10 60 3>&1 1>&2 2>&3) || { P1=""; break; }
+    if [ "$P1" = "$P2" ] && [ "$(printf '%s' "$P1" | wc -c)" -ge 6 ]; then
+        printf '{"username":"lingos","password":"%s","locale":"zh_CN.UTF-8","timezone":"%s","privacy_level":"%s"}\n' "$P1" "$TZ" "$LEVEL" > /tmp/lingos-oobe-config.json
+        sudo -n /usr/local/sbin/lingos-oobe-apply /tmp/lingos-oobe-config.json || whiptail --title "LING OS" --msgbox "配置写入失败，请查看 /tmp/lingos-oobe.log" 10 60
+        break
+    fi
+    whiptail --title "LING OS 首次配置" --msgbox "密码不一致或少于 6 位，请重试。" 10 60
+done
+exit 0
