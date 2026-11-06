@@ -1,0 +1,19 @@
+[Unit]
+Description=LING OS first boot setup (OOBE)
+After=local-fs.target systemd-user-sessions.service
+Before=lightdm.service display-manager.service getty@tty1.service
+ConditionPathExists=!/var/lib/lingos/oobe-done
+ConditionPathExists=!/etc/lingos-live
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lingos-oobe-session
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=no
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

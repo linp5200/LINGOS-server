@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""LING OS optional feature packs (default lightweight ISO + on-demand packs)."""
+import json
+import os
+import subprocess
+import sys
+
+PACKS_DIR = "/usr/share/lingos/features"
+INSTALLED = "/var/lib/lingos/features.json"
+
+
+def packs():
+    out = []
+    if os.path.isdir(PACKS_DIR):
+        for n in sorted(os.listdir(PACKS_DIR)):
+            if n.endswith(".json"):
+                try:
+                    with open(os.path.join(PACKS_DIR, n), encoding="utf-8") as f:
+                        out.append(json.load(f))
+                except (OSError, ValueError):
+                    pass
+    return out
+
+
+def status():
+    try:
+        with open(INSTALLED, encoding="utf-8") as f:
+            return set(json.load(f))
+    except (OSError, ValueError):
+        return set()
+
+
+def save(ids):
+    os.makedirs("/var/lib/lingos", exist_ok=True)
+    with open(INSTALLED, "w", encoding="utf-8") as f:
+        json.dump(sorted(ids), f)
+
+
+def cmd_list():
+    st = status()
+    for p in packs():
+        print("%-14s %-10s %s" % (p.get("id", "?"), "installed" if p.get("id") in st else "available",
+                                  p.get("name", "")))
+    return 0
+
+
+def cmd_show(pid):
+    for p in packs():
+        if p.get("id") == pid:
+            print(json.dumps(p, ensure_ascii=False, indent=2))
+            return 0
+    print("unknown pack")
+    return 1
+
+
+def cmd_install(pid):
+    for p in packs():
+        if p.get("id") != pid:
+            continue
+        if os.geteuid() != 0:
+            print("install requires root")
+            return 2
+        pkgs = p.get("packages", [])
+        if not pkgs:
+            print("pack has no packages")
+            return 1
+        if p.get("apt_update", True):
+            subprocess.run(["apt-get", "update"], check=False)
+        r = subprocess.run(["apt-get", "install", "-y"] + pkgs)
+        if r.returncode != 0:
+            print("install failed")
+            return r.returncode
+        st = status(); st.add(pid); save(st)
+        print("installed " + pid)
+        return 0
+    print("unknown pack")
+    return 1
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    c = sys.argv[1]
+    if c == "list":
+        return cmd_list()
+    if c == "show" and len(sys.argv) > 2:
+        return cmd_show(sys.argv[2])
+    if c == "install" and len(sys.argv) > 2:
+        return cmd_install(sys.argv[2])
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

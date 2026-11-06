@@ -1,0 +1,24 @@
+name: ci
+
+# 0.13 静态校验 + Web/ACL/设备测试；C 全量编译由 rootfs workflow 承担。
+on:
+  workflow_dispatch:
+  push:
+    branches: ['0.13-dev']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Python 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-yaml
+      - name: 静态校验
+        run: bash scripts/validate-syntax.sh
+      - name: Web/ACL/设备测试
+        run: python3 tests/test_lingos_web.py

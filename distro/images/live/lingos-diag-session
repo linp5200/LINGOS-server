@@ -1,0 +1,20 @@
+#!/bin/bash
+# LING OS 诊断模式：收集日志后进入救援 shell（tty1）
+set -u
+export LINGOS_MODE=diag
+export LINGOS_LOG=/var/log/lingos-diag.log
+LINGOS_LIB=/usr/local/sbin/lingos-log.sh
+[ -f "$LINGOS_LIB" ] && . "$LINGOS_LIB"
+boot_info
+stage 1 diag "收集诊断日志"
+/usr/local/sbin/lingos-diag || true
+stage 2 diag "进入救援 shell"
+cat > /etc/motd <<'MOTD'
+============================================================
+ LING OS 诊断 / 救援模式
+   收集日志: lingos-diag        （会写入共享文件夹/串口）
+   安装系统: lingos-install      （手动选盘）
+   重启:     reboot -f    关机: poweroff -f
+============================================================
+MOTD
+exec bash -i

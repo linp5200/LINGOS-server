@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=LING OS 安全中心
+Comment=隐私等级、审计、AI 工具与应用权限（只读）
+Exec=/usr/local/bin/lingos-security-center
+Icon=preferences-system
+Terminal=false
+Categories=System;Settings;Security;

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=浏览器
+Comment=Web 浏览器；Vectras 软件模拟下启动稍慢，请耐心等待。
+Exec=epiphany
+Icon=web-browser
+Terminal=false
+Categories=Utility;

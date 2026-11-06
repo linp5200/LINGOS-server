@@ -1,0 +1,2 @@
+# LING OS：本地用户可通过安全中心修改隐私等级（脚本内部再做本地会话校验）
+lingos ALL=(root) NOPASSWD: /usr/local/sbin/lingos-security-settings

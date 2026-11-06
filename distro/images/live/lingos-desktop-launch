@@ -1,0 +1,126 @@
+#!/bin/bash
+# LING OS 桌面启动链（0.9.15）
+# 顺序：Wayland(labwc) -> X11(fbdev) -> Xvfb+VNC -> 文本控制台
+# 支持内核参数：lingos.desktop=0 / lingos.session=wayland|x11|vnc|text /
+#               lingos.renderer=gl|pixman / lingos.vnc=1
+set -u
+LOGDIR="$HOME/.local/share"
+mkdir -p "$LOGDIR" 2>/dev/null || true
+LOG="$LOGDIR/lingos-desktop.log"
+exec >>"$LOG" 2>&1
+echo "===== $(date -u +%FT%TZ) lingos-desktop-launch ====="
+CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
+MODE="auto"
+RENDERER="pixman"
+FORCE_VNC=0
+for a in $CMDLINE; do
+  case "$a" in
+    lingos.desktop=0) MODE="text" ;;
+    lingos.session=*) MODE="${a#*=}" ;;
+    lingos.renderer=*) RENDERER="${a#*=}" ;;
+    lingos.vnc=1) FORCE_VNC=1 ;;
+  esac
+done
+export XDG_SESSION_TYPE=wayland
+export MOZ_ENABLE_WAYLAND=1
+export WLR_RENDERER="$RENDERER"
+
+say() {
+  local msg="$1" t
+  printf '%s\n' "$msg"
+  for t in /dev/tty1 /dev/tty0 /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$t" ] && printf '%s\n' "$msg" > "$t" 2>/dev/null || true
+  done
+}
+
+vnc_password() {
+  local pf=/etc/lingos/vnc.pass pw
+  mkdir -p /etc/lingos 2>/dev/null || true
+  if [ ! -s "$pf" ]; then
+    pw=$(tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 10)
+    [ -n "$pw" ] || pw=lingos
+    x11vnc -storepasswd "$pw" "$pf" >/dev/null 2>&1 || true
+    chmod 600 "$pf" 2>/dev/null || true
+    printf '%s\n' "$pw" > /etc/lingos/vnc.password
+    chmod 600 /etc/lingos/vnc.password 2>/dev/null || true
+  fi
+  cat /etc/lingos/vnc.password 2>/dev/null || true
+}
+
+start_vnc() {
+  if ! command -v Xvfb >/dev/null 2>&1 || ! command -v x11vnc >/dev/null 2>&1; then
+    say "LING OS: 缺少 Xvfb/x11vnc，无法启动 VNC 回退；请按 Ctrl+Alt+F2 使用文本控制台"
+    return 1
+  fi
+  pkill -f "Xvfb :9" 2>/dev/null || true
+  Xvfb :9 -screen 0 1024x768x24 -nolisten tcp >/dev/null 2>&1 &
+  sleep 1
+  export DISPLAY=:9
+  command -v openbox-session >/dev/null 2>&1 && openbox-session >/dev/null 2>&1 &
+  command -v xterm >/dev/null 2>&1 && xterm -maximized -fa 'Noto Sans CJK SC' -fs 12 >/dev/null 2>&1 &
+  local pf=/etc/lingos/vnc.pass pw ip
+  pw="$(vnc_password)"
+  x11vnc -display :9 -forever -shared -rfbauth "$pf" -listen 0.0.0.0 -rfbport 5900 -bg -o /var/log/lingos-x11vnc.log >/dev/null 2>&1 || true
+  ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+  [ -n "$ip" ] || ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  say "LING OS 桌面未能启动（无 KMS/图形驱动）。"
+  say "请在同一局域网内用 VNC 客户端访问: $ip:5900"
+  say "VNC 密码: $pw （保存在 /etc/lingos/vnc.password，仅 root 可读）"
+  say "本机 IP: $ip   日志: $LOGDIR/lingos-desktop.log"
+  say "按 Ctrl+Alt+F2 可切换到文本控制台。"
+  mkdir -p /run/lingos-share 2>/dev/null || true
+  for d in /dev/sd*; do
+    [ -b "$d" ] || continue
+    mount -o rw "$d" /run/lingos-share 2>/dev/null || continue
+    printf 'LING OS VNC: %s:5900 password=%s\n' "$ip" "$pw" > /run/lingos-share/lingos-vnc.txt 2>/dev/null || true
+    umount /run/lingos-share 2>/dev/null || true
+    break
+  done
+  wait
+}
+
+try_wayland() {
+  command -v labwc >/dev/null 2>&1 || return 1
+  local t0 dt
+  t0=$(date +%s)
+  labwc >>"$LOGDIR/labwc-boot.log" 2>&1
+  dt=$(( $(date +%s) - t0 ))
+  echo "labwc exited after ${dt}s"
+  if [ "$dt" -ge 8 ]; then exit 0; fi
+  return 1
+}
+
+try_x11() {
+  command -v startx >/dev/null 2>&1 || return 1
+  rm -f /tmp/.X11-unix/X0 2>/dev/null || true
+  startx -- :0 vt1 >>"$LOGDIR/x11-boot.log" 2>&1 &
+  local xp=$! i
+  for i in $(seq 1 20); do
+    sleep 1
+    [ -S /tmp/.X11-unix/X0 ] && break
+    kill -0 "$xp" 2>/dev/null || return 1
+  done
+  if [ ! -S /tmp/.X11-unix/X0 ]; then
+    kill "$xp" 2>/dev/null || true
+    return 1
+  fi
+  wait "$xp"
+  exit 0
+}
+
+if [ "$MODE" = "text" ]; then
+  say "LING OS: 文本模式（lingos.desktop=0）"
+  exec bash -l
+fi
+if [ "$FORCE_VNC" = "1" ]; then
+  start_vnc
+  exit 0
+fi
+case "$MODE" in
+  vnc) start_vnc; exit 0 ;;
+  x11) try_x11; start_vnc; exit 0 ;;
+  wayland) try_wayland; try_x11; start_vnc; exit 0 ;;
+esac
+try_wayland || true
+try_x11 || true
+start_vnc

@@ -1,0 +1,13 @@
+#!/bin/sh
+# LING OS initramfs 收尾标记（init-bottom，live-boot 已挂载根之后）
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in
+    prereqs) prereqs; exit 0 ;;
+esac
+msg="LINGOS-INITRAMFS-BOTTOM root=$(cat /proc/cmdline 2>/dev/null)"
+printf '<6>%s\n' "$msg" > /dev/kmsg 2>/dev/null || true
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$c" ] && printf 'LINGOS-INITRAMFS-BOTTOM\n' > "$c" 2>/dev/null || true
+done
+exit 0

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=终端
+Comment=命令行终端。
+Exec=xterm
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;

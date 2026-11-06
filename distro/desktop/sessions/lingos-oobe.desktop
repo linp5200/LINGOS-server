@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=LING OS 首次配置
+Comment=LING OS first boot setup
+Exec=/usr/local/bin/lingos-oobe-session-x11
+Type=Application
+DesktopNames=LINGOS
+NoDisplay=true

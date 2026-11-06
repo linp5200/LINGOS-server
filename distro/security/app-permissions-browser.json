@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "app": "browser",
+  "network": true,
+  "files": false,
+  "camera": false,
+  "microphone": false,
+  "location": false,
+  "clipboard": true
+}

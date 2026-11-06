@@ -1,0 +1,108 @@
+name: publish-fast
+
+# 并行下载 artifacts（aria2 多连接）后发布 Release，避免单连接慢速
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "images workflow run id（含 ISO artifacts）"
+        required: true
+      tag:
+        description: "Release tag（如 v0.9.12）"
+        required: true
+      include_x86:
+        description: "是否发布 x86_64 ISO（默认 false；x86 构建链修复前不要开启）"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 aria2
+        run: sudo apt-get update -qq && sudo apt-get install -y aria2 >/dev/null
+
+      - name: 并行下载 ISO artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          INCLUDE_X86: ${{ inputs.include_x86 }}
+        run: |
+          mkdir -p /tmp/isos
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${{ inputs.run_id }}/artifacts?per_page=100" -o /tmp/artifacts.json
+          python3 - <<'PY'
+          import json, os
+          d = json.load(open('/tmp/artifacts.json'))
+          tag = os.environ.get('TAG', '').lower()
+          include_x86 = str(os.environ.get('INCLUDE_X86', 'false')).lower() in ('1', 'true', 'yes')
+          with open('/tmp/arts.txt', 'w') as f:
+              for a in d.get('artifacts', []):
+                  if not a['name'].startswith('lingos-installer-') or a.get('expired'):
+                      continue
+                  # alpha/beta/rc：x86 构建仍不稳定，只发布 arm64
+                  # x86 构建链修复前，默认不发布 x86（避免发布损坏 ISO）
+                  if not include_x86 and ('x86' in a['name'] or 'amd64' in a['name']):
+                      continue
+                  f.write(f"{a['id']} {a['name']}\n")
+          print(open('/tmp/arts.txt').read())
+          PY
+          while read -r id name; do
+            echo "== $name ($id)"
+            LOC=$(curl -sI -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/$id/zip" \
+              | grep -i '^location:' | tr -d '\r' | sed 's/^[Ll]ocation: //')
+            echo "location head: ${LOC:0:80}"
+            aria2c -x 8 -s 8 -k 1M --file-allocation=none --console-log-level=warn \
+              -d /tmp/isos -o "$name.zip" "$LOC"
+            unzip -o -q "/tmp/isos/$name.zip" -d /tmp/isos
+            rm -f "/tmp/isos/$name.zip"
+          done < /tmp/arts.txt
+          # 统一 arm64 资产名为 aarch64（与历史 Release/文档一致）
+          if [ -f /tmp/isos/lingos-installer-arm64.iso ] && [ ! -f /tmp/isos/lingos-installer-aarch64.iso ]; then
+            mv /tmp/isos/lingos-installer-arm64.iso /tmp/isos/lingos-installer-aarch64.iso
+          fi
+          find /tmp/isos -name '*.iso' -ls
+          ls /tmp/isos/*.iso >/dev/null 2>&1 || { echo "错误：没有可发布的 ISO（artifacts 过滤/下载为空）"; exit 1; }
+
+      - name: 拆分 >2GiB 资产 + 生成校验
+        run: |
+          mkdir -p /tmp/rel
+          for f in $(find /tmp/isos -name "*.iso"); do
+            sz=$(stat -c%s "$f")
+            base=$(basename "$f")
+            sha=$(sha256sum "$f" | awk '{print $1}')
+            if [ "$sz" -gt 1992294400 ]; then
+              split -b 1900M -d -a 1 "$f" "/tmp/rel/$base.part"
+              {
+                echo "文件名: $base"
+                echo "原始大小: $sz 字节"
+                echo "合并后 sha256: $sha"
+                echo "合并方法（Termux/VTERM）: cat $base.part* > $base"
+                echo "校验: sha256sum $base"
+              } > "/tmp/rel/$base.merge.txt"
+            else
+              cp -n "$f" /tmp/rel/
+            fi
+          done
+          rm -f /tmp/isos/*.iso
+          ls /tmp/rel/*.iso >/dev/null 2>&1 || ls /tmp/rel/*.part0 >/dev/null 2>&1 || { echo "错误：/tmp/rel 为空"; exit 1; }
+          cd /tmp/rel && sha256sum * > SHA256SUMS.txt 2>/dev/null || true
+          [ -s SHA256SUMS.txt ] || { echo "错误：SHA256SUMS 为空"; exit 1; }
+          ls -lh /tmp/rel
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: LING OS ${{ inputs.tag }}
+          files: |
+            /tmp/rel/*
+          generate_release_notes: true
+          overwrite_files: true
+          prerelease: ${{ contains(inputs.tag, 'alpha') || contains(inputs.tag, 'beta') || contains(inputs.tag, 'rc') }}

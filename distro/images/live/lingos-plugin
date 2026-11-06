@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""LING OS 插件管理（本地、签名校验、权限声明）。
+用法：
+  lingos-plugin list
+  lingos-plugin validate <manifest.json>
+  lingos-plugin enable <id> | disable <id>
+  lingos-plugin install <dir>
+"""
+import glob
+import json
+import os
+import shutil
+import sys
+
+PLUGIN_DIRS = ["/opt/lingos/plugins", "/etc/lingos/plugins"]
+REQUIRED = ["id", "name", "version", "entry", "capabilities", "permissions", "signature", "min_host"]
+FORBIDDEN = {"system", "security", "root", "kernel"}
+
+
+def manifests():
+    for d in PLUGIN_DIRS:
+        for p in glob.glob(os.path.join(d, "*/manifest.json")):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    m = json.load(f)
+                m["_path"] = p
+                yield m
+            except (OSError, ValueError):
+                continue
+
+
+def validate(m):
+    missing = [k for k in REQUIRED if k not in m]
+    if missing:
+        return False, "missing: " + ", ".join(missing)
+    if not str(m.get("signature", "")).strip() or m.get("signature") in ("unsigned", "none"):
+        return False, "unsigned plugin refused"
+    caps = set(m.get("capabilities", [])) | set(m.get("permissions", []))
+    bad = caps & FORBIDDEN
+    if bad:
+        return False, "forbidden: " + ", ".join(sorted(bad))
+    return True, "ok"
+
+
+def cmd_list():
+    for m in manifests():
+        ok, why = validate(m)
+        print("%-24s %-10s %s" % (m.get("id", "?"), m.get("version", "?"), "OK" if ok else "INVALID: " + why))
+    return 0
+
+
+def cmd_validate(path):
+    with open(path, encoding="utf-8") as f:
+        m = json.load(f)
+    ok, why = validate(m)
+    print(json.dumps({"ok": ok, "reason": why}, ensure_ascii=False))
+    return 0 if ok else 1
+
+
+def cmd_toggle(pid, enable):
+    src = None
+    for m in manifests():
+        if m.get("id") == pid:
+            src = m["_path"]
+            break
+    if not src:
+        print("plugin not found")
+        return 1
+    os.makedirs("/etc/lingos/plugins/enabled", exist_ok=True)
+    link = os.path.join("/etc/lingos/plugins/enabled", pid)
+    if enable:
+        ok, why = validate(json.load(open(src, encoding="utf-8")))
+        if not ok:
+            print("refuse: " + why)
+            return 1
+        if os.path.lexists(link):
+            os.unlink(link)
+        os.symlink(os.path.dirname(src), link)
+    else:
+        if os.path.lexists(link):
+            os.unlink(link)
+    print(("enabled " if enable else "disabled ") + pid)
+    return 0
+
+
+def cmd_install(path):
+    if os.geteuid() != 0:
+        print("install requires root")
+        return 2
+    man = os.path.join(path, "manifest.json")
+    if not os.path.exists(man):
+        print("missing manifest.json")
+        return 2
+    with open(man, encoding="utf-8") as f:
+        m = json.load(f)
+    ok, why = validate(m)
+    if not ok:
+        print("invalid: " + why)
+        return 1
+    dst = os.path.join("/opt/lingos/plugins", m["id"])
+    os.makedirs("/opt/lingos/plugins", exist_ok=True)
+    if os.path.exists(dst):
+        shutil.rmtree(dst)
+    shutil.copytree(path, dst)
+    print("installed " + dst)
+    return 0
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    cmd = sys.argv[1]
+    if cmd == "list":
+        return cmd_list()
+    if cmd == "validate" and len(sys.argv) > 2:
+        return cmd_validate(sys.argv[2])
+    if cmd in ("enable", "disable") and len(sys.argv) > 2:
+        return cmd_toggle(sys.argv[2], cmd == "enable")
+    if cmd == "install" and len(sys.argv) > 2:
+        return cmd_install(sys.argv[2])
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,24 @@
+#!/bin/bash
+# LING OS 电源/会话菜单（Wayland 用 wofi，X11 用 rofi）
+ACTION="$1"
+if [ -z "$ACTION" ]; then
+    if [ -n "$WAYLAND_DISPLAY" ] && command -v wofi >/dev/null 2>&1; then
+        ACTION=$(printf '锁屏\n注销\n重启\n关机\n' | wofi --dmenu --prompt "电源")
+    elif command -v rofi >/dev/null 2>&1; then
+        ACTION=$(printf '锁屏\n注销\n重启\n关机\n' | rofi -dmenu -p "电源")
+    fi
+fi
+case "$ACTION" in
+    锁屏|lock)
+        if [ -n "$WAYLAND_DISPLAY" ] && command -v swaylock >/dev/null 2>&1; then
+            swaylock -f -c 12151a
+        elif command -v i3lock >/dev/null 2>&1; then
+            i3lock -c 12151a
+        fi
+        ;;
+    注销|logout)
+        if [ -n "$XDG_SESSION_ID" ]; then loginctl terminate-session "$XDG_SESSION_ID"; else pkill -KILL -u "$USER"; fi
+        ;;
+    重启|reboot) systemctl reboot ;;
+    关机|poweroff) systemctl poweroff ;;
+esac

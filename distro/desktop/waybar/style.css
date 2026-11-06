@@ -5,3 +5,5 @@ window#waybar{background:#0B0D10;color:#E8EAED;border-bottom:1px solid rgba(255,
 #custom-ai{color:#3DDC97;padding:0 12px;border:1px solid rgba(61,220,151,.25);border-radius:999px;margin:4px 0}
 #network,#wireplumber,#battery,#tray{padding:0 8px;color:#9AA3AF}
 #taskbar button{border-radius:6px;padding:0 8px}
+/* LING OS: 轻量过渡动画 */
+* { transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease; }

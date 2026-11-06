@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""LING OS 审计日志（哈希链）。用法：
+  lingos-audit log <action> <detail>
+  lingos-audit verify
+  lingos-audit export [file]
+"""
+import argparse, datetime, hashlib, json, os, sys
+
+AUDIT = "/var/log/lingos/audit.log"
+HEAD = "/var/log/lingos/audit.head"
+GENESIS = "0" * 64
+
+
+def _read_head():
+    try:
+        with open(HEAD, encoding="utf-8") as f:
+            return f.read().strip() or GENESIS
+    except FileNotFoundError:
+        return GENESIS
+
+
+def log(action, detail):
+    os.makedirs(os.path.dirname(AUDIT), exist_ok=True)
+    prev = _read_head()
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rec = {"ts": ts, "action": action, "detail": detail, "prev": prev}
+    rec["hash"] = hashlib.sha256(json.dumps(rec, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    with open(AUDIT, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    with open(HEAD, "w", encoding="utf-8") as f:
+        f.write(rec["hash"] + "\n")
+    return rec["hash"]
+
+
+def verify():
+    prev = GENESIS
+    bad = 0
+    n = 0
+    try:
+        fh = open(AUDIT, encoding="utf-8")
+    except FileNotFoundError:
+        print("no audit log")
+        return 0
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            n += 1
+            rec = json.loads(line)
+            h = rec.pop("hash", "")
+            calc = hashlib.sha256(json.dumps(rec, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+            if rec.get("prev") != prev or h != calc:
+                bad += 1
+            prev = h
+    print(f"records={n} bad={bad}")
+    return 0 if bad == 0 else 1
+
+
+def export(path):
+    data = []
+    try:
+        with open(AUDIT, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    data.append(json.loads(line))
+    except FileNotFoundError:
+        pass
+    out = path or "/var/log/lingos/audit-export.json"
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    print(out)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd", required=True)
+    a = sub.add_parser("log"); a.add_argument("action"); a.add_argument("detail", nargs="?", default="")
+    sub.add_parser("verify")
+    e = sub.add_parser("export"); e.add_argument("file", nargs="?")
+    args = p.parse_args()
+    if args.cmd == "log":
+        print(log(args.action, args.detail)); return 0
+    if args.cmd == "verify":
+        return verify()
+    if args.cmd == "export":
+        export(args.file); return 0
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

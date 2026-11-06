@@ -1,0 +1,14 @@
+{
+  "id": "example.hello",
+  "name": "Hello Plugin",
+  "version": "1.0.0",
+  "entry": "main.sh",
+  "capabilities": [
+    "notifications"
+  ],
+  "permissions": [
+    "notifications"
+  ],
+  "signature": "dev-example-signature-1234567890",
+  "min_host": "0.12"
+}

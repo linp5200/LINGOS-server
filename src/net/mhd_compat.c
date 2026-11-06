@@ -521,7 +521,10 @@ MHD_Daemon *MHD_start_daemon(unsigned int flags, unsigned short port,
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = htonl(INADDR_ANY);
+    /* 0.13: loopback by default; LAN exposure is opt-in via LINGOS_LAN=1 */
+    const char *lan_env = getenv("LINGOS_LAN");
+    sa.sin_addr.s_addr = (lan_env && strcmp(lan_env, "1") == 0)
+                             ? htonl(INADDR_ANY) : htonl(INADDR_LOOPBACK);
     sa.sin_port = htons(port);
 
     if (bind(d->listen_fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) {

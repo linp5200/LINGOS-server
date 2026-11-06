@@ -1,0 +1,19 @@
+{
+  "name": "LING OS Web 桌面",
+  "short_name": "LING OS",
+  "description": "居家安防 · 敏感人物安防 · 数据保护 · 智能控制",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "icons": [
+    {
+      "src": "/assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

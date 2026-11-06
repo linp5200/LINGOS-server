@@ -1,5 +1,7 @@
 # LING OS · AI 原生 Linux 设备系统
 
+> **0.13 路线变更（2026-11-06）**：停止 ISO 主线，转 Termux + proot rootfs；桌面转 Web（8080，本地/局域网，全屏 PWA，浅/深色，DSH/终末地风格）；设备接入米家/MQTT/HA。详见 [docs/LINGOS-0.13-路线与实施计划.md](docs/LINGOS-0.13-路线与实施计划.md)。本 README 其余章节为 0.9 历史资料。
+
 > **OS 为体 · Agent 为用** —— 一套跑在 PC / 迷你主机上的 AI 原生 Linux：
 > 底面是标准 Linux（Wayland 桌面、系统服务、包管理、OTA），上面是常驻的系统级 AI 助理（诺玛式），
 > 再叠加智能家居中枢与全端客户端；外部内容通过插件接入，被解析、记忆、检索、行动。

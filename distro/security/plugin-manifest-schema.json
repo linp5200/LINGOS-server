@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LING OS Plugin Manifest",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version",
+    "entry",
+    "capabilities",
+    "permissions",
+    "signature",
+    "min_host"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "entry": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "network",
+          "files",
+          "device",
+          "clipboard",
+          "notifications"
+        ]
+      }
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 16
+    },
+    "min_host": {
+      "type": "string"
+    },
+    "max_host": {
+      "type": "string"
+    }
+  }
+}

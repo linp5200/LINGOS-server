@@ -5941,6 +5941,8 @@ class _VoiceHTTPHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         # 【0.4.3 alert】alertd 新预警上报 → 广播（alert_event）
         if self.path.startswith("/api/alert_event"):
+            if not self._check():
+                return
             try:
                 ln = int(self.headers.get("Content-Length", 0))
                 data = json.loads(self.rfile.read(ln).decode("utf-8"))
@@ -5970,6 +5972,8 @@ class _VoiceHTTPHandler(BaseHTTPRequestHandler):
             return
         # 【0.2.2 vision】visiond 检测事件上报 → 广播 App（vision_event）
         if self.path.startswith("/api/vision_event"):
+            if not self._check():
+                return
             try:
                 ln = int(self.headers.get("Content-Length", 0))
                 data = json.loads(self.rfile.read(ln).decode("utf-8"))
@@ -6053,7 +6057,11 @@ class _VoiceHTTPHandler(BaseHTTPRequestHandler):
 def start_voice_http_server():
     try:
         from http.server import HTTPServer
-        srv = HTTPServer(("0.0.0.0", AUDIO_HTTP_PORT), _VoiceHTTPHandler)
+        # 0.13: bind loopback by default; LAN audio requires an explicit bind
+        # address (and the token check above). INADDR_ANY exposed unauthenticated
+        # alert/vision endpoints to the whole LAN.
+        bind_addr = os.environ.get("LINGOS_AUDIO_BIND", "127.0.0.1").strip() or "127.0.0.1"
+        srv = HTTPServer((bind_addr, AUDIO_HTTP_PORT), _VoiceHTTPHandler)
         logger.info("Voice HTTP server on :%d", AUDIO_HTTP_PORT)
         srv.serve_forever()
     except Exception as e:

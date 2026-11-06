@@ -1,0 +1,40 @@
+#!/bin/bash
+# LING OS rescue tools (boot GRUB recovery entry into rescue.target, then run this)
+set -u
+[ "$(id -u)" = "0" ] || { echo "Run as root"; exit 1; }
+ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null | head -1 || true)
+while :; do
+    CHOICE=$(whiptail --title "LING OS Recovery" --menu "Rescue tools:" 20 72 7 \
+        root-shell "Open a root shell" \
+        reset-password "Reset password for user lingos" \
+        fsck "Check the root filesystem" \
+        logs "Collect logs to /var/log/lingos-recovery.log" \
+        reboot "Reboot" \
+        poweroff "Power off" 3>&1 1>&2 2>&3) || exit 0
+    case "$CHOICE" in
+        root-shell) exec /bin/bash -l ;;
+        reset-password)
+            P1=$(whiptail --title "Reset password" --passwordbox "New password (>=6 chars):" 10 60 3>&1 1>&2 2>&3) || continue
+            P2=$(whiptail --title "Reset password" --passwordbox "Repeat password:" 10 60 3>&1 1>&2 2>&3) || continue
+            if [ "$P1" = "$P2" ] && [ "$(printf '%s' "$P1" | wc -c)" -ge 6 ]; then
+                printf 'lingos:%s\n' "$P1" | chpasswd && whiptail --title "LING OS" --msgbox "Password updated for lingos." 10 60
+            else
+                whiptail --title "LING OS" --msgbox "Passwords do not match or too short." 10 60
+            fi
+            ;;
+        fsck)
+            if [ -n "$ROOT_DEV" ]; then
+                systemctl isolate rescue.target 2>/dev/null || true
+                fsck -f "$ROOT_DEV" || true
+            fi
+            whiptail --title "LING OS" --msgbox "Filesystem check finished." 10 60
+            ;;
+        logs)
+            OUT=/var/log/lingos-recovery.log
+            { echo "=== recovery ==="; date -u; uname -a; lsblk; cat /proc/cmdline; journalctl -b --no-pager -n 500 2>/dev/null; } > "$OUT" 2>&1
+            whiptail --title "LING OS" --msgbox "Logs written to $OUT" 10 60
+            ;;
+        reboot) systemctl reboot ;;
+        poweroff) systemctl poweroff ;;
+    esac
+done

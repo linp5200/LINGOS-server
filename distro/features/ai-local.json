@@ -1,0 +1,9 @@
+{
+  "id": "ai-local",
+  "name": "本地 AI 模型",
+  "description": "离线推理运行时与可选模型（需较大下载）",
+  "packages": [
+    "python3-llama-cpp"
+  ],
+  "apt_update": true
+}

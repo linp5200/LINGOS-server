@@ -1,0 +1,13 @@
+#!/bin/bash
+# OOBE X session（LightDM 自动登录 lingos）；GTK 失败时用 xterm TUI 兜底
+[ -e /var/lib/lingos/oobe-done ] && exit 0
+[ -e /etc/lingos-live ] && exit 0
+if command -v lingos-oobe >/dev/null 2>&1; then
+    /usr/local/bin/lingos-oobe || true
+fi
+if [ ! -e /var/lib/lingos/oobe-done ]; then
+    if command -v xterm >/dev/null 2>&1; then
+        xterm -fa 'Noto Sans Mono' -fs 11 -e /usr/local/bin/lingos-oobe-tui || true
+    fi
+fi
+exit 0

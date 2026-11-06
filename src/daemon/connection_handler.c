@@ -152,8 +152,13 @@ void connection_revoke_token(const char *token) {
 #define MAX_TOKEN_STORE 128
 
 static int token_file_save_all(const char *json_buf) {
-    FILE *fp = fopen(TOKEN_FILE_PATH, "w");
-    if (!fp) return -1;
+    /* 0600: tokens are bearer credentials; the old fopen("w") inherited
+     * umask 022 -> 0644, readable by every local user. */
+    int fd = open(TOKEN_FILE_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return -1;
+    (void)fchmod(fd, 0600);   /* existing 0644 file: tighten in place */
+    FILE *fp = fdopen(fd, "w");
+    if (!fp) { close(fd); return -1; }
     size_t n = fwrite(json_buf, 1, strlen(json_buf), fp);
     fclose(fp);
     return (n == strlen(json_buf)) ? 0 : -1;
@@ -226,8 +231,7 @@ void connection_store_token(const char *token, time_t ttl_seconds) {
 }
 
 int connection_verify_token(const char *token) {
-    if (!token || token[0] == '\0') return 0;
-    /* 读文件（跨进程） */
+    if (!token || token[0] == '\0' || strlen(token) > 512) return 0;
     char file_buf[16384];
     FILE *rf = fopen(TOKEN_FILE_PATH, "r");
     if (!rf) {
@@ -237,23 +241,33 @@ int connection_verify_token(const char *token) {
     size_t n = fread(file_buf, 1, sizeof(file_buf) - 1, rf);
     file_buf[n] = '\0';
     fclose(rf);
-    /* 简易解析：查 token 子串 + 邻近 revoked/expires */
-    char *pos = strstr(file_buf, token);
-    if (pos) {
-        long expires = 0;
-        int revoked = 0;
-        char *e = strstr(pos, "expires_at");
-        if (e) sscanf(e, "expires_at\":%ld", &expires);
-        char *r = strstr(pos, "revoked");
-        if (r) revoked = (strstr(r, "\":1") != NULL);
-        if (!revoked && expires > time(NULL)) {
-            return 1;
-        }
-        LOG_WARN_T("Connection", "VerifyToken", "ExpiredOrRevoked", "expires=%ld now=%ld revoked=%d", expires, (long)time(NULL), revoked);
+
+    /* Strict JSON parse. The old code used strstr(file_buf, token), so a
+     * request body of "token" matched the JSON *key* and authenticated as
+     * any live token. Compare the value exactly and validate expiry/revoke. */
+    cJSON *arr = cJSON_Parse(file_buf);
+    if (!arr) {
+        LOG_WARN_T("Connection", "VerifyToken", "BadJson", "tokens.json is not valid JSON");
         return 0;
     }
-    LOG_WARN_T("Connection", "VerifyToken", "NotInFile", "token not found in file");
-    return 0;
+    int ok = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, arr) {
+        cJSON *tk = cJSON_GetObjectItem(item, "token");
+        if (!cJSON_IsString(tk) || !tk->valuestring) continue;
+        if (strcmp(tk->valuestring, token) != 0) continue;
+        cJSON *ex = cJSON_GetObjectItem(item, "expires_at");
+        cJSON *rv = cJSON_GetObjectItem(item, "revoked");
+        long expires = cJSON_IsNumber(ex) ? (long)ex->valuedouble : 0;
+        int revoked = cJSON_IsNumber(rv) ? (int)rv->valuedouble : 0;
+        if (!revoked && expires > (long)time(NULL)) ok = 1;
+        else LOG_WARN_T("Connection", "VerifyToken", "ExpiredOrRevoked",
+                        "expires=%ld now=%ld revoked=%d", expires, (long)time(NULL), revoked);
+        break;
+    }
+    cJSON_Delete(arr);
+    if (!ok) LOG_WARN_T("Connection", "VerifyToken", "NotInFile", "token not found or expired");
+    return ok;
 }
 
 void connection_revoke_token_store(const char *token) {

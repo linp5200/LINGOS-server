@@ -14,10 +14,16 @@
     <windowRule identifier="lingos-kiosk" serverDecoration="no" skipTaskbar="yes"/>
   </windowRules>
   <keyboard>
-    <keybind key="Super_L"><action name="Execute" command="wofi --show drun"/></keybind>
-    <keybind key="Super-Return"><action name="Execute" command="lingos-kiosk"/></keybind>
+    <keybind key="Super_L"><action name="Execute" command="wofi --show drun --width 720 --height 480"/></keybind>
+    <keybind key="Super-d"><action name="Execute" command="wofi --show drun --width 720 --height 480"/></keybind>
+    <keybind key="Super-e"><action name="Execute" command="pcmanfm"/></keybind>
+    <keybind key="Super-b"><action name="Execute" command="epiphany"/></keybind>
+    <keybind key="Super-Return"><action name="Execute" command="foot"/></keybind>
+    <keybind key="Super-m"><action name="Iconify"/></keybind>
+    <keybind key="A-Tab"><action name="NextWindow"/></keybind>
+    <keybind key="Super-l"><action name="Execute" command="lingos-power-menu lock"/></keybind>
+    <keybind key="Super-p"><action name="Execute" command="lingos-power-menu"/></keybind>
     <keybind key="Super-Q"><action name="Close"/></keybind>
     <keybind key="Super-F"><action name="ToggleFullscreen"/></keybind>
-    <keybind key="Super-Space"><action name="Execute" command="lingos-assistant"/></keybind>
   </keyboard>
 </labwc_config>

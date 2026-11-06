@@ -1,0 +1,4 @@
+#!/bin/sh
+# 打印 LING OS 版本/edition/架构
+cat /etc/lingos-image-info 2>/dev/null || true
+[ -f /etc/lingos-version ] && cat /etc/lingos-version 2>/dev/null || true

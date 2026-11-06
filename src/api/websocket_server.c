@@ -154,15 +154,21 @@ static void ws_base64(const unsigned char *in, size_t len, char *out, size_t out
     if (o < out_size) out[o] = '\0';
 }
 
-static void ws_accept(const char *key, char *out, size_t out_size) {
+static int ws_accept(const char *key, char *out, size_t out_size) {
     const char *guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    size_t klen = strlen(key);
-    unsigned char buf[256];
+    size_t klen = key ? strlen(key) : 0;
+    /* RFC 6455: Sec-WebSocket-Key is base64(16 bytes) = 24 chars.
+     * Reject anything else before copying: the old code memcpy'd an
+     * attacker-controlled HTTP header into a fixed 256-byte stack buffer,
+     * giving an unauthenticated remote stack overflow on port 2939. */
+    if (!key || !out || out_size < 2 || klen != 24) return -1;
+    unsigned char buf[24 + 36];
     memcpy(buf, key, klen);
-    memcpy(buf + klen, guid, strlen(guid));
+    memcpy(buf + klen, guid, 36);
     unsigned char digest[20];
-    ws_sha1(buf, klen + strlen(guid), digest);
+    ws_sha1(buf, klen + 36, digest);
     ws_base64(digest, 20, out, out_size);
+    return 0;
 }
 
 /* ============================================================
@@ -172,11 +178,15 @@ static void ws_accept(const char *key, char *out, size_t out_size) {
  * ============================================================ */
 
 
-static void ws_handshake(int fd, const char *key) {
+static int ws_handshake(int fd, const char *key) {
     char response[512];
     char key_b64[40];
+    memset(key_b64, 0, sizeof(key_b64));
     /* RFC 6455: SHA1(key + GUID) base64——用已有 ws_accept（ws_sha1/ws_base64 正确实现） */
-    ws_accept(key, key_b64, sizeof(key_b64));
+    if (ws_accept(key, key_b64, sizeof(key_b64)) != 0) {
+        LOG_WARN_T("WebSocket", "Handshake", "BadKey", "invalid Sec-WebSocket-Key length");
+        return -1;
+    }
     safe_snprintf(response, sizeof(response),
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: websocket\r\n"
@@ -185,6 +195,7 @@ static void ws_handshake(int fd, const char *key) {
         key_b64);
     write(fd, response, strlen(response));
     LOG_DEBUG_T("WebSocket", "Handshake", "OK", "handshake completed for fd=%d", fd);
+    return 0;
 }
 
 /* ============================================================
@@ -986,7 +997,10 @@ static void handle_client(void *argp) {
     if (end) *end = '\0';
 
     /* 执行握手 */
-    ws_handshake(client_fd, key);
+    if (ws_handshake(client_fd, key) != 0) {
+        close(client_fd);
+        return;
+    }
 
     /* 添加客户端 */
     ws_client_t *client = add_client(client_fd);
@@ -1115,7 +1129,12 @@ static void* ws_loop(void *arg) {
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
+    /* 0.13: default loopback. LAN exposure is opt-in via LINGOS_LAN=1
+     * (and still requires a token); the old INADDR_ANY default exposed an
+     * unauthenticated WS port to every LAN. */
+    const char *lan_env = getenv("LINGOS_LAN");
+    addr.sin_addr.s_addr = (lan_env && strcmp(lan_env, "1") == 0)
+                               ? htonl(INADDR_ANY) : htonl(INADDR_LOOPBACK);
     addr.sin_port = htons(port_config_get(PORT_WS));  // 【2026-08-22】端口可配（port 指令族）
 
     if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {

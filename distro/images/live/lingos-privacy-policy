@@ -1,0 +1,99 @@
+#!/bin/bash
+# 应用隐私等级到系统（开机执行）：sysctl / nftables / DNS / MAC 随机化
+set -u
+POLICY=/etc/lingos/security-policy.json
+LEVEL=$(python3 -c 'import json;print(json.load(open("'"$POLICY"'")).get("privacy_level","L1"))' 2>/dev/null || true)
+case "$LEVEL" in L0|L1|L2|L3|L4) ;; *) LEVEL=L1 ;; esac
+mkdir -p /var/log/lingos /etc/lingos /etc/nftables.d /etc/sysctl.d /etc/NetworkManager/conf.d /etc/systemd/resolved.conf.d /etc/modprobe.d /etc/udev/rules.d /run/lingos 2>/dev/null || true
+flag() { python3 -c 'import json,sys
+try:
+ d=json.load(open("/etc/lingos/security-policy.json"))
+except Exception:
+ d={}
+print(d.get("flags",{}).get(sys.argv[1],"on"))' "$1" 2>/dev/null || echo on; }
+F_CAM=$(flag camera); F_MIC=$(flag microphone); F_USB=$(flag usb); F_NET=$(flag network); F_LOC=$(flag location)
+printf '{"camera":"%s","microphone":"%s","usb":"%s","network":"%s","location":"%s"}\n' \
+    "$F_CAM" "$F_MIC" "$F_USB" "$F_NET" "$F_LOC" > /run/lingos-privacy-flags.json 2>/dev/null || true
+# 设备开关：默认全部 on；仅当用户在本地安全中心显式关闭时生效
+if [ "$F_CAM" = "off" ]; then printf 'blacklist uvcvideo\n' > /etc/modprobe.d/lingos-camera.conf; modprobe -r uvcvideo 2>/dev/null || true; else rm -f /etc/modprobe.d/lingos-camera.conf; fi
+if [ "$F_MIC" = "off" ]; then printf 'blacklist snd_usb_audio\n' > /etc/modprobe.d/lingos-mic.conf; else rm -f /etc/modprobe.d/lingos-mic.conf; fi
+if [ "$F_USB" = "off" ]; then printf 'SUBSYSTEM=="usb", ATTR{authorized}="0"\n' > /etc/udev/rules.d/99-lingos-usb.rules; udevadm control --reload-rules 2>/dev/null || true; udevadm trigger 2>/dev/null || true; else rm -f /etc/udev/rules.d/99-lingos-usb.rules; fi
+if [ "$F_LOC" = "off" ]; then touch /run/lingos/location-off; else rm -f /run/lingos/location-off; fi
+/usr/local/bin/lingos-audit log privacy-apply "level=$LEVEL camera=$F_CAM mic=$F_MIC usb=$F_USB net=$F_NET loc=$F_LOC" >/dev/null 2>&1 || true
+
+cat > /etc/sysctl.d/99-lingos-privacy.conf <<EOF
+kernel.kptr_restrict=2
+kernel.dmesg_restrict=1
+kernel.yama.ptrace_scope=2
+kernel.unprivileged_bpf_disabled=1
+kernel.kexec_load_disabled=1
+net.ipv6.conf.all.use_tempaddr=2
+net.ipv6.conf.default.use_tempaddr=2
+EOF
+sysctl -q -p /etc/sysctl.d/99-lingos-privacy.conf 2>/dev/null || true
+
+# DNS over TLS（systemd-resolved）
+if [ "$LEVEL" != "L0" ]; then
+  cat > /etc/systemd/resolved.conf.d/99-lingos.conf <<EOF
+[Resolve]
+DNS=1.1.1.1#cloudflare-dns.com 8.8.8.8#dns.google
+DNSOverTLS=yes
+DNSSEC=allow-downgrade
+EOF
+else
+  rm -f /etc/systemd/resolved.conf.d/99-lingos.conf 2>/dev/null || true
+fi
+
+# MAC 随机化
+cat > /etc/NetworkManager/conf.d/99-lingos-privacy.conf <<EOF
+[device]
+wifi.scan-rand-mac-address=yes
+[connection]
+wifi.cloned-mac-address=stable
+ethernet.cloned-mac-address=stable
+EOF
+
+# nftables：默认拒绝入站；L2+ 更严格出站
+if command -v nft >/dev/null 2>&1; then
+  case "$LEVEL" in
+    L0|L1)
+      RULES='table inet lingos {
+  chain input { type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif lo accept
+    ip protocol icmp accept
+    ip6 nexthdr ipv6-icmp accept
+    udp dport 68 accept
+    # VNC 兜底（0.9.15+）：仅 L0/L1 允许局域网 VNC；更高等级需显式放开
+    tcp dport 5900 accept
+  }
+  chain forward { type filter hook forward priority 0; policy drop; }
+}'
+      ;;
+    *)
+      RULES='table inet lingos {
+  chain output { type filter hook output priority 0; policy drop;
+    oif lo accept
+    ct state established,related accept
+    udp dport 53 accept
+    tcp dport 443 accept
+  }
+  chain input { type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif lo accept
+  }
+  chain forward { type filter hook forward priority 0; policy drop; }
+}'
+      ;;
+  esac
+  printf '%s\n' "$RULES" > /etc/nftables.d/lingos.nft
+  nft flush ruleset 2>/dev/null || true
+  nft -f /etc/nftables.d/lingos.nft 2>/dev/null || true
+  if [ "$F_NET" = "off" ]; then
+    nft add chain inet lingos output '{ type filter hook output priority 0; policy accept; }' 2>/dev/null || true
+    nft add rule inet lingos output oifname != "lo" drop 2>/dev/null || true
+  fi
+fi
+
+echo "$LEVEL" > /run/lingos-privacy-level 2>/dev/null || true
+echo "applied level=$LEVEL"

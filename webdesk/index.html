@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>LING OS · Web 桌面</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <div class="login-card">
+    <div class="brand"><span class="brand-mark">L</span><div><b>LING OS</b><small>Web 桌面 · 0.13</small></div></div>
+    <div id="loginTitle" class="login-title">登录</div>
+    <div id="loginHint" class="muted">本地安全入口。首次使用请创建管理员。</div>
+    <label class="field"><span>用户名</span><input id="username" autocomplete="username" value="admin"></label>
+    <label class="field"><span>密码</span><input id="password" type="password" autocomplete="current-password" placeholder="至少 8 位"></label>
+    <label class="field hidden" id="pairWrap"><span>配对码</span><input id="pair" inputmode="numeric" placeholder="局域网首次登录需配对码"></label>
+    <div id="loginError" class="error"></div>
+    <button id="loginBtn" class="btn primary wide">进入桌面</button>
+    <div class="login-foot muted">本机 http://127.0.0.1:8080 · 默认仅本机可访问</div>
+  </div>
+</div>
+
+<div id="desktop" class="desktop hidden">
+  <header class="topbar">
+    <button class="icon-btn" id="startBtn" title="开始">☰</button>
+    <div class="brand small"><span class="brand-mark">L</span><b>LING OS</b><span class="tag">0.13</span></div>
+    <div class="top-search"><input id="quickSearch" placeholder="搜索应用 / 设备 / 文件（/）"></div>
+    <div class="top-right">
+      <span class="chip" id="chipLan">本地</span>
+      <span class="chip" id="chipSecurity">安全 L1</span>
+      <span class="clock" id="clock">--:--</span>
+      <button class="icon-btn" id="notifBtn" title="通知">◔<span id="notifBadge" class="badge hidden">0</span></button>
+      <button class="icon-btn" id="themeBtn" title="浅色/深色">◐</button>
+      <button class="icon-btn" id="fullBtn" title="全屏">⛶</button>
+      <button class="avatar" id="avatarBtn" title="账户">A</button>
+    </div>
+  </header>
+
+  <aside class="dock">
+    <button class="dock-app active" data-app="home" title="概览"><span>⌂</span><em>概览</em></button>
+    <button class="dock-app" data-app="devices" title="设备"><span>◈</span><em>设备</em></button>
+    <button class="dock-app" data-app="files" title="文件"><span>▤</span><em>文件</em></button>
+    <button class="dock-app" data-app="security" title="安全"><span>◇</span><em>安全</em></button>
+    <button class="dock-app" data-app="ai" title="AI"><span>✦</span><em>AI</em></button>
+    <div class="dock-spacer"></div>
+    <button class="dock-app" data-app="settings" title="设置"><span>⚙</span><em>设置</em></button>
+  </aside>
+
+  <main class="workspace">
+    <section id="view-home" class="view active">
+      <div class="hero">
+        <div>
+          <div class="eyebrow">LING OS / HOME SECURITY</div>
+          <h1>晚上好，<span id="helloName">先生</span></h1>
+          <p class="muted">居家安防 · 敏感人物安防 · 数据保护 · 智能控制</p>
+        </div>
+        <div class="hero-actions">
+          <button class="btn" id="openDevices">查看设备</button>
+          <button class="btn primary" id="openAI">问 AI 助手</button>
+        </div>
+      </div>
+      <div class="grid cards">
+        <article class="card stat"><div class="muted">在线设备</div><strong id="statDevices">--</strong><small>虚拟 / 局域网</small></article>
+        <article class="card stat"><div class="muted">安全等级</div><strong id="statSecurity">L1</strong><small id="statSecurityName">常规</small></article>
+        <article class="card stat"><div class="muted">平台</div><strong id="statPlatform">--</strong><small>Termux / Web</small></article>
+        <article class="card stat"><div class="muted">运行时长</div><strong id="statUptime">--</strong><small>Web 桌面</small></article>
+      </div>
+      <div class="grid two">
+        <article class="card"><div class="card-head"><h2>设备概览</h2><button class="link" data-app="devices">全部</button></div><div id="homeDevices" class="list"></div></article>
+        <article class="card"><div class="card-head"><h2>最近事件</h2><button class="link" data-app="security">审计</button></div><div id="homeEvents" class="list"></div></article>
+      </div>
+    </section>
+
+    <section id="view-devices" class="view">
+      <div class="view-head"><div><div class="eyebrow">DEVICES</div><h1>设备</h1></div><div class="row"><button class="btn" id="addDeviceBtn">添加虚拟设备</button><button class="btn" id="discoverBtn">发现设备</button><button class="btn" id="refreshDevices">刷新</button></div></div>
+      <div id="adapterChips" class="row"></div>
+      <div id="deviceGrid" class="grid cards"></div>
+      <div class="muted small-note">虚拟设备可用；HA/MQTT/米家适配器在设置中配置。离线优先：局域网设备不依赖云端。</div>
+    </section>
+
+    <section id="view-files" class="view">
+      <div class="view-head"><div><div class="eyebrow">FILES</div><h1>文件</h1></div><div class="row"><button class="btn" id="openFilesBtn">独立打开</button><button class="btn" id="refreshFiles">刷新</button></div></div>
+      <div class="filebar"><span id="fileCrumb">/</span><span class="muted" id="fileAclHint">ACL：管理员全权</span></div>
+      <div class="grid two">
+        <article class="card"><div id="fileList" class="file-list"></div></article>
+        <article class="card"><div class="card-head"><h2 id="fileTitle">选择文件</h2><button class="link" id="saveFile">保存</button></div><textarea id="fileEditor" placeholder="选择文件查看；或输入内容后保存到当前目录的新文件"></textarea><input id="fileNewName" placeholder="新文件名（保存时使用）"></article>
+      </div>
+      <div class="muted small-note">目录 ACL 在 0.13.2 提供管理界面；当前管理员全权，普通用户默认拒绝。</div>
+    </section>
+
+    <section id="view-security" class="view">
+      <div class="view-head"><div><div class="eyebrow">SECURITY</div><h1>安全中心</h1></div><button class="btn" id="refreshSecurity">刷新</button></div>
+      <div class="grid two">
+        <article class="card"><h2>隐私等级</h2><p class="muted" id="secDesc">--</p><div id="levelBtns" class="level-row"></div></article>
+        <article class="card"><h2>审计</h2><div id="auditList" class="list"></div></article>
+      </div>
+      <div class="muted small-note">Termux 无内核级防火墙；这里应用层策略与审计。完整平台会启用 nft/seccomp。</div>
+    </section>
+
+    <section id="view-ai" class="view">
+      <div class="view-head"><div><div class="eyebrow">AGENT</div><h1>AI 助手</h1></div><button class="btn" id="clearChat">清空</button></div>
+      <div class="chat card"><div id="chatLog" class="chat-log"></div><div class="chat-input"><textarea id="chatText" placeholder="输入消息，Enter 发送；Shift+Enter 换行"></textarea><button id="chatSend" class="btn primary">发送</button></div></div>
+      <div class="muted small-note">当前接入 /LINGOS/run/ai.sock；后端未启动时显示提示。</div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <div class="view-head"><div><div class="eyebrow">SETTINGS</div><h1>设置</h1></div></div>
+      <div class="grid two">
+        <article class="card"><h2>外观</h2><p class="muted">浅色 / 深色，自动记忆。</p><div class="row"><button class="btn" id="themeBtn2">切换主题</button><button class="btn" id="fullBtn2">全屏</button></div></article>
+        <article class="card"><h2>账户</h2><p class="muted" id="accountInfo">--</p><div class="row"><button class="btn" id="rootKeyBtn">轮换 root key</button><button class="btn" id="appTokenBtn">生成 App Token</button><button class="btn" id="exportAuditBtn">导出审计</button><button class="btn" id="backupBtn">备份</button><button class="btn danger" id="logoutBtn">退出登录</button></div></article>
+        <article class="card"><h2>关于</h2><p class="muted">LING OS 0.13.0 · Web 桌面 · Termux rootfs<br>默认仅本机；局域网需启动终端 --lan 并配对。</p></article>
+        <article class="card"><h2>平台能力</h2><div id="platformCaps" class="list"></div></article>
+        <article class="card"><h2>目录访问控制</h2><p class="muted">允许谁访问哪个目录；文件管理器独立应用。</p><div id="aclList" class="list"></div><button class="btn" id="addAclBtn">添加 ACL</button></article>
+        <article class="card"><h2>用户</h2><p class="muted">admin 全权；普通用户按 ACL 访问。</p><div id="userList" class="list"></div><button class="btn" id="addUserBtn">添加用户</button></article>
+        <article class="card"><h2>设备适配器</h2><div id="adapterSettings" class="list"></div><div class="row"><button class="btn" id="haCfgBtn">配置 HA</button><button class="btn" id="mqttCfgBtn">配置 MQTT</button><button class="btn" id="miioCfgBtn">配置米家</button></div></article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="taskbar">
+    <button class="start" id="taskStart">◉ 开始</button>
+    <div id="taskApps" class="task-apps"></div>
+    <div class="tray"><span id="trayNet">●</span><span id="traySecurity">L1</span><span id="trayClock">--:--</span></div>
+  </footer>
+
+  <div id="startMenu" class="start-menu hidden">
+    <div class="start-head"><b>LING OS</b><span class="muted">0.13.0</span></div>
+    <div id="startApps" class="start-grid"></div>
+    <div class="start-foot"><button class="link" data-app="settings">设置</button><button class="link" id="startLogout">退出</button></div>
+  </div>
+  <div id="notifPanel" class="notif-panel hidden"><div class="card-head"><h2>通知</h2><button class="link" id="notifClose">关闭</button></div><div id="notifList" class="list"></div></div>
+  <div id="toast" class="toast hidden"></div>
+</div>
+<script src="/assets/app.js"></script>
+</body>
+</html>

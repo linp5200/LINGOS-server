@@ -24,7 +24,9 @@
  * 配置默认值（先生裁决：默认最严）
  * ============================================================ */
 static access_config_t g_cfg = {
-    .lan_no_token           = 1,    /* 先生 S9：局域网免 token */
+    /* 0.13 P0: never expose the LAN without a token by default. Localhost
+     * stays trusted; LINGOS_LAN=1 plus explicit LINGOS_LAN_NO_TOKEN=1 opts in. */
+    .lan_no_token           = 0,
     .allow_lan_highrisk     = 0,    /* 默认不许（需显式开启） */
     .allow_lan_no_ratelimit = 0,    /* 默认限流（需显式关闭） */
     .rate_limit_per_min     = 120,  /* 每 IP 每分钟 120 次 */

@@ -1,0 +1,214 @@
+name: boot-probe
+
+# 诊断用：下载已发布的 ISO，在 CI 里用 QEMU UEFI + 串口复现启动过程。
+# 目的：拿到真机黑屏对应的内核/live-boot/安装器日志（不重新构建 ISO）。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要诊断的 Release tag"
+        required: true
+        default: v0.9.11
+      inspect_only:
+        description: "只解包检查 initrd（不跑 QEMU）"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 QEMU + AAVMF + xorriso
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 qemu-utils xorriso
+
+      - name: 下载并合并 arm64 ISO
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work && cd work
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" -p 'lingos-installer-aarch64.iso*' || true
+          ls -l
+          if [ -f lingos-installer-aarch64.iso.part0 ]; then
+            cat lingos-installer-aarch64.iso.part* > lingos.iso
+          elif [ -f lingos-installer-aarch64.iso ]; then
+            mv lingos-installer-aarch64.iso lingos.iso
+          fi
+          ls -l lingos.iso
+          sha256sum lingos.iso | tee sha256.txt
+
+      - name: ISO 内容检查
+        working-directory: work
+        run: |
+          xorriso -indev lingos.iso -find /live -exec lsdl 2>&1 | tee iso-live.txt || true
+          echo "=== /live 目录 ==="
+          xorriso -indev lingos.iso -ls /live 2>&1 | head -20 || true
+          echo "=== 根目录 ==="
+          xorriso -indev lingos.iso -ls / 2>&1 | head -20 || true
+
+      - name: 解包 initrd 检查关键组件
+        working-directory: work
+        run: |
+          sudo apt-get install -y initramfs-tools xorriso
+          xorriso -osirrox on -indev lingos.iso -extract /live/initrd.img "$PWD/initrd.img" 2>/dev/null || true
+          xorriso -osirrox on -indev lingos.iso -extract /live/vmlinuz "$PWD/vmlinuz" 2>/dev/null || true
+          ls -l initrd.img vmlinuz 2>/dev/null || true
+          rm -rf ird && mkdir ird
+          if command -v unmkinitramfs >/dev/null 2>&1; then
+            unmkinitramfs initrd.img ird || true
+          fi
+          {
+            echo "=== initrd 顶层 ==="
+            ls ird 2>/dev/null || true
+            echo "=== live-boot 脚本 ==="
+            find ird -name 'live-boot' -o -name 'live' -path '*scripts*' 2>/dev/null | head
+            echo "=== 关键工具 ==="
+            for f in blkid udevadm cdrom_id mount modprobe; do
+              echo "-- $f --"; find ird -name "$f" 2>/dev/null | head -3
+            done
+            echo "=== 驱动模块 ==="
+            for m in isofs squashfs sr_mod usb-storage uas virtio_blk overlay; do
+              echo "-- $m --"; find ird -name "*$m*" 2>/dev/null | head -3
+            done
+            echo "=== initrd 内核版本 ==="
+            ls ird/main/lib/modules 2>/dev/null || ls ird/lib/modules 2>/dev/null || true
+            echo "=== vmlinuz 版本字符串 ==="
+            strings vmlinuz 2>/dev/null | grep -m3 -E 'Linux version|6\.8\.0' || true
+          } 2>&1 | tee initrd-check.txt
+
+      - name: QEMU 启动（usb-storage 光驱 / virtio 光驱 两种，串口日志）
+        if: ${{ inputs.inspect_only != 'true' }}
+        working-directory: work
+        run: |
+          for variant in usb virtio; do
+            echo "########## variant: $variant ##########"
+            qemu-img create -f qcow2 "disk-$variant.qcow2" 10G
+            if [ "$variant" = "usb" ]; then
+              CDARGS="-device nec-usb-xhci,id=xhci -drive if=none,id=cd,format=raw,media=cdrom,file=$PWD/lingos.iso -device usb-storage,bus=xhci.0,drive=cd"
+            else
+              CDARGS="-drive if=none,id=cd,format=raw,media=cdrom,file=$PWD/lingos.iso -device virtio-blk-pci,drive=cd"
+            fi
+            set +e
+            timeout 240 qemu-system-aarch64 \
+              -M virt,virtualization=true -cpu cortex-a76 -m 3072 -smp 2 \
+              -bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd \
+              $CDARGS \
+              -drive file="$PWD/disk-$variant.qcow2",if=none,id=disk,format=qcow2 \
+              -device virtio-blk-pci,drive=disk \
+              -netdev user,id=n0 -device e1000,netdev=n0 \
+              -device virtio-gpu-pci -display none -monitor none -no-reboot \
+              -serial "file:$PWD/serial-$variant.log"
+            echo "qemu_exit=$?"
+            set -e
+            echo "disk: $(du -h "disk-$variant.qcow2" | cut -f1)"
+          done
+
+      - name: 摘要
+        if: always()
+        working-directory: work
+        run: |
+          for f in serial-*.log; do
+            echo "================ $f (tail 120) ================"
+            tail -120 "$f" 2>/dev/null || true
+            echo "--- markers ---"
+            for m in "LINGOS" "live-boot" "Unable to find" "BOOT FAILED" "Kernel panic" "not syncing" "squashfs"; do
+              echo "$m = $(grep -c -i "$m" "$f" 2>/dev/null || true)"
+            done
+          done
+          echo "=== disk sizes ==="
+          du -h disk-*.qcow2 2>/dev/null || true
+          qemu-system-aarch64 --version > qemu.txt
+
+      - name: 上传日志 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log-arm64
+          path: |
+            work/serial-*.log
+            work/iso-live.txt
+            work/sha256.txt
+            work/qemu.txt
+            work/initrd-check.txt
+          if-no-files-found: warn
+
+  x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 QEMU + OVMF + xorriso
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf qemu-utils xorriso
+
+      - name: 下载 x86_64 ISO
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work && cd work
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" -p 'lingos-installer-x86_64.iso*' || true
+          ls -l
+          if [ -f lingos-installer-x86_64.iso ]; then mv lingos-installer-x86_64.iso lingos.iso; fi
+          if [ -f lingos-installer-x86_64.iso.part0 ]; then cat lingos-installer-x86_64.iso.part* > lingos.iso; fi
+          ls -l lingos.iso
+          sha256sum lingos.iso | tee sha256.txt
+
+      - name: ISO 内容检查
+        working-directory: work
+        run: |
+          xorriso -indev lingos.iso -report_el_torito plain 2>&1 | tee eltorito.txt || true
+          xorriso -indev lingos.iso -ls / 2>&1 | head -30 || true
+
+      - name: QEMU 启动（pc/q35 两种 UEFI，串口日志）
+        working-directory: work
+        run: |
+          OVMF_CODE=$(ls /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd 2>/dev/null | head -1)
+          OVMF_VARS_SRC=$(ls /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd 2>/dev/null | head -1)
+          for variant in pc q35; do
+            echo "########## variant: $variant ##########"
+            qemu-img create -f qcow2 "disk-$variant.qcow2" 10G
+            cp "$OVMF_VARS_SRC" "vars-$variant.fd"
+            set +e
+            timeout 240 qemu-system-x86_64 -machine "$variant" -m 2048 -smp 2 \
+              -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+              -drive if=pflash,format=raw,file="$PWD/vars-$variant.fd" \
+              -cdrom "$PWD/lingos.iso" \
+              -drive file="$PWD/disk-$variant.qcow2",if=virtio,format=qcow2 \
+              -netdev user,id=n0 -device e1000,netdev=n0 \
+              -display none -monitor none -no-reboot \
+              -serial "file:$PWD/serial-$variant.log"
+            echo "qemu_exit=$?"
+            set -e
+          done
+
+      - name: 摘要
+        if: always()
+        working-directory: work
+        run: |
+          for f in serial-*.log; do
+            echo "================ $f (tail 100) ================"
+            tail -100 "$f" 2>/dev/null || true
+            for m in "LINGOS" "live-boot" "Unable to find" "BOOT FAILED" "Kernel panic"; do
+              echo "$m = $(grep -c -i "$m" "$f" 2>/dev/null || true)"
+            done
+          done
+          qemu-system-x86_64 --version > qemu.txt
+
+      - name: 上传日志 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log-x86_64
+          path: |
+            work/serial-*.log
+            work/eltorito.txt
+            work/sha256.txt
+            work/qemu.txt
+          if-no-files-found: warn

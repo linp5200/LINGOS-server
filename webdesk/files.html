@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LING OS · 文件管理器</title>
+<link rel="stylesheet" href="/assets/style.css">
+<style>
+body{overflow:auto;background:var(--bg)}
+.fm{max-width:1100px;margin:0 auto;padding:24px 20px 40px}
+.fm-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.fm-head h1{font-size:22px;margin:0}
+.fm-path{font:12px var(--mono);color:var(--accent2);border:1px solid var(--border);border-radius:9px;padding:8px 12px;flex:1;background:var(--panel)}
+.fm-grid{display:grid;grid-template-columns:minmax(300px,1fr) minmax(320px,1.2fr);gap:16px}
+@media(max-width:800px){.fm-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="fm">
+  <div class="fm-head">
+    <a class="btn" href="/">← 桌面</a>
+    <h1>文件管理器</h1>
+    <span class="muted" id="who"></span>
+    <span style="flex:1"></span>
+    <button class="btn" id="refresh">刷新</button>
+  </div>
+  <div class="fm-path" id="path">/</div>
+  <div class="fm-grid" style="margin-top:14px">
+    <article class="card"><div id="list" class="file-list"></div></article>
+    <article class="card">
+      <div class="card-head"><h2 id="title">选择文件</h2><button class="link" id="save">保存</button></div>
+      <textarea id="editor" placeholder="选择文件查看；或输入内容并填写新文件名后保存"></textarea>
+      <div class="row"><input id="newName" placeholder="新文件名"><button class="btn danger" id="del">删除当前文件</button></div>
+    </article>
+  </div>
+  <div class="muted small-note">目录 ACL 在 Web 桌面「设置 → 目录访问控制」配置；ADMIN 全权。</div>
+</div>
+<script>
+'use strict';
+(function(){
+  var S = {path:'/', file:'', user:null};
+  function el(id){return document.getElementById(id);}
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function api(p,o){
+    o=o||{}; o.headers=Object.assign({'Content-Type':'application/json'},o.headers||{});
+    return fetch(p,o).then(function(r){return r.json().catch(function(){return {};}).then(function(j){
+      if(!r.ok){var e=new Error(j.error||('HTTP '+r.status));e.status=r.status;throw e;} return j;});});
+  }
+  function boot(){
+    api('/api/me').then(function(me){S.user=me;el('who').textContent=me.username+' · '+me.role;load('/');})
+      .catch(function(){location.href='/';});
+    el('refresh').addEventListener('click',function(){load(S.path);});
+    el('save').addEventListener('click',save);
+    el('del').addEventListener('click',del);
+    document.addEventListener('click',function(e){var r=e.target.closest('.file-row'); if(r){open(r.getAttribute('data-rel'),r.getAttribute('data-dir')==='1');}});
+  }
+  function load(p){
+    S.path=p||'/'; el('path').textContent=S.path;
+    api('/api/fs/list?path='+encodeURIComponent(S.path)).then(function(r){
+      var rows=(r.entries||[]).map(function(x){
+        return '<div class="file-row" data-rel="'+esc(x.rel)+'" data-dir="'+(x.dir?1:0)+'"><span>'+(x.dir?'▸':'·')+'</span><span class="name">'+esc(x.name)+'</span><span class="size">'+(x.dir?'':esc(String(x.size)))+'</span></div>';
+      }).join('');
+      el('list').innerHTML=rows||'<div class="muted">空目录</div>';
+    }).catch(function(e){el('list').innerHTML='<div class="muted">'+esc(e.message)+'</div>';});
+  }
+  function open(rel,dir){
+    if(dir){load('/'+rel);return;}
+    api('/api/fs/read?path='+encodeURIComponent('/'+rel)).then(function(r){
+      S.file='/'+rel; el('title').textContent=S.file; el('editor').value=r.content||'';
+    }).catch(function(e){alert(e.message);});
+  }
+  function save(){
+    var rel=S.file, name=el('newName').value.trim();
+    if(name){rel=(S.path.replace(/\/$/,'')+'/'+name).replace(/\/+/g,'/');}
+    if(!rel){alert('先选择文件或输入新文件名');return;}
+    api('/api/fs/write',{method:'POST',body:JSON.stringify({path:rel,content:el('editor').value})})
+      .then(function(){S.file=rel;alert('已保存 '+rel);load(S.path);}).catch(function(e){alert(e.message);});
+  }
+  function del(){
+    if(!S.file){alert('没有选择文件');return;}
+    if(!confirm('删除 '+S.file+' ?'))return;
+    api('/api/fs?path='+encodeURIComponent(S.file),{method:'DELETE',body:'{}'})
+      .then(function(){S.file='';el('title').textContent='选择文件';el('editor').value='';load(S.path);})
+      .catch(function(e){alert(e.message);});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+font=Noto Sans CJK SC 10
+background-color=#12151aee
+text-color=#cfd3dc
+border-color=#2a3040
+border-size=1
+border-radius=8
+default-timeout=5000
+max-visible=4
+anchor=top-right
+margin=8

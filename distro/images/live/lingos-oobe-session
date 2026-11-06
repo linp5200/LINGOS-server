@@ -1,0 +1,27 @@
+#!/bin/bash
+# 首次启动 OOBE 会话：优先 GTK（Xorg），失败回退 whiptail TUI
+set -u
+[ -e /var/lib/lingos/oobe-done ] && exit 0
+[ -e /etc/lingos-live ] && exit 0
+if command -v startx >/dev/null 2>&1 && [ -x /usr/local/bin/lingos-oobe ]; then
+    startx /usr/local/bin/lingos-oobe -- :0 vt1 -keeptty >/tmp/lingos-oobe.log 2>&1 || true
+fi
+if [ -e /var/lib/lingos/oobe-done ]; then exit 0; fi
+
+# ---- TUI 回退 ----
+TZ=$(whiptail --title "LING OS 首次启动" --menu "选择时区：" 16 60 6 \
+    Asia/Shanghai "中国标准时间" Asia/Tokyo "日本" Europe/London "英国" America/New_York "美国东部" UTC "UTC" 3>&1 1>&2 2>&3) || TZ=Asia/Shanghai
+LEVEL=$(whiptail --title "LING OS 首次启动" --menu "选择隐私等级：" 18 70 5 \
+    L0 "兼容" L1 "增强（推荐）" L2 "严格" L3 "极端" L4 "MAX" 3>&1 1>&2 2>&3) || LEVEL=L1
+while :; do
+    P1=$(whiptail --title "LING OS 首次启动" --passwordbox "设置登录密码（至少 6 位）：" 10 60 3>&1 1>&2 2>&3) || { P1=""; break; }
+    [ -n "$P1" ] || break
+    P2=$(whiptail --title "LING OS 首次启动" --passwordbox "再次输入密码：" 10 60 3>&1 1>&2 2>&3) || { P1=""; break; }
+    if [ "$P1" = "$P2" ] && [ "$(printf '%s' "$P1" | wc -c)" -ge 6 ]; then
+        printf '{"username":"lingos","password":"%s","locale":"zh_CN.UTF-8","timezone":"%s","privacy_level":"%s"}\n' "$P1" "$TZ" "$LEVEL" > /tmp/lingos-oobe-config.json
+        /usr/local/sbin/lingos-oobe-apply /tmp/lingos-oobe-config.json
+        break
+    fi
+    whiptail --title "LING OS 首次启动" --msgbox "密码不一致或少于 6 位，请重试。" 10 60
+done
+exit 0

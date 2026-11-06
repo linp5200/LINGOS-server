@@ -1,0 +1,35 @@
+name: rootfs
+
+# LING OS 0.13 Termux rootfs（arm64）构建。
+# 只构建并上传 artifact；不创建 Release（发布需先生确认）。
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v0.13*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mmdebstrap debootstrap zstd make gcc pkg-config \
+            libseccomp-dev libsqlite3-dev libmosquitto-dev libssl-dev \
+            libmicrohttpd-dev libcurl4-openssl-dev python3 python3-requests
+      - name: 编译
+        run: make -j"$(nproc)"
+      - name: 构建 rootfs
+        run: sudo bash distro/rootfs/build-rootfs.sh
+      - name: 上传 rootfs
+        uses: actions/upload-artifact@v4
+        with:
+          name: lingos-rootfs-arm64
+          path: |
+            dist/rootfs/*.tar.zst
+            dist/rootfs/*.sha256
+          if-no-files-found: error

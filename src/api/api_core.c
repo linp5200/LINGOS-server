@@ -145,11 +145,19 @@ void api_core_init(int force_network) {
         LOG_INFO_T("API", "Init", "WSOK", "WebSocket server started on port 2939");
     }
 
-    /* 启动 HTTP 服务器（如果可用） */
-    if (http_server_start(8080) != 0) {
+    /* 启动 HTTP 服务器（如果可用）。
+     * 0.13: lingos-web owns 8080; backend HTTP defaults to 18080 and can be
+     * overridden with LINGOS_HTTP_PORT. */
+    int http_port = 18080;
+    const char *http_port_env = getenv("LINGOS_HTTP_PORT");
+    if (http_port_env && http_port_env[0]) {
+        int p = atoi(http_port_env);
+        if (p > 0 && p < 65536) http_port = p;
+    }
+    if (http_server_start(http_port) != 0) {
         LOG_WARN_T("API", "Init", "HTTPFail", "HTTP server failed to start");
     } else {
-        LOG_INFO_T("API", "Init", "HTTPOK", "HTTP server started on port 8080");
+        LOG_INFO_T("API", "Init", "HTTPOK", "HTTP server started on port %d", http_port);
     }
 
     /* 【0.5.2】Ready 消息用实际端口（原硬编码 2939/8080——端口可配后不准） */

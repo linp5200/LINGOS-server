@@ -1,0 +1,12 @@
+[Unit]
+Description=LING OS boot timing report
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lingos-boot-report
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=LING OS privacy policy apply (L0-L4)
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lingos-privacy-policy
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

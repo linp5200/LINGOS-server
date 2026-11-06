@@ -36,7 +36,7 @@
  * 内部工具：发送 JSON 响应
  * ============================================================ */
 static void send_json_response(struct MHD_Connection *conn, int code, const char *json) {
-    struct MHD_Response *resp = MHD_create_response_from_buffer(strlen(json), (void*)json, MHD_RESPMEM_PERSISTENT);
+    struct MHD_Response *resp = MHD_create_response_from_buffer(strlen(json), (void*)json, MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(resp, "Content-Type", "application/json");
     /* 【0.7.0 S11 修复】CORS 不再写死 `*` —— 校验 Origin
      *   （允许同源/本机来源；外部站点被浏览器拦截。开关 sec.cors_strict 可放宽——默认开） */

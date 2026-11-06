@@ -4,6 +4,9 @@
 # 用法：sudo bash distro/images/build-iso.sh [x86_64|aarch64] [发行版代号]
 # 前置：dist/*allbin*.tar.gz 存在；root；网络
 # 产物：dist/images/lingos-installer-<arch>.iso
+#
+# 0.9.12 起：内核/initrd 带日志；GRUB 菜单支持 自动安装/手动安装/Live/诊断；
+#            安装器阶段进度写入 /run/lingos-install/state.json 并回传 tty0/串口/共享文件夹/网络。
 # ============================================================
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -30,6 +33,15 @@ if ! command -v lb >/dev/null 2>&1; then
     echo "需要 live-build：apt-get install -y live-build debootstrap squashfs-tools xorriso mtools dosfstools rsync" >&2
     exit 1
 fi
+GITREV=$(cd "$ROOT" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TS=$(date -u +%FT%TZ)
+# 0.9.12 统一内核参数：不静默、开日志、串口放最后（/dev/console -> 串口，CI/真机可抓 live-boot 日志）
+if [ "$DEBARCH" = "amd64" ]; then
+    KCONSOLE="console=tty0 console=ttyS0,115200"
+else
+    KCONSOLE="console=tty0 console=ttyAMA0,115200"
+fi
+KCMDLINE="boot=live components live-media=/dev/sr0 $KCONSOLE quiet splash loglevel=5 video=1024x768@60 lingos.mode=install-auto"
 
 WORK=$(mktemp -d /tmp/lingos-iso-XXXXXX)
 echo "==> live-build 工作目录: $WORK (dist=$DIST arch=$DEBARCH)"
@@ -54,7 +66,7 @@ lb config \
   --parent-mirror-bootstrap "$MIRROR" \
   --parent-mirror-chroot "$MIRROR" \
   --parent-mirror-binary "$MIRROR" \
-  --bootappend-live "boot=live components quiet splash console=tty0 console=ttyAMA0,115200 lingos.autostart=1" \
+  --bootappend-live "$KCMDLINE" \
   --linux-flavours generic
 
 # ---------- 包清单 ----------
@@ -77,12 +89,16 @@ gdisk
 whiptail
 util-linux
 kmod
+netcat-openbsd
+isc-dhcp-client
+psmisc
 grub2-common
 grub-efi-amd64-bin
 grub-efi-amd64-signed
 grub-pc-bin
 syslinux
 syslinux-utils
+fonts-noto-cjk
 espeak-ng
 ffmpeg
 libcurl4
@@ -91,6 +107,70 @@ libsqlite3-0
 libmosquitto1
 libmicrohttpd12
 libssl3
+# X11 安全图形回退（Vectras / 无 KMS 的 simple-framebuffer 环境下 labwc 无法启动）
+xserver-xorg-core
+xserver-xorg-video-fbdev
+xserver-xorg-input-libinput
+xinit
+openbox
+xterm
+x11-xserver-utils
+x11-utils
+xfonts-base
+xauth
+xvfb
+x11vnc
+# 桌面应用（0.10：补齐可用的日常应用）
+pcmanfm
+epiphany-browser
+mousepad
+galculator
+xarchiver
+imv
+feh
+zathura
+zathura-pdf-poppler
+mpv
+scrot
+grim
+xdg-utils
+adwaita-icon-theme
+shared-mime-info
+desktop-file-utils
+cryptsetup
+cryptsetup-initramfs
+nftables
+bubblewrap
+# 0.10.1 桌面壳/登录（Windows 式体验）
+lightdm
+lightdm-gtk-greeter
+dmz-cursor-theme
+pavucontrol
+python3-gi
+gir1.2-gtk-3.0
+sudo
+locales
+plymouth
+plymouth-themes
+picom
+# 0.10.3 成熟桌面（Cinnamon 默认 + XFCE 轻量/救援）
+cinnamon
+cinnamon-common
+cinnamon-session
+cinnamon-settings-daemon
+muffin
+nemo
+cinnamon-control-center
+cinnamon-screensaver
+xfce4
+xfce4-terminal
+thunar
+xfce4-whiskermenu-plugin
+xfce4-taskmanager
+xfce4-power-manager
+xfce4-notifyd
+network-manager-gnome
+dconf-cli
 EOF
 if [ "$DEBARCH" = "arm64" ]; then
     sed -i '/grub-efi-amd64/d; /grub-pc-bin/d; /^syslinux$/d; /^syslinux-utils$/d' config/package-lists/lingos.list.chroot
@@ -98,32 +178,208 @@ if [ "$DEBARCH" = "arm64" ]; then
     echo 'grub-efi-arm64-signed' >> config/package-lists/lingos.list.chroot
 fi
 
-# ---------- 安装器 / 服务单元 / 全捆包 ----------
+# ---------- 安装器 / 服务单元 / 日志库 / 全捆包 ----------
 mkdir -p config/includes.chroot/usr/local/sbin \
          config/includes.chroot/etc/systemd/system \
+         config/includes.chroot/etc/initramfs-tools/scripts/init-premount \
+         config/includes.chroot/etc/initramfs-tools/scripts/init-bottom \
          config/includes.chroot/LINGOS/offline \
-         config/hooks/live
-cp "$ROOT/distro/images/live/lingos-install.sh" config/includes.chroot/usr/local/sbin/lingos-install
-chmod +x config/includes.chroot/usr/local/sbin/lingos-install
+         config/hooks
+cp "$ROOT/distro/images/live/lingos-install.sh" "config/includes.chroot/usr/local/sbin/lingos-install"
+chmod +x "config/includes.chroot/usr/local/sbin/lingos-install"
+for f in lingos-boot-mode lingos-live-session lingos-diag lingos-diag-session lingos-desktop-report lingos-desktop-launch lingos-security-settings lingos-privacy-policy lingos-sandbox-run lingos-boot-report lingos-oobe-apply lingos-oobe-session; do
+    cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/sbin/$f"
+    chmod +x "config/includes.chroot/usr/local/sbin/$f"
+done
+mkdir -p config/includes.chroot/usr/local/bin
+for f in lingos-version lingos-audit lingos-geoip lingos-ai-tool-gate lingos-plugin-gate lingos-power-menu lingos-oobe lingos-oobe-session-x11 lingos-oobe-tui lingos-security-center lingos-plugin lingos-ai lingos-recovery lingos-feature; do
+    cp "$ROOT/distro/images/live/$f" "config/includes.chroot/usr/local/bin/$f"
+    chmod +x "config/includes.chroot/usr/local/bin/$f"
+done
+cp "$ROOT/distro/images/live/lingos-log.sh" "config/includes.chroot/usr/local/sbin/lingos-log.sh"
+chmod 644 "config/includes.chroot/usr/local/sbin/lingos-log.sh"
+cp "$ROOT/distro/images/live/lingos-initramfs-report" \
+   "config/includes.chroot/etc/initramfs-tools/scripts/init-premount/lingos-report"
+chmod +x "config/includes.chroot/etc/initramfs-tools/scripts/init-premount/lingos-report"
+cp "$ROOT/distro/images/live/lingos-initramfs-bottom" \
+   "config/includes.chroot/etc/initramfs-tools/scripts/init-bottom/lingos-bottom"
+chmod +x "config/includes.chroot/etc/initramfs-tools/scripts/init-bottom/lingos-bottom"
+# 桌面配置（安装后由 installer 创建 lingos 用户，useradd -m 会复制 /etc/skel）
+mkdir -p config/includes.chroot/etc/skel/.config/labwc \
+         config/includes.chroot/etc/skel/.config/waybar \
+         config/includes.chroot/etc/skel/.config/wofi \
+         config/includes.chroot/etc/skel/.config/openbox \
+         config/includes.chroot/etc/skel/.config/tint2 \
+         config/includes.chroot/etc/skel/.config/mako \
+         config/includes.chroot/etc/skel/.config/dunst \
+         config/includes.chroot/etc/skel/Desktop
+cp "$ROOT/distro/desktop/skel/.bash_profile"        config/includes.chroot/etc/skel/.bash_profile
+cp "$ROOT/distro/desktop/skel/.xinitrc"             config/includes.chroot/etc/skel/.xinitrc
+chmod +x config/includes.chroot/etc/skel/.xinitrc
+cp "$ROOT/distro/desktop/skel/.config/labwc/autostart" config/includes.chroot/etc/skel/.config/labwc/autostart
+cp "$ROOT/distro/desktop/labwc/rc.xml"              config/includes.chroot/etc/skel/.config/labwc/rc.xml
+cp "$ROOT/distro/desktop/waybar/config.jsonc"       config/includes.chroot/etc/skel/.config/waybar/config.jsonc
+cp "$ROOT/distro/desktop/waybar/style.css"          config/includes.chroot/etc/skel/.config/waybar/style.css
+cp "$ROOT/distro/desktop/wofi/style.css"            config/includes.chroot/etc/skel/.config/wofi/style.css
+cp "$ROOT/distro/desktop/skel/.config/openbox/autostart" config/includes.chroot/etc/skel/.config/openbox/autostart
+cp "$ROOT/distro/desktop/skel/.config/openbox/menu.xml"  config/includes.chroot/etc/skel/.config/openbox/menu.xml
+cp "$ROOT/distro/desktop/skel/.config/tint2/tint2rc"      config/includes.chroot/etc/skel/.config/tint2/tint2rc
+cp "$ROOT/distro/desktop/skel/.config/mako/config"        config/includes.chroot/etc/skel/.config/mako/config
+cp "$ROOT/distro/desktop/skel/.config/dunst/dunstrc"      config/includes.chroot/etc/skel/.config/dunst/dunstrc
+cp "$ROOT/distro/desktop/skel/.config/wofi/config"        config/includes.chroot/etc/skel/.config/wofi/config
+cp "$ROOT/distro/desktop/skel/Desktop/security-center.desktop" config/includes.chroot/etc/skel/Desktop/security-center.desktop
+mkdir -p config/includes.chroot/usr/share/applications
+cp "$ROOT/distro/desktop/applications/lingos-security-center.desktop" config/includes.chroot/usr/share/applications/lingos-security-center.desktop
+mkdir -p config/includes.chroot/usr/share/lingos/features config/includes.chroot/usr/share/lingos/plugins/examples
+cp "$ROOT/distro/features/"*.json config/includes.chroot/usr/share/lingos/features/
+cp -a "$ROOT/distro/plugins/examples/hello" config/includes.chroot/usr/share/lingos/plugins/examples/
+cp "$ROOT/distro/desktop/skel/Desktop/"*.desktop       config/includes.chroot/etc/skel/Desktop/
 cp "$ROOT/distro/images/live/lingos.service"           config/includes.chroot/etc/systemd/system/lingos.service
 cp "$ROOT/distro/images/live/lingos-installer.service" config/includes.chroot/etc/systemd/system/lingos-installer.service
+cp "$ROOT/distro/images/live/lingos-desktop-report.service" config/includes.chroot/etc/systemd/system/lingos-desktop-report.service
+cp "$ROOT/distro/images/live/lingos-privacy-apply.service" config/includes.chroot/etc/systemd/system/lingos-privacy-apply.service
+cp "$ROOT/distro/images/live/lingos-audit-boot.service" config/includes.chroot/etc/systemd/system/lingos-audit-boot.service
+cp "$ROOT/distro/images/live/lingos-boot-report.service" config/includes.chroot/etc/systemd/system/lingos-boot-report.service
+cp "$ROOT/distro/images/live/lingos-oobe.service" config/includes.chroot/etc/systemd/system/lingos-oobe.service
+mkdir -p config/includes.chroot/etc/plymouth config/includes.chroot/usr/local/lib/lingos
+cp "$ROOT/distro/images/live/plymouthd.conf" config/includes.chroot/etc/plymouth/plymouthd.conf
+cp "$ROOT/distro/desktop/picom.conf" config/includes.chroot/etc/picom.conf
+cp "$ROOT/src/python/agent_runtime.py" config/includes.chroot/usr/local/lib/lingos/agent_runtime.py
+mkdir -p config/includes.chroot/usr/share/lingos/wallpapers \
+         config/includes.chroot/usr/share/wayland-sessions \
+         config/includes.chroot/usr/share/xsessions \
+         config/includes.chroot/etc/lightdm/lightdm.conf.d \
+         config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf.d \
+         config/includes.chroot/etc/environment.d
+cp "$ROOT/distro/desktop/wallpapers/lingos-default.png" config/includes.chroot/usr/share/lingos/wallpapers/lingos-default.png
+cp "$ROOT/distro/desktop/sessions/lingos-cinnamon.desktop" config/includes.chroot/usr/share/xsessions/lingos-cinnamon.desktop
+cp "$ROOT/distro/desktop/sessions/lingos-xfce.desktop" config/includes.chroot/usr/share/xsessions/lingos-xfce.desktop
+cp "$ROOT/distro/desktop/sessions/lingos-oobe.desktop" config/includes.chroot/usr/share/xsessions/lingos-oobe.desktop
+mkdir -p config/includes.chroot/etc/dconf/profile config/includes.chroot/etc/dconf/db/local.d \
+         config/includes.chroot/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
+cp "$ROOT/distro/desktop/dconf/profile-user" config/includes.chroot/etc/dconf/profile/user
+cp "$ROOT/distro/desktop/dconf/00-lingos" config/includes.chroot/etc/dconf/db/local.d/00-lingos
+cp "$ROOT/distro/desktop/xfce/xfce4-desktop.xml" config/includes.chroot/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+cp "$ROOT/distro/desktop/lightdm/50-lingos.conf" config/includes.chroot/etc/lightdm/lightdm.conf.d/50-lingos.conf
+cp "$ROOT/distro/desktop/lightdm/50-lingos-greeter.conf" config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf.d/50-lingos.conf
+cp "$ROOT/distro/desktop/env/99-lingos-desktop.conf" config/includes.chroot/etc/environment.d/99-lingos-desktop.conf
+mkdir -p config/includes.chroot/etc/sudoers.d
+cp "$ROOT/distro/linux/sudoers-lingos-security" config/includes.chroot/etc/sudoers.d/80-lingos-security
+chmod 0440 config/includes.chroot/etc/sudoers.d/80-lingos-security
+mkdir -p config/includes.chroot/etc/lingos/ai-tools config/includes.chroot/etc/lingos/app-permissions \
+         config/includes.chroot/usr/share/lingos/geoip config/includes.chroot/etc/firefox/policies
+cp "$ROOT/distro/security/privacy-levels.json"     config/includes.chroot/etc/lingos/privacy-levels.json
+cp "$ROOT/distro/security/trust-policy.json"       config/includes.chroot/etc/lingos/trust-policy.json
+cp "$ROOT/distro/security/ai-tool-manifest-schema.json"   config/includes.chroot/etc/lingos/ai-tool-manifest-schema.json
+cp "$ROOT/distro/security/plugin-manifest-schema.json"    config/includes.chroot/etc/lingos/plugin-manifest-schema.json
+cp "$ROOT/distro/security/ai-tools/"*.json         config/includes.chroot/etc/lingos/ai-tools/
+cp "$ROOT/distro/security/app-permissions-browser.json" config/includes.chroot/etc/lingos/app-permissions/browser.json
+cp "$ROOT/distro/security/geoip-sample.csv"        config/includes.chroot/usr/share/lingos/geoip/city.csv
+cp "$ROOT/distro/security/firefox-policies.json"   config/includes.chroot/etc/firefox/policies/policies.json
+printf '%s\n' '{"schema_version":1,"privacy_level":"L1","local_only":true,"flags":{}}' > config/includes.chroot/etc/lingos/security-policy.json
 cp "$BUNDLE" config/includes.chroot/LINGOS/offline/lingos_bundle.tar.gz
+LINGOS_VERSION=$(cat "$ROOT/VERSION" 2>/dev/null | head -1 | tr -d '[:space:]')
+[ -n "$LINGOS_VERSION" ] || LINGOS_VERSION=0.0.0
+export LINGOS_VERSION
+cat > config/includes.chroot/etc/lingos-image-info <<INFO
+LINGOS_VERSION=$LINGOS_VERSION
+LINGOS_ARCH=$ARCH
+LINGOS_GIT=$GITREV
+LINGOS_BUILD_TS=$BUILD_TS
+LINGOS_KCMDLINE=$KCMDLINE
+INFO
 
-# ---------- chroot hook：安装全捆 + 启用自动安装器 ----------
-cat > config/hooks/live/0100-lingos.hook.chroot <<'HOOK'
+# ---------- chroot hook：安装全捆 + 启用自动安装器 + initramfs 日志 ----------
+cat > config/hooks/0100-lingos.chroot <<'HOOK'
 #!/bin/sh
 set -e
-mkdir -p /tmp/lingos_bundle
-tar xzf /LINGOS/offline/lingos_bundle.tar.gz -C /tmp/lingos_bundle --strip-components=1
-bash /tmp/lingos_bundle/install.sh /LINGOS
-rm -rf /tmp/lingos_bundle
-rm -f /LINGOS/offline/lingos_bundle.tar.gz
-chmod +x /usr/local/sbin/lingos-install
+if [ -f /LINGOS/offline/lingos_bundle.tar.gz ]; then
+    rm -rf /tmp/lingos_bundle
+    mkdir -p /tmp/lingos_bundle
+    tar xzf /LINGOS/offline/lingos_bundle.tar.gz -C /tmp/lingos_bundle --strip-components=1
+    bash /tmp/lingos_bundle/install.sh /LINGOS
+    rm -rf /tmp/lingos_bundle
+    rm -f /LINGOS/offline/lingos_bundle.tar.gz
+fi
+chmod +x /usr/local/sbin/lingos-* 2>/dev/null || true
+chmod 644 /usr/local/sbin/lingos-log.sh 2>/dev/null || true
+touch /etc/lingos-live
 mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sf /etc/systemd/system/lingos-installer.service /etc/systemd/system/multi-user.target.wants/lingos-installer.service
+ln -sf /etc/systemd/system/lingos-privacy-apply.service /etc/systemd/system/multi-user.target.wants/lingos-privacy-apply.service
+ln -sf /etc/systemd/system/lingos-audit-boot.service /etc/systemd/system/multi-user.target.wants/lingos-audit-boot.service
+ln -sf /etc/systemd/system/lingos-boot-report.service /etc/systemd/system/multi-user.target.wants/lingos-boot-report.service
+if command -v dconf >/dev/null 2>&1; then dconf update 2>/dev/null || true; fi
+# 0.10：屏蔽 TCG/低性能设备上拖慢启动的单元（安装后系统会继承这些 mask）
+for _unit in NetworkManager-wait-online.service systemd-networkd-wait-online.service \
+             bluetooth.service ModemManager.service apt-daily.service apt-daily.timer \
+             apt-daily-upgrade.service apt-daily-upgrade.timer man-db.service man-db.timer \
+             e2scrub_all.timer unattended-upgrades.service; do
+    ln -sf /dev/null "/etc/systemd/system/$_unit"
+done
+
+# initramfs：加入 LING OS 早期启动标记；MODULES=most 保证 live-boot 能识别 USB/光驱/squashfs
+mkdir -p /etc/initramfs-tools/scripts/init-premount
+if [ ! -f /etc/initramfs-tools/scripts/init-premount/lingos-report ]; then
+cat > /etc/initramfs-tools/scripts/init-premount/lingos-report <<'IREPORT'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+for m in isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk virtio_pci; do
+    modprobe -q "$m" 2>/dev/null || true
+done
+printf '<6>LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > /dev/kmsg 2>/dev/null || true
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$c" ] && printf 'LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > "$c" 2>/dev/null || true
+done
+exit 0
+IREPORT
+
+# 确保 blkid / udevadm 及其依赖库进入 initramfs（live-boot 的 get_fstype 依赖 blkid）
+mkdir -p /etc/initramfs-tools/hooks
+cat > /etc/initramfs-tools/hooks/lingos-tools <<'ITOOLS'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+copy_exec /usr/sbin/blkid /usr/sbin
+copy_exec /usr/bin/udevadm /usr/bin
+copy_exec /bin/mount /bin
+exit 0
+ITOOLS
+chmod +x /etc/initramfs-tools/hooks/lingos-tools
+fi
+chmod +x /etc/initramfs-tools/scripts/init-premount/lingos-report
+mkdir -p /etc/initramfs-tools/scripts/init-bottom
+if [ ! -f /etc/initramfs-tools/scripts/init-bottom/lingos-bottom ]; then
+cat > /etc/initramfs-tools/scripts/init-bottom/lingos-bottom <<'IBOTTOM'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+printf '<6>LINGOS-INITRAMFS-BOTTOM\n' > /dev/kmsg 2>/dev/null || true
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$c" ] && printf 'LINGOS-INITRAMFS-BOTTOM\n' > "$c" 2>/dev/null || true
+done
+exit 0
+IBOTTOM
+fi
+chmod +x /etc/initramfs-tools/scripts/init-bottom/lingos-bottom
+# 显式保证 live-boot 所需模块进入 initrd（MODULES=most 之外再兜底）
+for m in squashfs loop overlay sr_mod sd_mod usb-storage uas isofs virtio_blk virtio_pci; do
+    grep -qx "$m" /etc/initramfs-tools/modules 2>/dev/null || echo "$m" >> /etc/initramfs-tools/modules
+done
+if grep -q '^MODULES=' /etc/initramfs-tools/initramfs.conf 2>/dev/null; then
+    sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf
+else
+    echo 'MODULES=most' >> /etc/initramfs-tools/initramfs.conf
+fi
+update-initramfs -u -k all >/dev/null 2>&1 || echo "!! update-initramfs 失败（继续构建）"
 echo "LINGOS live root prepared"
 HOOK
-chmod +x config/hooks/live/0100-lingos.hook.chroot
+chmod +x config/hooks/0100-lingos.chroot
 
 echo "==> lb build（10-30 分钟，需网络）"
 lb build
@@ -136,8 +392,20 @@ if [ "$DEBARCH" = "arm64" ]; then
     echo "==> arm64: live-build 无 bootloader；从 chroot 生成 squashfs + grub-mkrescue 重制 UEFI ISO"
     BIN_DIR="$WORK/binary"
     CHROOT_DIR="$WORK/chroot"
-    # 关键：lb 在 chroot 内会生成 filesystem.squashfs，若不删除会被再打进 squashfs（体积翻倍）
     rm -f "$CHROOT_DIR/filesystem.squashfs"
+    # 保险：确保 installer 服务已启用 + live 标记存在（includes/chroot hook 顺序差异可能导致 symlink 丢失）
+    mkdir -p "$CHROOT_DIR/etc/systemd/system/multi-user.target.wants"
+    ln -sf /etc/systemd/system/lingos-installer.service \
+        "$CHROOT_DIR/etc/systemd/system/multi-user.target.wants/lingos-installer.service"
+    touch "$CHROOT_DIR/etc/lingos-live"
+    ls -l "$CHROOT_DIR/etc/systemd/system/multi-user.target.wants/lingos-installer.service" || true
+    # 构建期校验：hook 必须真正执行过（否则 /LINGOS 运行时缺失）
+    for _f in /LINGOS/bin/lingos_linux /LINGOS/lingos.sh /usr/local/sbin/lingos-boot-mode; do
+        if [ ! -e "$CHROOT_DIR$_f" ]; then
+            echo "错误：chroot 缺少 $_f（chroot hook 未执行？）" >&2
+            exit 1
+        fi
+    done
     mkdir -p "$BIN_DIR/live"
     KERNEL=$(ls "$CHROOT_DIR"/boot/vmlinuz-* 2>/dev/null | head -1 || true)
     INITRD=$(ls "$CHROOT_DIR"/boot/initrd.img-* 2>/dev/null | head -1 || true)
@@ -153,15 +421,35 @@ if [ "$DEBARCH" = "arm64" ]; then
         cp -f "$KERNEL" "$BIN_DIR/live/vmlinuz"
     fi
     cp -f "$INITRD" "$BIN_DIR/live/initrd.img"
-    echo "==> mksquashfs chroot -> binary/live/filesystem.squashfs（xz，排除缓存/文档）"
+    echo "==> mksquashfs chroot -> binary/live/filesystem.squashfs（xz，排除缓存/文档；保留 /boot 与 /dev /proc /sys /run /tmp 空目录）"
+    # 关键：live-boot 的 init-bottom 需要把 /dev /proc /sys /run 从 initramfs 移动进新根，
+    # 若 squashfs 里没有这些目录会 mount --move 失败 -> systemd 打不开 /dev/console -> init panic。
+    mkdir -p "$CHROOT_DIR"/dev "$CHROOT_DIR"/proc "$CHROOT_DIR"/sys "$CHROOT_DIR"/run "$CHROOT_DIR"/tmp
+    rm -rf "$CHROOT_DIR"/tmp/* 2>/dev/null || true
     mksquashfs "$CHROOT_DIR" "$BIN_DIR/live/filesystem.squashfs" -comp xz -noappend \
-        -e boot proc sys dev run tmp var/cache/apt var/lib/apt/lists var/log usr/share/doc usr/share/man filesystem.squashfs >/dev/null
+        -e var/cache/apt var/lib/apt/lists var/log usr/share/doc usr/share/man filesystem.squashfs >/dev/null
     mkdir -p "$BIN_DIR/boot/grub"
     cat > "$BIN_DIR/boot/grub/grub.cfg" <<GRUBCFG
 set default=0
-set timeout=5
-menuentry "LING OS 安装器 (aarch64)" {
-    linux /live/vmlinuz boot=live components quiet splash console=tty0 console=ttyAMA0,115200 lingos.autostart=1
+set timeout=10
+menuentry "LING OS $LINGOS_VERSION 安装（自动，默认）" {
+    linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
+    initrd /live/initrd.img
+}
+menuentry "LING OS $LINGOS_VERSION 安装（手动选择磁盘）" {
+    linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-manual
+    initrd /live/initrd.img
+}
+menuentry "进入 LING OS $LINGOS_VERSION Live（不安装）" {
+    linux /live/vmlinuz boot=live components live-media=/dev/sr0 $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=live
+    initrd /live/initrd.img
+}
+menuentry "诊断模式（收集日志 / 救援 shell，自动扫描介质）" {
+    linux /live/vmlinuz boot=live components $KCONSOLE loglevel=7 debug lingos.mode=diag
+    initrd /live/initrd.img
+}
+menuentry "安装（USB 介质 /dev/sda）" {
+    linux /live/vmlinuz boot=live components live-media=/dev/sda $KCONSOLE loglevel=5 video=1024x768@60 lingos.mode=install-auto
     initrd /live/initrd.img
 }
 GRUBCFG

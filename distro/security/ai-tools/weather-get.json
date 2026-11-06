@@ -1,0 +1,16 @@
+{
+  "id": "tool.weather.get",
+  "name": "天气查询",
+  "version": "1.0.0",
+  "capabilities": [
+    "network"
+  ],
+  "data_scope": [
+    "城市级位置"
+  ],
+  "risk": "low",
+  "confirmation": "auto",
+  "rate_limit": "10/min",
+  "timeout_ms": 10000,
+  "audit": true
+}

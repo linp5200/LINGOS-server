@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""LING OS 首次启动配置（OOBE，GTK3；失败时由 session 脚本回退 TUI）。
+以 root 运行（仅首次启动），完成后写 /var/lib/lingos/oobe-done。"""
+import json
+import os
+import subprocess
+import sys
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, GLib
+
+CSS = """
+window, .oobe { background-color: #0b0d10; color: #e6e9ef; }
+label { color: #e6e9ef; }
+.title { font-size: 30px; font-weight: bold; }
+.sub { font-size: 13px; color: #9aa3b2; }
+.page-title { font-size: 20px; font-weight: bold; margin-bottom: 10px; }
+entry, combobox button { background: #151a22; color: #e6e9ef; border: 1px solid #2a3040; border-radius: 6px; padding: 7px; }
+button { background: #1d2635; color: #e6e9ef; border: 1px solid #2a3040; border-radius: 6px; padding: 8px 20px; }
+button:hover { background: #2b3a52; }
+button.suggested { background: #2f6fd0; border-color: #2f6fd0; }
+radiobutton { color: #cfd3dc; padding: 4px; }
+progressbar trough { background: #151a22; border-radius: 4px; }
+progressbar progress { background: #2f6fd0; border-radius: 4px; }
+"""
+
+TZ = ["Asia/Shanghai", "Asia/Tokyo", "Asia/Singapore", "Europe/London", "America/New_York", "UTC"]
+LOCALES = ["zh_CN.UTF-8", "en_US.UTF-8"]
+LEVELS = [
+    ("L0", "兼容：功能优先，最少的限制"),
+    ("L1", "增强：推荐默认，阻止常见跟踪"),
+    ("L2", "严格：默认拒绝出站，白名单放行"),
+    ("L3", "极端：VPN 必需，USB/文件默认关闭"),
+    ("L4", "MAX：默认全拒绝，逐次手动批准"),
+]
+
+
+class OOBE(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="LING OS 首次启动")
+        self.set_decorated(False)
+        self.fullscreen()
+        self.set_size_request(1024, 720)
+        self.lang = "zh_CN.UTF-8"
+        self.tz = "Asia/Shanghai"
+        self.level = "L1"
+        self.page = 0
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider,
+                                                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.stack.set_transition_duration(300)
+        self.stack.add_named(self.page_welcome(), "welcome")
+        self.stack.add_named(self.page_account(), "account")
+        self.stack.add_named(self.page_region(), "region")
+        self.stack.add_named(self.page_privacy(), "privacy")
+        self.stack.add_named(self.page_finish(), "finish")
+
+        self.back = Gtk.Button(label="上一步")
+        self.next = Gtk.Button(label="下一步")
+        self.next.get_style_context().add_class("suggested")
+        self.back.connect("clicked", self.on_back)
+        self.next.connect("clicked", self.on_next)
+        bar = Gtk.Box(spacing=8)
+        bar.pack_end(self.next, False, False, 0)
+        bar.pack_end(self.back, False, False, 0)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        root.set_border_width(28)
+        root.pack_start(self.stack, True, True, 0)
+        root.pack_end(bar, False, False, 0)
+        self.add(root)
+        self.update_buttons()
+
+    def label(self, text, cls=None):
+        w = Gtk.Label(label=text, xalign=0)
+        if cls:
+            w.get_style_context().add_class(cls)
+        return w
+
+    def page_welcome(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        box.pack_start(self.label("LING OS", "title"), False, False, 0)
+        box.pack_start(self.label("AI 原生 Linux 设备系统", "sub"), False, False, 0)
+        box.pack_start(self.label("首次启动需要几分钟完成基础配置。", "page-title"), False, False, 40)
+        box.pack_start(self.label("语言 / Language", "sub"), False, False, 0)
+        combo = Gtk.ComboBoxText()
+        for loc, name in (("zh_CN.UTF-8", "简体中文"), ("en_US.UTF-8", "English")):
+            combo.append(loc, name)
+        combo.set_active_id("zh_CN.UTF-8")
+        combo.connect("changed", lambda c: setattr(self, "lang", c.get_active_id()))
+        box.pack_start(combo, False, False, 0)
+        return box
+
+    def page_account(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.pack_start(self.label("创建你的账户", "page-title"), False, False, 0)
+        box.pack_start(self.label("用户名：lingos", "sub"), False, False, 0)
+        box.pack_start(self.label("登录密码（至少 6 位）", "sub"), False, False, 8)
+        self.pass1 = Gtk.Entry()
+        self.pass1.set_visibility(False)
+        self.pass1.set_placeholder_text("输入密码")
+        box.pack_start(self.pass1, False, False, 0)
+        self.pass2 = Gtk.Entry()
+        self.pass2.set_visibility(False)
+        self.pass2.set_placeholder_text("再次输入密码")
+        box.pack_start(self.pass2, False, False, 0)
+        return box
+
+    def page_region(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.pack_start(self.label("区域与语言", "page-title"), False, False, 0)
+        box.pack_start(self.label("系统语言", "sub"), False, False, 0)
+        self.loc_combo = Gtk.ComboBoxText()
+        for loc in LOCALES:
+            self.loc_combo.append(loc, loc)
+        self.loc_combo.set_active_id(self.lang)
+        self.loc_combo.connect("changed", lambda c: setattr(self, "lang", c.get_active_id()))
+        box.pack_start(self.loc_combo, False, False, 0)
+        box.pack_start(self.label("时区", "sub"), False, False, 8)
+        self.tz_combo = Gtk.ComboBoxText()
+        for tz in TZ:
+            self.tz_combo.append(tz, tz)
+        self.tz_combo.set_active_id(self.tz)
+        self.tz_combo.connect("changed", lambda c: setattr(self, "tz", c.get_active_id()))
+        box.pack_start(self.tz_combo, False, False, 0)
+        return box
+
+    def page_privacy(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.pack_start(self.label("隐私等级", "page-title"), False, False, 0)
+        box.pack_start(self.label("安装后可在本地安全设置中修改", "sub"), False, False, 6)
+        self.level_group = None
+        for lid, desc in LEVELS:
+            rb = Gtk.RadioButton.new_with_label_from_widget(self.level_group, lid + "  " + desc)
+            if self.level_group is None:
+                self.level_group = rb
+            if lid == "L1":
+                rb.set_active(True)
+            rb.connect("toggled", self.on_level, lid)
+            box.pack_start(rb, False, False, 0)
+        return box
+
+    def page_finish(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        box.pack_start(self.label("准备就绪", "page-title"), False, False, 0)
+        self.summary = Gtk.Label(label="", xalign=0)
+        box.pack_start(self.summary, False, False, 0)
+        box.pack_start(self.label("点击“完成”后进入登录界面。", "sub"), False, False, 20)
+        return box
+
+    def on_level(self, rb, lid):
+        if rb.get_active():
+            self.level = lid
+
+    def update_buttons(self):
+        self.back.set_sensitive(self.page > 0)
+        self.next.set_label("完成" if self.page == 4 else "下一步")
+        if self.page == 4:
+            self.summary.set_text(
+                "语言：%s\n时区：%s\n隐私等级：%s" % (self.lang, self.tz, self.level))
+
+    def on_back(self, _b):
+        if self.page > 0:
+            self.page -= 1
+            self.stack.set_visible_child_name(["welcome", "account", "region", "privacy", "finish"][self.page])
+            self.update_buttons()
+
+    def finish(self):
+        p1 = self.pass1.get_text()
+        p2 = self.pass2.get_text()
+        if len(p1) < 6 or p1 != p2:
+            d = Gtk.MessageDialog(parent=self, flags=Gtk.DialogFlags.MODAL,
+                                  type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK,
+                                  text="密码无效：至少 6 位且两次一致")
+            d.run(); d.destroy()
+            return
+        cfg = {"username": "lingos", "password": p1, "locale": self.lang,
+               "timezone": self.tz, "privacy_level": self.level}
+        path = "/tmp/lingos-oobe-config.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        try:
+            with open("/tmp/lingos-oobe.log", "a", encoding="utf-8") as logf:
+                logf.write("apply %s\n" % path)
+            r = subprocess.run(["sudo", "-n", "/usr/local/sbin/lingos-oobe-apply", path],
+                               timeout=180, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            if r.returncode != 0:
+                raise RuntimeError((r.stdout or b"").decode("utf-8", "ignore")[-500:])
+        except Exception as exc:
+            d = Gtk.MessageDialog(parent=self, flags=Gtk.DialogFlags.MODAL,
+                                  type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK,
+                                  text="配置写入失败: %s" % exc)
+            d.run(); d.destroy()
+            return
+        if r.returncode != 0:
+            d = Gtk.MessageDialog(parent=self, flags=Gtk.DialogFlags.MODAL,
+                                  type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK,
+                                  text="配置写入失败，请查看 /tmp/lingos-oobe.log")
+            d.run(); d.destroy()
+            return
+        Gtk.main_quit()
+
+    def on_next(self, _b):
+        if self.page == 4:
+            self.finish()
+            return
+        self.page += 1
+        self.stack.set_visible_child_name(["welcome", "account", "region", "privacy", "finish"][self.page])
+        self.update_buttons()
+
+
+def main():
+    w = OOBE()
+    w.connect("destroy", Gtk.main_quit)
+    w.show_all()
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

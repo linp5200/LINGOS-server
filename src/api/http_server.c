@@ -45,6 +45,7 @@
 #include <sys/un.h>
 #include <errno.h>
 #include <limits.h>
+#include <fcntl.h>
 
 #define DEFAULT_PORT 8080
 
@@ -124,7 +125,9 @@ static void send_json_response(struct MHD_Connection *connection, int status_cod
             status_code, t_req_url[0] ? t_req_url : "/",
             t_req_url[0] ? t_req_url : NULL, 0,
             json, json ? (size_t)strlen(json) : 0);
-    struct MHD_Response *response = MHD_create_response_from_buffer(strlen(json), (void*)json, MHD_RESPMEM_PERSISTENT);
+    /* MUST_COPY: callers pass stack buffers (e.g. resp[8192], json[8192]);
+     * PERSISTENT would hand MHD a dangling pointer after the callback returns. */
+    struct MHD_Response *response = MHD_create_response_from_buffer(strlen(json), (void*)json, MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(response, "Content-Type", "application/json");
     MHD_queue_response(connection, status_code, response);
     MHD_destroy_response(response);
@@ -151,16 +154,53 @@ static int http_fs_path_allowed(const char *path) {
     if (!path || !*path) return 0;
     if (strstr(path, "/../") || strcmp(path, "..") == 0) return 0;
     return (strncmp(path, "/LINGOS/", 8) == 0 || strcmp(path, "/LINGOS") == 0 ||
-            strncmp(path, "/tmp/", 5) == 0);
+            strncmp(path, "/tmp/", 5) == 0 || strcmp(path, "/tmp") == 0);
+}
+
+/* 0.13 P0: writes must never touch executable/config/system roots.
+ * /api/files/upload previously could overwrite /LINGOS/bin -> root RCE. */
+static int http_fs_path_write_forbidden(const char *path) {
+    static const char *deny[] = {
+        "/LINGOS/bin", "/LINGOS/lib", "/LINGOS/python", "/LINGOS/system",
+        "/LINGOS/run", "/LINGOS/state", "/etc", "/usr", "/boot", "/lib",
+        "/lib64", "/sbin", "/proc", "/sys", "/dev", NULL
+    };
+    if (!path) return 1;
+    for (int i = 0; deny[i]; i++) {
+        size_t n = strlen(deny[i]);
+        if (strncmp(path, deny[i], n) == 0 && (path[n] == '\0' || path[n] == '/'))
+            return 1;
+    }
+    return 0;
+}
+
+static int http_fs_path_writable(const char *path) {
+    return http_fs_path_allowed(path) && !http_fs_path_write_forbidden(path);
+}
+
+/* Resolve the parent directory and re-check it: prevents /tmp/link -> /LINGOS/bin
+ * and similar symlink escapes for new upload files. */
+static int http_fs_parent_allowed(const char *path) {
+    char tmp[PATH_MAX];
+    char rp[PATH_MAX];
+    if (!path || strlen(path) >= sizeof(tmp)) return 0;
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    char *slash = strrchr(tmp, '/');
+    if (!slash) return 0;
+    *slash = '\0';
+    if (tmp[0] == '\0') strcpy(tmp, "/");
+    if (!realpath(tmp, rp)) return 0;
+    return http_fs_path_writable(rp);
 }
 
 static int handle_files_list(struct MHD_Connection *connection, const char *path) {
     if (!path || path[0] == '\0' || strcmp(path, "/") == 0) path = "/LINGOS";
-    if (!http_fs_path_allowed(path)) {
+    char rp[PATH_MAX];
+    if (!http_fs_path_allowed(path) || !realpath(path, rp) || !http_fs_path_allowed(rp)) {
         send_json_response(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"path not allowed\"}");
         return MHD_YES;
     }
-    DIR *d = opendir(path);
+    DIR *d = opendir(rp);
     if (!d) {
         char buf[256];
         safe_snprintf(buf, sizeof(buf), "{\"error\":\"cannot open dir\",\"path\":\"%s\"}", path);
@@ -203,11 +243,12 @@ static int handle_files_download(struct MHD_Connection *connection, const char *
         send_json_response(connection, MHD_HTTP_BAD_REQUEST, "{\"error\":\"missing path\"}");
         return MHD_YES;
     }
-    if (!http_fs_path_allowed(path)) {
+    char rp[PATH_MAX];
+    if (!http_fs_path_allowed(path) || !realpath(path, rp) || !http_fs_path_allowed(rp)) {
         send_json_response(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"path not allowed\"}");
         return MHD_YES;
     }
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = fopen(rp, "rb");
     if (!fp) {
         send_json_response(connection, MHD_HTTP_NOT_FOUND, "{\"error\":\"file not found\"}");
         return MHD_YES;
@@ -232,7 +273,7 @@ static int handle_files_delete(struct MHD_Connection *connection, const char *pa
         send_json_response(connection, MHD_HTTP_BAD_REQUEST, "{\"error\":\"missing path\"}");
         return MHD_YES;
     }
-    if (!http_fs_path_allowed(path)) {
+    if (!http_fs_path_writable(path)) {
         send_json_response(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"path not allowed\"}");
         return MHD_YES;
     }
@@ -747,10 +788,17 @@ static enum MHD_Result request_handler(void *cls,
             /* 首包：创建上传上下文 */
             struct upload_ctx *ctx = calloc(1, sizeof(struct upload_ctx));
             if (!ctx) return MHD_NO;
-            if (path && path[0] && http_fs_path_allowed(path)) {
+            if (path && path[0] && http_fs_path_writable(path) &&
+                http_fs_parent_allowed(path)) {
                 safe_strncpy(ctx->path, path, sizeof(ctx->path));
-                ctx->fp = fopen(ctx->path, "wb");
-                if (!ctx->fp) ctx->failed = 1;
+                /* O_NOFOLLOW: never follow a planted symlink to bin/etc. */
+                int fd = open(ctx->path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
+                if (fd < 0) {
+                    ctx->failed = 1;
+                } else {
+                    ctx->fp = fdopen(fd, "wb");
+                    if (!ctx->fp) { close(fd); ctx->failed = 1; }
+                }
             } else {
                 ctx->failed = 1;
             }

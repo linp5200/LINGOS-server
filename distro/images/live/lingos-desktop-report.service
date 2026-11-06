@@ -1,0 +1,12 @@
+[Unit]
+Description=LING OS desktop diagnostics report
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lingos-desktop-report
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

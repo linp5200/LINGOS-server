@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=LING OS（Cinnamon）
+Comment=LING OS Cinnamon 桌面（Windows 式布局）
+Exec=cinnamon-session
+Type=Application
+DesktopNames=LINGOS;Cinnamon

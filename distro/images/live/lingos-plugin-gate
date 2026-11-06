@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""插件 manifest 校验（签名/权限/兼容性），静态校验用。"""
+import argparse, json, sys
+
+REQUIRED = ["id", "name", "version", "entry", "capabilities", "permissions", "signature", "min_host"]
+
+
+def validate(path):
+    with open(path, encoding="utf-8") as f:
+        m = json.load(f)
+    missing = [k for k in REQUIRED if k not in m]
+    if missing:
+        return False, "missing=%s" % ",".join(missing)
+    if m.get("signature") in ("", None, "unsigned"):
+        return False, "unsigned"
+    caps = set(m.get("capabilities", [])) | set(m.get("permissions", []))
+    denied = caps & {"system", "security", "root", "kernel"}
+    if denied:
+        return False, "forbidden=%s" % ",".join(sorted(denied))
+    if not isinstance(m.get("version"), str):
+        return False, "bad version"
+    return True, "ok"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("manifest")
+    args = ap.parse_args()
+    ok, reason = validate(args.manifest)
+    print(json.dumps({"ok": ok, "reason": reason}, ensure_ascii=False))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

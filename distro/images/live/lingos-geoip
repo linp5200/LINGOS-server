@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""LING OS 离线粗定位（城市级，不联网、不记录轨迹）。
+数据：/usr/share/lingos/geoip/city.csv（cc,city,lat,lon），缺省回退时区。
+用法：lingos-geoip [--json]
+"""
+import argparse, json, os, time
+
+DB = "/usr/share/lingos/geoip/city.csv"
+
+
+def from_timezone():
+    tz = os.environ.get("TZ") or "UTC"
+    try:
+        with open("/etc/timezone", encoding="utf-8") as f:
+            tz = f.read().strip()
+    except OSError:
+        pass
+    return {"source": "timezone", "city": "", "region": tz, "lat": None, "lon": None}
+
+
+def lookup():
+    if os.path.exists("/run/lingos/location-off"):
+        return {"source": "disabled", "city": "", "region": "", "lat": None, "lon": None}
+    env_city = os.environ.get("LINGOS_CITY", "")
+    if env_city and os.path.exists(DB):
+        with open(DB, encoding="utf-8") as f:
+            for line in f:
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 4 and parts[1].lower() == env_city.lower():
+                    return {"source": "offline-db", "city": parts[1], "region": parts[0],
+                            "lat": float(parts[2]), "lon": float(parts[3])}
+    return from_timezone()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+    res = lookup()
+    res["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if args.json:
+        print(json.dumps(res, ensure_ascii=False))
+    else:
+        print(res.get("city") or res.get("region") or "unknown")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

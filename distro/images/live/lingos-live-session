@@ -1,0 +1,38 @@
+#!/bin/bash
+# LING OS Live 模式：启动服务并给出可选菜单（安装/Shell/诊断/重启）
+set -Eeuo pipefail
+export LINGOS_MODE=live
+export LINGOS_LOG=/var/log/lingos-live.log
+LINGOS_LIB=/usr/local/sbin/lingos-log.sh
+if [ -f "$LINGOS_LIB" ]; then . "$LINGOS_LIB"; else echo "缺少 $LINGOS_LIB" >&2; exec bash -i; fi
+trap 'rc=$?; set +e; fail_msg "$rc" "命令失败: $BASH_COMMAND"' ERR
+boot_info
+stage 1 live "启动 LING OS 服务"
+if [ -x /LINGOS/lingos.sh ]; then
+    ( cd /LINGOS && timeout 90 ./lingos.sh start ) >>"$LINGOS_LOG" 2>&1 || warn "LINGOS 服务启动失败（可稍后手动 /LINGOS/lingos.sh start）"
+fi
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+_emit "LINGOS-LIVE-READY ip=${IP:-unknown} url=http://${IP:-<ip>}:8080/ui"
+stage 2 live "等待操作"
+if command -v whiptail >/dev/null 2>&1; then
+    while true; do
+        CHOICE=$(whiptail --title "LING OS Live" --menu "请选择操作" 20 74 8 \
+            "1" "安装 LING OS（自动：清空最大磁盘）" \
+            "2" "安装 LING OS（手动选择磁盘）" \
+            "3" "打开 Shell（lingos-diag 可收集日志）" \
+            "4" "收集诊断日志（共享文件夹/串口）" \
+            "5" "重启" \
+            "6" "关机" 3>&1 1>&2 2>&3) || break
+        case "$CHOICE" in
+            1) /usr/local/sbin/lingos-install --auto || true ;;
+            2) /usr/local/sbin/lingos-install --manual || true ;;
+            3) bash -i ;;
+            4) /usr/local/sbin/lingos-diag || true ;;
+            5) reboot -f ;;
+            6) poweroff -f ;;
+        esac
+    done
+else
+    _emit "whiptail 不可用，进入 live shell（lingos-diag 收集日志，lingos-install 安装）"
+    exec bash -i
+fi

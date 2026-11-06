@@ -1,0 +1,20 @@
+#!/bin/sh
+# LING OS initramfs 早期标记（init-premount）
+# 关键：预加载 isofs/squashfs/overlay/loop 等模块。
+# live-boot 的 is_supported_fs 只会 modprobe "iso9660"（模块名实际是 isofs），
+# 不预加载则 /proc/filesystems 无 iso9660，live-boot 会误判“找不到 live 介质”。
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in
+    prereqs) prereqs; exit 0 ;;
+esac
+
+for m in isofs squashfs overlay loop sr_mod sd_mod usb-storage uas virtio_blk virtio_pci; do
+    modprobe -q "$m" 2>/dev/null || true
+done
+
+printf '<6>LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > /dev/kmsg 2>/dev/null || true
+for c in /dev/ttyAMA0 /dev/ttyS0; do
+    [ -e "$c" ] && printf 'LINGOS-INITRAMFS-START kernel=%s\n' "$(uname -r)" > "$c" 2>/dev/null || true
+done
+exit 0

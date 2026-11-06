@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "default": "L1",
+  "levels": {
+    "L0": {
+      "name": "兼容",
+      "telemetry": false,
+      "network_default_deny": false,
+      "dns_encrypted": true,
+      "mac_random": true,
+      "ai_cloud": false,
+      "location": "coarse",
+      "vnc": false
+    },
+    "L1": {
+      "name": "增强",
+      "telemetry": false,
+      "network_default_deny": false,
+      "dns_encrypted": true,
+      "mac_random": true,
+      "ai_cloud": false,
+      "location": "coarse",
+      "vnc": false
+    },
+    "L2": {
+      "name": "严格",
+      "telemetry": false,
+      "network_default_deny": true,
+      "dns_encrypted": true,
+      "mac_random": true,
+      "ai_cloud": false,
+      "location": "manual",
+      "vnc": false
+    },
+    "L3": {
+      "name": "极端",
+      "telemetry": false,
+      "network_default_deny": true,
+      "dns_encrypted": true,
+      "mac_random": true,
+      "ai_cloud": false,
+      "location": "none",
+      "vnc": false,
+      "vpn_required": true
+    },
+    "L4": {
+      "name": "MAX",
+      "telemetry": false,
+      "network_default_deny": true,
+      "dns_encrypted": true,
+      "mac_random": true,
+      "ai_cloud": false,
+      "location": "none",
+      "vnc": false,
+      "deny_all": true,
+      "manual_approval": true
+    }
+  }
+}
