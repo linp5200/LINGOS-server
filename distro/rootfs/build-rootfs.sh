@@ -22,17 +22,11 @@ trap 'rm -rf "$WORK"' EXIT
 
 echo "==> 构建 Ubuntu noble $DEBARCH minbase rootfs"
 PKGS="python3,python3-requests,ca-certificates,curl,rsync,libseccomp2,libsqlite3-0,libmosquitto1,libssl3,libcurl4,procps,iproute2,tzdata,locales,tar,zstd,xz-utils,util-linux,kmod"
-# debootstrap is the stable default; mmdebstrap is opt-in.
-if [ "$LINGOS_USE_MMDEBSTRAP" = "1" ] && command -v mmdebstrap >/dev/null 2>&1; then
-  MODE=unshare
-  [ "$(id -u)" = "0" ] && MODE=root
-  mmdebstrap --mode="$MODE" --arch="$DEBARCH" --variant=minbase \
-    --include="$PKGS" noble "$R" http://ports.ubuntu.com/ubuntu-ports
-else
-  debootstrap --arch="$DEBARCH" --variant=minbase \
-    --components=main,restricted,universe,multiverse \
-    --include="$PKGS" noble "$R" http://ports.ubuntu.com/ubuntu-ports
-fi
+# debootstrap is the stable default (mmdebstrap's chroot/unshare modes are
+# not available on all hosted runners).
+debootstrap --arch="$DEBARCH" --variant=minbase \
+  --components=main,restricted,universe,multiverse \
+  --include="$PKGS" noble "$R" http://ports.ubuntu.com/ubuntu-ports
 
 echo "==> 编译 LING OS C 组件（若尚未构建）"
 cd "$ROOT"
