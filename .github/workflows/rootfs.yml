@@ -5,6 +5,7 @@ name: rootfs
 on:
   workflow_dispatch:
   push:
+    branches: ['0.13-dev']
     tags: ['v0.13*']
 
 permissions:
