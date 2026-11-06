@@ -38,33 +38,52 @@ cat > "$PREFIX/bin/lingos" <<'EOF'
 set -u
 BASE="${PREFIX:-$HOME/../usr}/var/lib/lingos"
 ROOTFS="${LINGOS_ROOTFS:-$BASE/rootfs}"
-LAN="${LINGOS_LAN:-0}"
-[ "${1:-}" = "--lan" ] && LAN=1
 [ -d "$ROOTFS/LINGOS" ] || { echo "rootfs 未安装：$ROOTFS"; exit 2; }
+MODE="${1:-web}"
+LAN="${LINGOS_LAN:-0}"
+case "$MODE" in
+  --lan) LAN=1; MODE=web ;;
+  --proot) MODE=proot ;;
+esac
+[ "${2:-}" = "--lan" ] && LAN=1
 if command -v termux-wake-lock >/dev/null 2>&1; then
   timeout 3 termux-wake-lock >/dev/null 2>&1 || true
 fi
-EXTRA=""
-[ -d /sdcard ] && EXTRA="$EXTRA -b /sdcard"
-echo "LING OS: http://127.0.0.1:8080  (LAN=$LAN)"
 if command -v termux-notification >/dev/null 2>&1; then
   timeout 3 termux-notification --title "LING OS" --content "Web 桌面已启动：http://127.0.0.1:8080" >/dev/null 2>&1 || true
 fi
-# Termux's termux-exec injects LD_PRELOAD; proot inherits it and fails with
-# ENOSYS for execve/chmod/chdir. Disable it for the proot process.
-unset LD_PRELOAD
-export PROOT_NO_SECCOMP=1
-proot --link2symlink -0 -r "$ROOTFS" \
-  -b /dev -b /proc -b /sys $EXTRA \
-  -w /LINGOS \
-  /usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  TERM=xterm-256color LANG=C.UTF-8 LINGOS_LAN="$LAN" \
-  /bin/bash -lc '/LINGOS/start-web.sh'
-rc=$?
-if command -v termux-wake-unlock >/dev/null 2>&1; then
-  timeout 3 termux-wake-unlock >/dev/null 2>&1 || true
+
+if [ "$MODE" = "proot" ]; then
+  EXTRA=""
+  [ -d /sdcard ] && EXTRA="$EXTRA -b /sdcard"
+  echo "LING OS (proot): http://127.0.0.1:8080  (LAN=$LAN)"
+  # termux-exec 的 LD_PRELOAD 会让 proot 返回 ENOSYS；启动前清除。
+  unset LD_PRELOAD
+  export PROOT_NO_SECCOMP=1
+  proot --link2symlink -0 -r "$ROOTFS" \
+    -b /dev -b /proc -b /sys $EXTRA \
+    -w /LINGOS \
+    /usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TERM=xterm-256color LANG=C.UTF-8 LINGOS_LAN="$LAN" \
+    /bin/bash -lc '/LINGOS/start-web.sh'
+  rc=$?
+  if command -v termux-wake-unlock >/dev/null 2>&1; then
+    timeout 3 termux-wake-unlock >/dev/null 2>&1 || true
+  fi
+  exit $rc
 fi
-exit $rc
+
+# 默认：Termux 原生 Python 直跑 Web 桌面，不依赖 proot。
+# 适用于 Android 14+/16 上 proot 被 seccomp/内核限制的设备。
+echo "LING OS: http://127.0.0.1:8080  (LAN=$LAN)"
+PY="${LINGOS_PYTHON:-${PREFIX:-/data/data/com.termux/files/usr}/bin/python3}"
+[ -x "$PY" ] || PY="$(command -v python3 || echo python3)"
+DATA="${LINGOS_DATA:-$HOME/.lingos/data}"
+mkdir -p "$DATA" || { echo "无法创建数据目录：$DATA"; exit 3; }
+if [ "$LAN" = "1" ]; then
+  exec "$PY" "$ROOTFS/LINGOS/services/lingos_web/server.py" --root "$DATA" --web "$ROOTFS/LINGOS/webdesk" --lan
+fi
+exec "$PY" "$ROOTFS/LINGOS/services/lingos_web/server.py" --root "$DATA" --web "$ROOTFS/LINGOS/webdesk"
 EOF
 chmod +x "$PREFIX/bin/lingos"
 rm -rf "$ROOTFS.old" "$TMP/new"
