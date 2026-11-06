@@ -9,10 +9,10 @@
 - [x] Web 桌面（DSH/终末地风格、浅/深色、PWA/全屏）
 - [x] rootfs 构建脚本 + Termux 安装/启动脚本
 - [x] platform 能力矩阵
-- [x] tests/test_lingos_web.py 12 项；validate-syntax 全通过
-- [ ] rootfs arm64 实际构建（rootfs.yml CI）与 Termux 真机启动
-- [x] lingosd 全量编译/链接（aarch64，rc=0）
-- [ ] 其余 8 个二进制全量编译（CI make）
+- [x] tests/test_lingos_web.py 13 项；validate-syntax 全通过
+- [x] rootfs arm64 实际构建（CI run 42230639457，109MB）
+- [x] 9 个二进制全量编译（CI 编译步骤 + rootfs 装配成功）
+- [ ] Termux 真机安装/8080/重启保活（artifact 114MB，需先生侧验证）
 
 ## 0.13.1 能控家
 - [x] 设备抽象/管理器；虚拟设备完整
@@ -43,13 +43,14 @@
 - [x] App WebSocket 2939 token 同步（C auth 帧；真机联调待）
 - [ ] 后台保活真机验证
 - [x] 备份 API（/api/backup tar.gz）
-- [ ] 用户指南/恢复 API
+- [x] 用户指南（Termux/设备/ACL/备份）
+- [ ] 恢复 API
 
 ## 最终门禁
-- [ ] scripts/validate-syntax.sh 通过
-- [ ] tests/test_lingos_web.py 全通过
-- [ ] C 全量 make 通过（CI）
-- [ ] rootfs arm64 构建产物 + sha256
+- [x] scripts/validate-syntax.sh 通过
+- [x] tests/test_lingos_web.py 全通过（13 项）
+- [x] C 全量 make 通过（CI 编译 + rootfs 装配）
+- [x] rootfs arm64 构建产物 + sha256（CI run 42230639457，109MB）
 - [ ] Termux 安装→8080 登录→设备/文件/ACL→重启保活
 - [ ] 逐项核对本表，无未完成项
-- [ ] 先生确认后提交/推送（不自动发布）
+- [ ] 最终合并/推送 main（当前仅 dev 分支用于 CI）

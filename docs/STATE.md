@@ -14,7 +14,7 @@
 ## 0.13.0 进行中
 - [x] 0.13 路线/状态/决策文档
 - [x] P0：WS 栈溢出、token 严格校验、文件写边界、8088 鉴权、默认 loopback
-- [x] rootfs 构建 + Termux 安装脚本（代码完成；arm64 实际构建待 CI）
+- [x] rootfs 构建 + Termux 安装脚本（CI 成功：109MB tar.zst；Termux 真机待验证）
 - [x] lingos-web 8080 服务（认证/设备/文件/安全/AI/命令代理/审计导出/备份，13 项单测通过）
 - [x] Web 桌面骨架（DSH/终末地风格、浅/深色、PWA/全屏、应用视图）
 - [x] 平台抽象/能力矩阵（platform/README.md）
@@ -24,7 +24,7 @@
 - [x] API Token / 局域网配对码 / Termux wake-lock 保活
 - [x] 通知中心 + 最小化/任务栏恢复（视图级）
 - [x] App WS token 同步（写入 /LINGOS/state/tokens.json）
-- [ ] 多窗口拖拽、后台保活真机、其余 8 个二进制/rootfs 构建（0.13.3 收尾）
+- [ ] Termux 真机安装/8080/重启保活、多窗口拖拽（0.13.3 收尾）
 
 ## 0.12.0 已知问题（冻结，不修）
 - stage7 rsync rc24 被当致命错误；live LightDM 接管；手动/live 无 TTY。

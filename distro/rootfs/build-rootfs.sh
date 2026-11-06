@@ -69,17 +69,23 @@ cat > "$R/LINGOS/start-web.sh" <<'EOF'
 set -u
 cd /LINGOS || exit 1
 mkdir -p log run
-[ -x ./lingos.sh ] && ./lingos.sh start >>log/lingos-start.log 2>&1 || true
+# Backend may be slow on first start; never block the Web desktop forever.
+[ -x ./lingos.sh ] && timeout 8 ./lingos.sh start >>log/lingos-start.log 2>&1 || true
 if [ "${LINGOS_LAN:-0}" = "1" ]; then
-  exec python3 /LINGOS/services/lingos_web/server.py --root /LINGOS --web /LINGOS/webdesk --lan
+  exec env PYTHONDONTWRITEBYTECODE=1 python3 /LINGOS/services/lingos_web/server.py --root /LINGOS --web /LINGOS/webdesk --lan
 else
-  exec python3 /LINGOS/services/lingos_web/server.py --root /LINGOS --web /LINGOS/webdesk
+  exec env PYTHONDONTWRITEBYTECODE=1 python3 /LINGOS/services/lingos_web/server.py --root /LINGOS --web /LINGOS/webdesk
 fi
 EOF
 chmod +x "$R/LINGOS/start-web.sh"
 
 # 禁用 rootfs 内的 systemd 服务启动（proot 无 systemd）
 rm -f "$R/etc/systemd/system/multi-user.target.wants/"* 2>/dev/null || true
+# debootstrap 会创建 /dev 设备节点；Termux/proot 解包时无法 mknod，
+# 且 proot 会绑定宿主 /dev。保留空目录，避免安装时 tar 报错。
+rm -rf "$R/dev"
+mkdir -p "$R/dev"
+rm -rf "$R/proc"/* "$R/sys"/* "$R/run"/* 2>/dev/null || true
 
 echo "==> 打包"
 NAME="LINGOS_rootfs_arm64_${VER}.tar.zst"

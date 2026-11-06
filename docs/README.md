@@ -37,6 +37,7 @@
 - [0.13 路线与实施计划](LINGOS-0.13-路线与实施计划.md)
 - [0.13 完成检查表](LINGOS-0.13-完成检查表.md)
 - [0.13 App 接入](LINGOS-0.13-App接入.md)
+- [0.13 用户指南](LINGOS-0.13-用户指南.md)
 - [0.12.0 代码审查报告](LINGOS-0.12.0-代码审查报告-20261106.md)
 - [平台能力矩阵](../platform/README.md)
 - [Termux rootfs](../distro/rootfs/README.md)
