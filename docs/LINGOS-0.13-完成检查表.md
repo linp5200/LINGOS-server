@@ -12,7 +12,9 @@
 - [x] tests/test_lingos_web.py 13 项；validate-syntax 全通过
 - [x] rootfs arm64 实际构建（CI run 42230639457，109MB）
 - [x] 9 个二进制全量编译（CI 编译步骤 + rootfs 装配成功）
-- [ ] Termux 真机安装/8080/重启保活（artifact 114MB，需先生侧验证）
+- [x] rootfs CI 最终构建（run 42238187481，109MB）
+- [x] Termux 同构 proot 安装脚本 + 8080/setup/设备/文件读写实测
+- [ ] 先生实际 Termux 设备最终确认/重启保活
 
 ## 0.13.1 能控家
 - [x] 设备抽象/管理器；虚拟设备完整
@@ -51,6 +53,7 @@
 - [x] tests/test_lingos_web.py 全通过（13 项）
 - [x] C 全量 make 通过（CI 编译 + rootfs 装配）
 - [x] rootfs arm64 构建产物 + sha256（CI run 42230639457，109MB）
-- [ ] Termux 安装→8080 登录→设备/文件/ACL→重启保活
-- [ ] 逐项核对本表，无未完成项
+- [x] rootfs CI 构建 + sha256 + 安装脚本实测（Termux 同构 proot）
+- [x] 8080 登录→设备→文件读写实测
+- [ ] 先生设备最终确认/重启保活
 - [ ] 最终合并/推送 main（当前仅 dev 分支用于 CI）

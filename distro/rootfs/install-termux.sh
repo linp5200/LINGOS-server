@@ -32,6 +32,7 @@ rm -rf "$ROOTFS.old"
 [ -d "$ROOTFS" ] && mv "$ROOTFS" "$ROOTFS.old"
 mv "$TMP/new" "$ROOTFS"
 
+mkdir -p "$PREFIX/bin"
 cat > "$PREFIX/bin/lingos" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/sh
 set -u
