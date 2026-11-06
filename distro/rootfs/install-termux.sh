@@ -50,6 +50,10 @@ echo "LING OS: http://127.0.0.1:8080  (LAN=$LAN)"
 if command -v termux-notification >/dev/null 2>&1; then
   timeout 3 termux-notification --title "LING OS" --content "Web 桌面已启动：http://127.0.0.1:8080" >/dev/null 2>&1 || true
 fi
+# Termux's termux-exec injects LD_PRELOAD; proot inherits it and fails with
+# ENOSYS for execve/chmod/chdir. Disable it for the proot process.
+unset LD_PRELOAD
+export PROOT_NO_SECCOMP=1
 proot --link2symlink -0 -r "$ROOTFS" \
   -b /dev -b /proc -b /sys $EXTRA \
   -w /LINGOS \
