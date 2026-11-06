@@ -14,7 +14,7 @@
 ## 0.13.0 进行中
 - [x] 0.13 路线/状态/决策文档
 - [x] P0：WS 栈溢出、token 严格校验、文件写边界、8088 鉴权、默认 loopback
-- [x] rootfs 构建 + Termux 安装脚本（CI run 42242489520 成功；Termux 同构 proot 安装/8080 实测）
+- [x] rootfs 构建 + Termux 安装脚本（CI run 42249413144；实际 Termux 前缀安装/8080 实测）
 - [x] lingos-web 8080 服务（认证/设备/文件/安全/AI/命令代理/审计导出/备份/恢复，14 项单测通过）
 - [x] Web 桌面骨架（DSH/终末地风格、浅/深色、PWA/全屏、应用视图）
 - [x] 平台抽象/能力矩阵（platform/README.md）

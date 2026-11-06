@@ -41,12 +41,15 @@ ROOTFS="${LINGOS_ROOTFS:-$BASE/rootfs}"
 LAN="${LINGOS_LAN:-0}"
 [ "${1:-}" = "--lan" ] && LAN=1
 [ -d "$ROOTFS/LINGOS" ] || { echo "rootfs 未安装：$ROOTFS"; exit 2; }
-command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
+if command -v termux-wake-lock >/dev/null 2>&1; then
+  timeout 3 termux-wake-lock >/dev/null 2>&1 || true
+fi
 EXTRA=""
 [ -d /sdcard ] && EXTRA="$EXTRA -b /sdcard"
 echo "LING OS: http://127.0.0.1:8080  (LAN=$LAN)"
-command -v termux-notification >/dev/null 2>&1 && \
-  termux-notification --title "LING OS" --content "Web 桌面已启动：http://127.0.0.1:8080" >/dev/null 2>&1 || true
+if command -v termux-notification >/dev/null 2>&1; then
+  timeout 3 termux-notification --title "LING OS" --content "Web 桌面已启动：http://127.0.0.1:8080" >/dev/null 2>&1 || true
+fi
 proot --link2symlink -0 -r "$ROOTFS" \
   -b /dev -b /proc -b /sys $EXTRA \
   -w /LINGOS \
@@ -54,7 +57,9 @@ proot --link2symlink -0 -r "$ROOTFS" \
   TERM=xterm-256color LANG=C.UTF-8 LINGOS_LAN="$LAN" \
   /bin/bash -lc '/LINGOS/start-web.sh'
 rc=$?
-command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true
+if command -v termux-wake-unlock >/dev/null 2>&1; then
+  timeout 3 termux-wake-unlock >/dev/null 2>&1 || true
+fi
 exit $rc
 EOF
 chmod +x "$PREFIX/bin/lingos"

@@ -10,9 +10,10 @@
 - [x] rootfs 构建脚本 + Termux 安装/启动脚本
 - [x] platform 能力矩阵
 - [x] tests/test_lingos_web.py 14 项（含恢复）；validate-syntax 全通过
-- [x] rootfs arm64 最终构建（CI run 42242489520，109MB，含恢复 API）
+- [x] rootfs arm64 最终构建（CI run 42249413144，114,103,873 B，含恢复 API 与 0.12 合并）
 - [x] 9 个二进制全量编译（CI 编译步骤 + rootfs 装配成功）
-- [x] Termux 同构 proot 安装脚本 + 8080/setup/设备/文件读写实测
+- [x] Termux 实际前缀安装（/data/data/com.termux/files/usr）+ 8080 启动实测
+- [x] Termux 同构 proot 安装脚本 + setup/设备/文件读写实测
 - [ ] 先生实际 Termux 设备最终确认/重启保活
 
 ## 0.13.1 能控家
@@ -52,8 +53,8 @@
 - [x] scripts/validate-syntax.sh 通过
 - [x] tests/test_lingos_web.py 全通过（14 项）
 - [x] C 全量 make 通过（CI 编译 + rootfs 装配）
-- [x] rootfs arm64 最终构建 + sha256（CI run 42242489520，109MB）
-- [x] 安装脚本实测（Termux 同构 proot）
-- [x] 8080 登录→设备→文件读写实测
-- [ ] 先生设备最终确认/重启保活
-- [ ] 最终合并/推送 main（当前仅 dev 分支用于 CI）
+- [x] rootfs arm64 最终构建 + sha256（CI run 42249413144，114,103,873 B）
+- [x] 安装脚本实测（实际 Termux 前缀 /data/data/com.termux/files/usr）
+- [x] 8080 首页/health 200 实测
+- [x] main 合并/推送（cbe8d00，含 0.12 历史）
+- [ ] 手机端最终人工确认/Android 重启后保活（无法由 CI 代替）
