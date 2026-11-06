@@ -35,6 +35,13 @@ jobs:
             tail -120 /tmp/rootfs-build.log
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
+      - name: 上传构建日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-build-log
+          path: /tmp/rootfs-build.log
+          if-no-files-found: warn
       - name: 上传 rootfs
         uses: actions/upload-artifact@v4
         with:
