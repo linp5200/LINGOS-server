@@ -25,7 +25,16 @@ jobs:
       - name: 编译
         run: make -j"$(nproc)"
       - name: 构建 rootfs
-        run: sudo bash distro/rootfs/build-rootfs.sh
+        run: |
+          set -o pipefail
+          set +e
+          sudo bash distro/rootfs/build-rootfs.sh 2>&1 | tee /tmp/rootfs-build.log
+          rc=$?
+          {
+            echo "## rootfs build rc=$rc"
+            tail -120 /tmp/rootfs-build.log
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
       - name: 上传 rootfs
         uses: actions/upload-artifact@v4
         with:
