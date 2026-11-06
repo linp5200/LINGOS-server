@@ -21,7 +21,8 @@ R="$WORK/rootfs"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "==> 构建 Ubuntu noble $DEBARCH minbase rootfs"
-PKGS="python3,python3-requests,ca-certificates,curl,rsync,libseccomp2,libsqlite3-0,libmosquitto1,libssl3,libcurl4,procps,iproute2,tzdata,locales,tar,zstd,xz-utils,util-linux,kmod"
+# noble uses the t64 transition package names for openssl/curl.
+PKGS="python3,python3-requests,ca-certificates,curl,rsync,libseccomp2,libsqlite3-0,libmosquitto1,libssl3t64,libcurl4t64,procps,iproute2,tzdata,locales,tar,zstd,xz-utils,util-linux,kmod"
 # debootstrap is the stable default (mmdebstrap's chroot/unshare modes are
 # not available on all hosted runners).
 debootstrap --arch="$DEBARCH" --variant=minbase \
