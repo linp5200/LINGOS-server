@@ -323,6 +323,22 @@
     });
     el('exportAuditBtn').addEventListener('click', function(){ window.location.href = '/api/audit/export'; });
     el('backupBtn').addEventListener('click', function(){ window.location.href = '/api/backup'; });
+    el('restoreBtn').addEventListener('click', function(){ el('restoreFile').click(); });
+    el('restoreFile').addEventListener('change', function(){
+      var f = this.files && this.files[0]; if(!f) return;
+      var k = rootKey(); if(!k) return;
+      if(!confirm('恢复将覆盖当前数据库、文件和策略，确定继续？')) return;
+      var input = this, reader = new FileReader();
+      reader.onload = function(){
+        fetch('/api/restore', { method:'POST', headers:{'Content-Type':'application/gzip','X-Lingos-Root-Key':k}, body:reader.result })
+          .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ if(!r.ok) throw new Error(j.error || ('HTTP '+r.status)); return j; }); })
+          .then(function(){ toast('恢复完成，正在刷新'); setTimeout(function(){ location.reload(); }, 600); })
+          .catch(function(e){ toast('恢复失败：' + e.message); });
+      };
+      reader.onerror = function(){ toast('读取备份失败'); };
+      reader.readAsArrayBuffer(f);
+      input.value = '';
+    });
     el('refreshFiles').addEventListener('click', function(){ loadFiles(S.filePath); });
     el('refreshSecurity').addEventListener('click', loadSecurity);
     el('saveFile').addEventListener('click', saveFile);

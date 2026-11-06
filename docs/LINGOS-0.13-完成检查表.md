@@ -9,7 +9,7 @@
 - [x] Web 桌面（DSH/终末地风格、浅/深色、PWA/全屏）
 - [x] rootfs 构建脚本 + Termux 安装/启动脚本
 - [x] platform 能力矩阵
-- [x] tests/test_lingos_web.py 13 项；validate-syntax 全通过
+- [x] tests/test_lingos_web.py 14 项（含恢复）；validate-syntax 全通过
 - [x] rootfs arm64 最终构建（CI run 42240443130，109MB，/dev 节点已排除）
 - [x] 9 个二进制全量编译（CI 编译步骤 + rootfs 装配成功）
 - [x] Termux 同构 proot 安装脚本 + 8080/setup/设备/文件读写实测
@@ -44,12 +44,13 @@
 - [x] App WebSocket 2939 token 同步（C auth 帧；真机联调待）
 - [ ] 后台保活真机验证
 - [x] 备份 API（/api/backup tar.gz）
+- [x] 恢复 API（/api/restore，root key + 归档校验 + SQLite 完整性）
 - [x] 用户指南（Termux/设备/ACL/备份）
-- [ ] 恢复 API
+- [x] 恢复 API 与 UI（/api/restore + 设置页恢复备份）
 
 ## 最终门禁
 - [x] scripts/validate-syntax.sh 通过
-- [x] tests/test_lingos_web.py 全通过（13 项）
+- [x] tests/test_lingos_web.py 全通过（14 项）
 - [x] C 全量 make 通过（CI 编译 + rootfs 装配）
 - [x] rootfs arm64 最终构建 + sha256（CI run 42240443130，109MB）
 - [x] 安装脚本实测（Termux 同构 proot）

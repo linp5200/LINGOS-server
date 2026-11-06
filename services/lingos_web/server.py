@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import secrets
@@ -38,6 +39,7 @@ VERSION = "0.13.0"
 COOKIE = "lingos_session"
 SESSION_TTL = 7 * 24 * 3600
 MAX_BODY = 8 * 1024 * 1024
+MAX_RESTORE = 64 * 1024 * 1024
 LEVELS = {
     "L0": ("关闭", "不做限制，兼容优先"),
     "L1": ("常规", "推荐默认，阻止常见跟踪"),
@@ -371,6 +373,43 @@ class Store:
             return need in ("read", "write")
         return perm == need or (need == "read" and perm in ("read", "rw"))
 
+    def restore(self, db_file: Path, files_dir: Path | None, policy_file: Path | None) -> None:
+        """Restore a backup into the live store (DB via SQLite backup API)."""
+        src = sqlite3.connect(str(db_file))
+        try:
+            ok = src.execute("PRAGMA integrity_check").fetchone()[0]
+            if ok != "ok":
+                raise ValueError("backup database integrity check failed")
+            tables = {r[0] for r in src.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "users" not in tables:
+                raise ValueError("backup database is not a LING OS database")
+            with self.lock:
+                self.conn.commit()
+                src.backup(self.conn)
+                self.conn.commit()
+        finally:
+            src.close()
+
+        if files_dir is not None:
+            staged = self.data / ".files-restore"
+            old = self.data / ".files-pre-restore"
+            shutil.rmtree(staged, ignore_errors=True)
+            shutil.rmtree(old, ignore_errors=True)
+            shutil.copytree(files_dir, staged)
+            if self.files.exists():
+                self.files.rename(old)
+            staged.rename(self.files)
+            shutil.rmtree(old, ignore_errors=True)
+
+        if policy_file is not None:
+            target = self.root / "system" / "config" / "security-policy.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(".json.tmp")
+            shutil.copy2(policy_file, tmp)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, target)
+
     def fs_path(self, rel: str) -> Path:
         rel = urllib.parse.unquote(rel or "/")
         if ".." in Path(rel).parts:
@@ -400,6 +439,54 @@ class Store:
 
 def check_password(pw: str) -> bool:
     return isinstance(pw, str) and 8 <= len(pw) <= 200
+
+
+def safe_extract_backup(raw: bytes, dest: Path):
+    """Validate a LING OS backup archive and extract it into dest.
+
+    Only webdesk.db, files/ and security-policy.json are accepted; no absolute
+    paths, traversal, links or device nodes.
+    """
+    if len(raw) > MAX_RESTORE:
+        raise ValueError("backup too large")
+    try:
+        tar = tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz")
+    except tarfile.TarError as e:
+        raise ValueError("invalid backup archive") from e
+    with tar:
+        members = tar.getmembers()
+        if not members or len(members) > 20000:
+            raise ValueError("invalid backup archive")
+        total = 0
+        seen = set()
+        for m in members:
+            name = m.name.replace("\\", "/")
+            parts = [p for p in name.split("/") if p not in ("", ".")]
+            norm = "/".join(parts)
+            if not norm or name.startswith("/") or any(p == ".." for p in parts):
+                raise ValueError("unsafe backup path")
+            if norm in seen:
+                raise ValueError("duplicate backup entry")
+            seen.add(norm)
+            if not (norm == "webdesk.db" or norm == "security-policy.json"
+                    or norm == "files" or norm.startswith("files/")):
+                raise ValueError("unexpected backup entry: " + norm[:80])
+            if m.issym() or m.islnk() or m.isdev():
+                raise ValueError("links/devices not allowed in backup")
+            if m.isfile():
+                total += m.size
+                if total > 512 * 1024 * 1024:
+                    raise ValueError("uncompressed backup too large")
+        tar.extractall(dest, members=members, filter="data")
+    db = dest / "webdesk.db"
+    if not db.is_file():
+        raise ValueError("backup has no webdesk.db")
+    files = dest / "files"
+    policy = dest / "security-policy.json"
+    return db, (files if files.is_dir() else None), (policy if policy.is_file() else None)
+
+
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -433,6 +520,16 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(raw.decode("utf-8"))
         except Exception:
             return {}
+
+    def _read_raw(self, limit: int) -> bytes:
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+            if n <= 0 or n > limit:
+                return b""
+            raw = self.rfile.read(n)
+            return raw if len(raw) == n else b""
+        except Exception:
+            return b""
 
     def _cookie(self) -> str:
         raw = self.headers.get("Cookie", "")
@@ -678,7 +775,41 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_ok():
             self._json(403, {"error": "bad origin"})
             return
-        body = self._read_json()
+        body = {} if path == "/api/restore" else self._read_json()
+        if path == "/api/restore":
+            usr = self._require("admin")
+            if not usr:
+                return
+            if not self._require_root():
+                return
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                n = 0
+            if n <= 0:
+                self._json(400, {"error": "empty backup"})
+                return
+            if n > MAX_RESTORE:
+                self._json(413, {"error": "backup too large"})
+                return
+            raw = self._read_raw(MAX_RESTORE)
+            if not raw:
+                self._json(400, {"error": "empty backup"})
+                return
+            tmpdir = Path(tempfile.mkdtemp(prefix="lingos-restore-"))
+            try:
+                db, files, policy = safe_extract_backup(raw, tmpdir)
+                self.store.restore(db, files, policy)
+                self.store.event("restore", f"{usr['username']} restored backup ({len(raw)} bytes)")
+                self._json(200, {"ok": True, "bytes": len(raw), "restored_at": iso()})
+            except ValueError as e:
+                self._json(400, {"error": str(e)})
+            except Exception as e:
+                log("restore failed:", e)
+                self._json(500, {"error": "restore failed", "detail": str(e)})
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            return
         if path == "/api/setup":
             if self.store.user_count() > 0:
                 self._json(409, {"error": "already initialized"})

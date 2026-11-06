@@ -136,6 +136,47 @@ class WebTest(unittest.TestCase):
         self.assertIn("gzip", ctype)
         self.assertEqual(data[:2], b"\x1f\x8b")
 
+    def raw_post(self, path, data, headers):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=8)
+        h = dict(headers or {})
+        h["Content-Type"] = "application/gzip"
+        if WebTest.cookie:
+            h["Cookie"] = WebTest.cookie
+        conn.request("POST", path, body=data, headers=h)
+        r = conn.getresponse()
+        body = r.read().decode("utf-8", "replace")
+        st = r.status
+        conn.close()
+        return st, body
+
+    def test_14_restore_backup(self):
+        st, _ = self.req("POST", "/api/fs/write", {"path": "/restore.txt", "content": "before"})
+        self.assertEqual(st, 200)
+        st, body = self.req("POST", "/api/devices", {"name": "before-restore", "type": "light"})
+        self.assertEqual(st, 200)
+        st, ctype, backup = self.raw_get("/api/backup")
+        self.assertEqual(st, 200)
+        self.assertIn("gzip", ctype)
+        self.assertGreater(len(backup), 50)
+        st, _ = self.req("POST", "/api/fs/write", {"path": "/restore.txt", "content": "after"})
+        self.assertEqual(st, 200)
+        st, _ = self.req("POST", "/api/devices", {"name": "after-restore", "type": "light"})
+        self.assertEqual(st, 200)
+        st, body = self.raw_post("/api/restore", backup, {"X-Lingos-Root-Key": WebTest.root_key})
+        self.assertEqual(st, 200, body)
+        self.assertTrue(json.loads(body)["ok"])
+        st, body = self.req("GET", "/api/fs/read?path=/restore.txt")
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(body)["content"], "before")
+        st, body = self.req("GET", "/api/devices")
+        names = [d["name"] for d in json.loads(body)["devices"]]
+        self.assertIn("before-restore", names)
+        self.assertNotIn("after-restore", names)
+        st, _ = self.raw_post("/api/restore", b"not-a-gzip", {"X-Lingos-Root-Key": WebTest.root_key})
+        self.assertEqual(st, 400)
+        st, _ = self.raw_post("/api/restore", backup, {})
+        self.assertEqual(st, 403)
+
     def test_12_root_key_and_api_token(self):
         st, _ = self.req("POST", "/api/acl", {"subject": "bob", "path": "/x", "perm": "read"})
         self.assertEqual(st, 403)
