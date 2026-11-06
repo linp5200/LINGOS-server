@@ -18,8 +18,8 @@ permissions:
   contents: write
 
 env:
-  # 【0.7.0】统一版本源：VERSION 文件（单一事实源——防多处漂移）
-  VERSION: 0.9.0
+  # 版本单一事实源：仓库 VERSION 文件（不再硬编码）
+  VERSION_FILE: VERSION
 
 jobs:
   build:
@@ -52,7 +52,7 @@ jobs:
           make 2>&1 | tail -40
 
       - name: 全捆打包（lib/ 全捆 + venv + manifest）
-        run: RELEASE_VER=$VERSION bash scripts/bundle.sh dist
+        run: RELEASE_VER="$(cat VERSION)" bash scripts/bundle.sh dist
 
       - name: 产物清单
         run: |
