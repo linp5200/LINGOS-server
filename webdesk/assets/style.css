@@ -170,3 +170,29 @@ input[type=text],input:not([type]){width:100%;background:var(--panel2);border:1p
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
 }
+.filter-row{flex-wrap:wrap;margin:10px 0 14px}
+.filter-chip{font:11px var(--mono);border:1px solid var(--border);border-radius:999px;padding:7px 10px;color:var(--muted);background:var(--panel);cursor:pointer;transition:transform .18s var(--ease),border-color .12s,background .12s,color .12s}
+.filter-chip:hover{border-color:var(--accent);color:var(--text)}
+.filter-chip.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);transform:scale(1.04)}
+.brightness{width:100%;height:44px;accent-color:var(--accent);background:transparent}
+.device-state{margin:0;font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:96px;overflow:auto}
+.disclosure{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:12px;padding:10px 0;border:0;border-top:1px solid var(--border);background:transparent;color:var(--text-2);cursor:pointer;font-size:13px}
+.disclosure:hover{color:var(--text)}
+.disclosure-arrow{transition:transform .18s var(--ease);font-size:16px}
+.disclosure[aria-expanded="true"] .disclosure-arrow{transform:rotate(180deg)}
+.disclosure-panel{padding:4px 0 8px;font-size:12px;line-height:1.7;color:var(--text-2)}
+.disclosure-panel p{margin:4px 0}
+.btn,.level-row .btn,.filter-chip{position:relative;overflow:hidden}
+.ripple{position:absolute;border-radius:50%;background:currentColor;opacity:.18;transform:scale(0);animation:ripple .28s ease-out;pointer-events:none}
+@keyframes ripple{to{transform:scale(1);opacity:0}}
+@media (max-width:767px){
+  .filter-row{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px}
+  .filter-chip{flex:none;min-height:44px}
+  .disclosure{min-height:44px}
+}
+.batch-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;border:1px solid var(--accent);border-radius:10px;background:var(--accent-soft)}
+.batch-bar span{font-size:12px;color:var(--accent);margin-right:auto}
+.batch-sel{width:20px;height:20px;accent-color:var(--accent);margin:0 0 4px;align-self:flex-start}
+.device-card.selected{border-color:var(--accent);background:var(--accent-soft)}
+.btn.active{border-color:var(--accent);color:var(--accent)}
+@media (max-width:767px){.batch-bar{position:sticky;top:0;z-index:5}.batch-sel{width:24px;height:24px}}

@@ -75,8 +75,10 @@
     </section>
 
     <section id="view-devices" class="view">
-      <div class="view-head"><div><div class="eyebrow">DEVICES</div><h1>设备</h1></div><div class="row"><button class="btn" id="addDeviceBtn">添加虚拟设备</button><button class="btn" id="discoverBtn">发现设备</button><button class="btn" id="refreshDevices">刷新</button></div></div>
+      <div class="view-head"><div><div class="eyebrow">DEVICES</div><h1>设备</h1></div><div class="row"><button class="btn" id="addDeviceBtn">添加虚拟设备</button><button class="btn" id="discoverBtn">发现设备</button><button class="btn" id="batchBtn">批量</button><button class="btn" id="refreshDevices">刷新</button></div></div>
       <div id="adapterChips" class="row"></div>
+      <div id="deviceFilters" class="row filter-row" aria-label="设备筛选"></div>
+      <div id="batchBar" class="batch-bar hidden"><span id="batchCount">已选 0 台</span><button class="btn" data-batch-cmd="on">全开</button><button class="btn" data-batch-cmd="off">全关</button><button class="btn" id="batchCancel">取消</button></div>
       <div id="deviceGrid" class="grid cards"></div>
       <div class="muted small-note">虚拟设备可用；HA/MQTT/米家适配器在设置中配置。离线优先：局域网设备不依赖云端。</div>
     </section>
@@ -94,7 +96,17 @@
     <section id="view-security" class="view">
       <div class="view-head"><div><div class="eyebrow">SECURITY</div><h1>安全中心</h1></div><button class="btn" id="refreshSecurity">刷新</button></div>
       <div class="grid two">
-        <article class="card"><h2>隐私等级</h2><p class="muted" id="secDesc">--</p><div id="levelBtns" class="level-row"></div></article>
+        <article class="card"><h2>隐私等级</h2><p class="muted" id="secDesc">--</p><div id="levelBtns" class="level-row"></div>
+          <button class="disclosure" data-disclosure="levelHelp" aria-expanded="false" aria-controls="levelHelp">等级说明 <span class="disclosure-arrow" aria-hidden="true">⌄</span></button>
+          <div id="levelHelp" class="disclosure-panel" hidden>
+            <p><b>L0 关闭</b>：不做限制，兼容优先。</p>
+            <p><b>L1 常规</b>：推荐默认，阻止常见跟踪。</p>
+            <p><b>L2 限制</b>：默认拒绝出站，白名单放行。</p>
+            <p><b>L3 严格</b>：最小权限，设备/网络默认关闭。</p>
+            <p><b>L4 MAX</b>：逐次手动批准（高级）。</p>
+            <p class="muted small-note">当前 Web 服务强制文件访问限制；网络/内核级拦截由完整平台执行。</p>
+          </div>
+        </article>
         <article class="card"><h2>审计</h2><div id="auditList" class="list"></div></article>
       </div>
       <div class="muted small-note">Termux 无内核级防火墙；这里应用层策略与审计。完整平台会启用 nft/seccomp。</div>
@@ -111,7 +123,7 @@
       <div class="grid two">
         <article class="card"><h2>外观</h2><p class="muted">浅色 / 深色，自动记忆。</p><div class="row"><button class="btn" id="themeBtn2">切换主题</button><button class="btn" id="fullBtn2">全屏</button></div></article>
         <article class="card"><h2>账户</h2><p class="muted" id="accountInfo">--</p><div class="row"><button class="btn" id="rootKeyBtn">轮换 root key</button><button class="btn" id="appTokenBtn">生成 App Token</button><button class="btn" id="exportAuditBtn">导出审计</button><button class="btn" id="backupBtn">备份</button><button class="btn" id="restoreBtn">恢复备份</button><input type="file" id="restoreFile" accept=".gz,application/gzip" style="display:none"><button class="btn danger" id="logoutBtn">退出登录</button></div></article>
-        <article class="card"><h2>关于</h2><p class="muted">LING OS 0.13.0 · Web 桌面 · Termux rootfs<br>默认仅本机；局域网需启动终端 --lan 并配对。</p></article>
+        <article class="card"><h2>关于</h2><p class="muted">LING OS 0.13.0 · Web 桌面 · Termux rootfs<br>默认仅本机；局域网需启动终端 --lan 并配对。</p><a class="btn" href="/debug.html" target="_blank" rel="noopener">调试控制台</a></article>
         <article class="card"><h2>平台能力</h2><div id="platformCaps" class="list"></div></article>
         <article class="card"><h2>目录访问控制</h2><p class="muted">允许谁访问哪个目录；文件管理器独立应用。</p><div id="aclList" class="list"></div><button class="btn" id="addAclBtn">添加 ACL</button></article>
         <article class="card"><h2>用户</h2><p class="muted">admin 全权；普通用户按 ACL 访问。</p><div id="userList" class="list"></div><button class="btn" id="addUserBtn">添加用户</button></article>

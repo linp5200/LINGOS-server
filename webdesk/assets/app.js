@@ -1,6 +1,6 @@
 'use strict';
 (function(){
-  var S = { health: null, me: null, setup: false, devices: [], security: null, filePath: '/', currentFile: '', apps: [], activeApp: '', minimized: false, events: [] };
+  var S = { health: null, me: null, setup: false, devices: [], security: null, filePath: '/', currentFile: '', apps: [], activeApp: '', minimized: false, events: [], deviceFilter: 'all', batch: false, sel: {} };
   function el(id){ return document.getElementById(id); }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function api(path, opts){
@@ -65,12 +65,16 @@
       S.me = me; showDesktop(); toast(S.setup ? '管理员已创建' : '欢迎回来');
     }).catch(function(e){ el('loginError').textContent = e.message || '登录失败'; });
   }
+  function showLoading(id){
+    var n = el(id); if(n && !n.innerHTML) n.innerHTML = '<div class="empty">加载中…</div>';
+  }
   function showErr(id, err, retry){
     var n = el(id); if(!n) return;
     n.innerHTML = '<div class="load-error">无法加载：' + esc(err && err.message ? err.message : '未知错误') +
       '<button class="link" data-retry="' + esc(retry) + '">重试</button></div>';
   }
   function loadNotifs(){
+    showLoading('notifList');
     api('/api/events').then(function(r){
       S.events = r.events || [];
       var b = el('notifBadge');
@@ -84,6 +88,7 @@
     }).catch(function(e){ showErr('notifList', e, 'notifs'); });
   }
   function loadHome(){
+    showLoading('homeEvents'); showLoading('homeDevices'); showLoading('deviceGrid');
     api('/api/devices').then(function(r){
       S.devices = r.devices || []; S.adapters = r.adapters || [];
       renderHomeDevices(); renderDevices(); renderAdapterChips();
@@ -106,20 +111,55 @@
     if(el('homeDevices')) el('homeDevices').innerHTML = rows || '<div class="muted">暂无设备</div>';
     if(el('statDevices')) el('statDevices').textContent = String(S.devices.filter(function(d){return d.online;}).length);
   }
+  function renderDeviceFilters(){
+    var h = el('deviceFilters'); if(!h) return;
+    var types = ['all','light','lock','sensor','switch','camera'];
+    var labels = {all:'全部',light:'灯',lock:'锁',sensor:'传感器',switch:'开关',camera:'摄像头'};
+    h.innerHTML = types.map(function(t){
+      var n = t === 'all' ? S.devices.length : S.devices.filter(function(d){return d.type === t;}).length;
+      return '<button type="button" class="chip filter-chip ' + (S.deviceFilter === t ? 'active' : '') + '" data-filter="' + t + '" aria-pressed="' + (S.deviceFilter === t) + '">' + labels[t] + ' ' + n + '</button>';
+    }).join('');
+  }
   function renderDevices(){
     var g = el('deviceGrid'); if(!g) return;
-    g.innerHTML = S.devices.map(function(d){
+    renderDeviceFilters();
+    var list = S.devices.filter(function(d){ return S.deviceFilter === 'all' || d.type === S.deviceFilter; });
+    g.innerHTML = list.map(function(d){
+      var sel = S.batch ? '<input type="checkbox" class="batch-sel" data-sel="' + esc(d.id) + '" aria-label="选择 ' + esc(d.name) + '"' + (S.sel[d.id] ? ' checked' : '') + '>' : '';
       var actions = '';
-      if(d.type === 'light') actions = '<button class="btn" data-dev="' + esc(d.id) + '" data-cmd="toggle">开/关</button>';
+      if(d.type === 'light'){
+        actions = '<button class="btn" data-dev="' + esc(d.id) + '" data-cmd="toggle">开/关</button>';
+        if(typeof d.state.brightness === 'number') actions += '<input class="brightness" type="range" min="0" max="100" step="10" value="' + Number(d.state.brightness) + '" data-dev="' + esc(d.id) + '" aria-label="亮度 ' + esc(d.name) + '">';
+      }
       else if(d.type === 'lock') actions = '<button class="btn" data-dev="' + esc(d.id) + '" data-cmd="lock">上锁</button><button class="btn" data-dev="' + esc(d.id) + '" data-cmd="unlock">解锁</button>';
       else actions = '<button class="btn" data-dev="' + esc(d.id) + '" data-cmd="refresh">刷新</button>';
       var del = d.protocol === 'virtual' ? '<button class="btn danger" data-del-dev="' + esc(d.id) + '">删除</button>' : '';
-      return '<article class="card device-card"><div class="dev-head"><div><div class="type">' + esc(d.type.toUpperCase()) + ' / ' + esc(d.protocol) + '</div><h2>' + esc(d.name) + '</h2><small class="muted">' + esc(d.id) + '</small></div><span class="dot ' + (d.online?'':'off') + '"></span></div><pre class="muted" style="margin:0;font-size:11px;white-space:pre-wrap">' + esc(JSON.stringify(d.state, null, 2)) + '</pre><div class="device-actions">' + actions + del + '</div></article>';
-    }).join('') || '<div class="muted">暂无设备</div>';
+      return '<article class="card device-card' + (S.sel[d.id] ? ' selected' : '') + '">' + sel + '<div class="dev-head"><div><div class="type">' + esc(String(d.type).toUpperCase()) + ' / ' + esc(d.protocol) + '</div><h2>' + esc(d.name) + '</h2><small class="muted">' + esc(d.id) + '</small></div><span class="dot ' + (d.online?'':'off') + '"></span></div><pre class="muted device-state">' + esc(JSON.stringify(d.state, null, 2)) + '</pre><div class="device-actions">' + actions + del + '</div></article>';
+    }).join('') || '<div class="empty">没有符合条件的设备</div>';
+    renderBatch();
   }
-  function devCmd(id, cmd){
-    api('/api/devices/' + encodeURIComponent(id) + '/command', { method:'POST', body: JSON.stringify({ cmd: cmd, args:{} }) })
+  function renderBatch(){
+    var bar = el('batchBar'); if(!bar) return;
+    bar.classList.toggle('hidden', !S.batch);
+    var n = Object.keys(S.sel).length;
+    if(el('batchCount')) el('batchCount').textContent = '已选 ' + n + ' 台';
+    if(el('batchBtn')) el('batchBtn').classList.toggle('active', S.batch);
+  }
+  function devCmd(id, cmd, args){
+    api('/api/devices/' + encodeURIComponent(id) + '/command', { method:'POST', body: JSON.stringify({ cmd: cmd, args: args || {} }) })
       .then(function(r){ toast('已发送：' + cmd); loadHome(); }).catch(function(e){ toast(e.message); });
+  }
+  function ripple(btn, ev){
+    if(!btn || !ev || !btn.getBoundingClientRect) return;
+    var r = btn.getBoundingClientRect();
+    var s = document.createElement('span');
+    var size = Math.max(r.width, r.height) * 1.6;
+    s.className = 'ripple';
+    s.style.width = s.style.height = size + 'px';
+    s.style.left = (ev.clientX - r.left - size / 2) + 'px';
+    s.style.top = (ev.clientY - r.top - size / 2) + 'px';
+    btn.appendChild(s);
+    setTimeout(function(){ if(s.parentNode) s.parentNode.removeChild(s); }, 280);
   }
   function showApp(id, minimize){
     var views = document.querySelectorAll('.view');
@@ -212,6 +252,7 @@
     if(el('platformCaps')) el('platformCaps').innerHTML = '<div class="list-row"><div class="grow"><strong>平台</strong><small>' + esc(sec.platform) + '</small></div></div><div class="list-row"><div class="grow"><strong>内核级防火墙</strong><small>Termux 不可用；完整平台启用</small></div></div>';
   }
   function loadSecurity(){
+    showLoading('levelBtns'); showLoading('auditList');
     api('/api/security').then(renderSecurity).catch(function(e){ showErr('levelBtns', e, 'security'); showErr('auditList', e, 'security'); });
   }
   function setLevel(level){
@@ -342,6 +383,8 @@
       api('/api/devices/discover', { method:'POST', body: JSON.stringify({protocol:''}) })
         .then(function(r){ toast('发现 ' + (r.count || 0) + ' 个（需适配器已配置）'); }).catch(function(e){ toast(e.message); });
     });
+    el('batchBtn').addEventListener('click', function(){ S.batch = !S.batch; S.sel = {}; renderDevices(); });
+    el('batchCancel').addEventListener('click', function(){ S.batch = false; S.sel = {}; renderDevices(); });
     el('addAclBtn').addEventListener('click', addAcl);
     el('addUserBtn').addEventListener('click', addUser);
     el('haCfgBtn').addEventListener('click', cfgHA);
@@ -389,8 +432,25 @@
     el('openDevices').addEventListener('click', function(){ showApp('devices'); });
     document.addEventListener('click', function(e){
       var app = e.target.closest('[data-app]'); if(app){ showApp(app.getAttribute('data-app')); return; }
-      var dev = e.target.closest('[data-dev]'); if(dev){ devCmd(dev.getAttribute('data-dev'), dev.getAttribute('data-cmd')); return; }
-      var lv = e.target.closest('[data-level]'); if(lv){ setLevel(lv.getAttribute('data-level')); return; }
+      var bc = e.target.closest('[data-batch-cmd]'); if(bc){
+        var cmd = bc.getAttribute('data-batch-cmd');
+        var ids = Object.keys(S.sel).filter(function(id){
+          var d = S.devices.filter(function(x){return x.id === id;})[0];
+          return d && (d.type === 'light' || d.type === 'switch') && d.online;
+        });
+        if(!ids.length){ toast('没有可批量控制的在线灯/开关'); return; }
+        ids.forEach(function(id){ devCmd(id, cmd); });
+        S.batch = false; S.sel = {}; renderDevices();
+        return;
+      }
+      var fl = e.target.closest('[data-filter]'); if(fl){ S.deviceFilter = fl.getAttribute('data-filter'); renderDevices(); return; }
+      var dc = e.target.closest('[data-disclosure]'); if(dc){
+        var dp = el(dc.getAttribute('aria-controls'));
+        if(dp){ var open = dc.getAttribute('aria-expanded') === 'true'; dc.setAttribute('aria-expanded', String(!open)); dp.hidden = open; }
+        return;
+      }
+      var dev = e.target.closest('[data-dev]'); if(dev && !dev.classList.contains('brightness')){ devCmd(dev.getAttribute('data-dev'), dev.getAttribute('data-cmd')); return; }
+      var lv = e.target.closest('[data-level]'); if(lv){ ripple(lv, e); setLevel(lv.getAttribute('data-level')); return; }
       var fi = e.target.closest('.file-row'); if(fi){ openFile(fi.getAttribute('data-rel'), fi.getAttribute('data-dir') === '1'); return; }
       var tk = e.target.closest('[data-task]'); if(tk){ showApp(tk.getAttribute('data-task'), true); return; }
       var cr = e.target.closest('[data-crumb]'); if(cr){ loadFiles(cr.getAttribute('data-crumb')); return; }
@@ -412,6 +472,15 @@
     var icons = {home:'⌂',devices:'◈',files:'▤',security:'◇',ai:'✦',settings:'⚙'};
     el('startApps').innerHTML = startApps.map(function(id){ return '<button class="start-app" data-app="' + id + '"><div>' + icons[id] + '</div>' + names[id] + '</button>'; }).join('');
     el('fileUp').addEventListener('click', function(){ if(S.filePath !== '/') loadFiles(parentPath(S.filePath)); });
+    document.addEventListener('change', function(e){
+      var br = e.target.closest('.brightness'); if(br){ devCmd(br.getAttribute('data-dev'), 'brightness', { value: Number(br.value) }); return; }
+      var bs = e.target.closest('.batch-sel'); if(bs){
+        var id = bs.getAttribute('data-sel');
+        if(bs.checked) S.sel[id] = true; else delete S.sel[id];
+        renderBatch();
+        var card = bs.closest('.device-card'); if(card) card.classList.toggle('selected', !!S.sel[id]);
+      }
+    });
     if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(function(){}); }
     document.addEventListener('keydown', function(e){ if(e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA'){ e.preventDefault(); el('quickSearch').focus(); } });
     el('quickSearch').addEventListener('keydown', function(e){

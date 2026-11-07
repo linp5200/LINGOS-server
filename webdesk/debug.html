@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LING OS · 调试控制台</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('lingos-theme')||'dark'}catch(e){}</script>
+<link rel="stylesheet" href="/assets/style.css">
+<style>
+body{overflow:auto;background:var(--bg)}
+.debug-wrap{max-width:1100px;margin:0 auto;padding:24px}
+.debug-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.debug-head h1{font:600 22px/1.2 var(--mono);margin:0}
+.debug-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:14px}
+.debug-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;min-width:0}
+.debug-card h2{font:12px var(--mono);letter-spacing:.12em;color:var(--accent2);margin:0 0 10px}
+.debug-card pre{margin:0;max-height:280px;overflow:auto;font:11px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-2)}
+.debug-row{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.debug-row input{flex:1;min-width:200px}
+.debug-out{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:767px){.debug-wrap{padding:14px}.debug-head{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<main class="debug-wrap">
+  <header class="debug-head">
+    <div><div class="eyebrow">DEBUG CONSOLE</div><h1>LING OS 调试控制台</h1><p class="muted">只读诊断：health / 会话 / 设备 / 事件 / 安全。不会执行 shell 或写操作。</p></div>
+    <div class="row"><button class="btn" id="refresh">刷新</button><a class="btn" href="/">返回桌面</a></div>
+  </header>
+  <section class="debug-grid" id="cards">
+    <article class="debug-card"><h2>HEALTH</h2><pre id="health">读取中…</pre></article>
+    <article class="debug-card"><h2>SESSION</h2><pre id="me">读取中…</pre></article>
+    <article class="debug-card"><h2>DEVICES</h2><pre id="devices">读取中…</pre></article>
+    <article class="debug-card"><h2>RECENT EVENTS</h2><pre id="events">读取中…</pre></article>
+    <article class="debug-card"><h2>SECURITY</h2><pre id="security">读取中…</pre></article>
+    <article class="debug-card"><h2>RAW GET</h2><pre id="rawOut" class="debug-out">仅允许 /api/ 开头的 GET。</pre><div class="debug-row"><input id="rawPath" value="/api/health" aria-label="API 路径"><button class="btn" id="rawGo">GET</button></div></article>
+  </section>
+</main>
+<script>
+'use strict';
+(function(){
+  function text(id, value){ var n=document.getElementById(id); if(n) n.textContent=typeof value==='string'?value:JSON.stringify(value,null,2); }
+  function get(path){ return fetch(path,{headers:{'Accept':'application/json'}}).then(function(r){ return r.json().catch(function(){return {}}).then(function(j){ if(!r.ok) throw new Error((j&&j.error)||('HTTP '+r.status)); return j; }); }); }
+  function refresh(){
+    get('/api/health').then(function(j){text('health',j);}).catch(function(e){text('health','失败：'+e.message);});
+    get('/api/me').then(function(j){text('me',j);}).catch(function(e){text('me','未登录或失败：'+e.message);});
+    get('/api/devices').then(function(j){text('devices',j);}).catch(function(e){text('devices','失败：'+e.message);});
+    get('/api/events').then(function(j){text('events',j);}).catch(function(e){text('events','失败：'+e.message);});
+    get('/api/security').then(function(j){text('security',j);}).catch(function(e){text('security','失败：'+e.message);});
+  }
+  document.getElementById('refresh').addEventListener('click',refresh);
+  document.getElementById('rawGo').addEventListener('click',function(){
+    var p=document.getElementById('rawPath').value.trim();
+    if(p.indexOf('/api/')!==0){ text('rawOut','拒绝：只允许 /api/ 开头的只读路径'); return; }
+    text('rawOut','GET '+p+' …');
+    get(p).then(function(j){text('rawOut',j);}).catch(function(e){text('rawOut','失败：'+e.message);});
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>
