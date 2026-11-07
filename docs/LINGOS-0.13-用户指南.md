@@ -14,7 +14,16 @@
     lingos --lan    # 局域网开放；终端打印 6 位配对码
 
 Android 浏览器打开地址，可“添加到主屏幕”获得全屏 PWA 体验。
+当前 Android 16 上默认使用 Termux 原生 Python 跑 Web（不依赖 proot）；完整 proot 模式可用 `lingos --proot`，但本机 proot 受内核限制可能不可用。
+
 后台保活：Termux 已调用 termux-wake-lock；Android 设置中允许 Termux 后台运行/不优化电池。
+
+### 调试控制台
+桌面 → 设置 → 关于 → 调试控制台，或直接打开：
+
+    http://127.0.0.1:8080/debug.html
+
+只读诊断：health、会话、设备、最近事件、安全状态，以及 `/api/` 开头的只读 GET。不会执行 shell，不接受写操作。
 
 ## 3. 首次设置
 - 设置管理员用户名/密码（至少 8 位）。

@@ -44,7 +44,6 @@
     el('loginHint').textContent = setup ? '创建管理员账户；本机可直接设置，局域网需配对码。' : '本地安全入口。';
     el('loginBtn').textContent = setup ? '创建并进入' : '进入桌面';
     el('pairWrap').classList.toggle('hidden', !(S.health && S.health.lan));
-    el('loginError').textContent = '';
   }
   function showDesktop(){
     el('login').classList.add('hidden'); el('desktop').classList.remove('hidden');
@@ -97,7 +96,12 @@
       var rows = (r.events || []).slice(0,6).map(function(e){ return '<div class="list-row"><span class="dot"></span><div class="grow"><strong>' + esc(e.kind) + '</strong><small>' + esc(e.ts) + ' · ' + esc(e.detail) + '</small></div></div>'; }).join('');
       if(el('homeEvents')) el('homeEvents').innerHTML = rows || '<div class="empty">暂无事件</div>';
     }).catch(function(e){ showErr('homeEvents', e, 'home'); });
-    api('/api/security').then(function(sec){ S.security = sec; renderSecurity(sec); }).catch(function(e){ showErr('levelBtns', e, 'home'); });
+    api('/api/security').then(function(sec){ S.security = sec; renderSecurity(sec); }).catch(function(e){
+      if(el('statSecurity')) el('statSecurity').textContent = '—';
+      if(el('statSecurityName')) el('statSecurityName').textContent = '读取失败';
+      if(el('chipSecurity')) el('chipSecurity').textContent = '安全 未知';
+      showErr('levelBtns', e, 'home');
+    });
     if(S.health){
       el('statPlatform').textContent = (S.health.platform || '--').replace('linux','Termux/Linux');
       el('statUptime').textContent = (S.health.version || '0.13.1');
@@ -120,7 +124,7 @@
       return '<button type="button" class="chip filter-chip ' + (S.deviceFilter === t ? 'active' : '') + '" data-filter="' + t + '" aria-pressed="' + (S.deviceFilter === t) + '">' + labels[t] + ' ' + n + '</button>';
     }).join('');
   }
-  function renderDevices(){
+  function renderDevices(focusSel){
     var g = el('deviceGrid'); if(!g) return;
     renderDeviceFilters();
     var list = S.devices.filter(function(d){ return S.deviceFilter === 'all' || d.type === S.deviceFilter; });
@@ -137,13 +141,14 @@
       return '<article class="card device-card' + (S.sel[d.id] ? ' selected' : '') + '">' + sel + '<div class="dev-head"><div><div class="type">' + esc(String(d.type).toUpperCase()) + ' / ' + esc(d.protocol) + '</div><h2>' + esc(d.name) + '</h2><small class="muted">' + esc(d.id) + '</small></div><span class="dot ' + (d.online?'':'off') + '"></span></div><pre class="muted device-state">' + esc(JSON.stringify(d.state, null, 2)) + '</pre><div class="device-actions">' + actions + del + '</div></article>';
     }).join('') || '<div class="empty">没有符合条件的设备</div>';
     renderBatch();
+    if(focusSel) setTimeout(function(){ var n=document.querySelector(focusSel); if(n) n.focus(); }, 0);
   }
   function renderBatch(){
     var bar = el('batchBar'); if(!bar) return;
     bar.classList.toggle('hidden', !S.batch);
     var n = Object.keys(S.sel).length;
     if(el('batchCount')) el('batchCount').textContent = '已选 ' + n + ' 台';
-    if(el('batchBtn')) el('batchBtn').classList.toggle('active', S.batch);
+    if(el('batchBtn')){ el('batchBtn').classList.toggle('active', S.batch); el('batchBtn').setAttribute('aria-pressed', String(S.batch)); }
   }
   function devCmd(id, cmd, args){
     api('/api/devices/' + encodeURIComponent(id) + '/command', { method:'POST', body: JSON.stringify({ cmd: cmd, args: args || {} }) })
@@ -212,7 +217,7 @@
     var up = el('fileUp');
     if(up) up.disabled = path === '/';
   }
-  function loadFiles(path){
+  function loadFiles(path, focusSel){
     S.filePath = path || '/';
     renderCrumb(S.filePath);
     el('fileList').innerHTML = '<div class="empty">加载中…</div>';
@@ -221,10 +226,11 @@
         return '<button type="button" class="file-row" data-rel="' + esc(e.rel) + '" data-dir="' + (e.dir?1:0) + '"><span>' + (e.dir?'▸':'·') + '</span><span class="name">' + esc(e.name) + '</span><span class="size">' + (e.dir?'':esc(String(e.size))) + '</span></button>';
       }).join('');
       el('fileList').innerHTML = rows || '<div class="empty">空目录</div>';
+      if(focusSel) setTimeout(function(){ var n=document.querySelector(focusSel); if(n) n.focus(); }, 0);
     }).catch(function(e){ showErr('fileList', e, 'files'); });
   }
   function openFile(rel, dir){
-    if(dir){ loadFiles('/' + rel); return; }
+    if(dir){ loadFiles('/' + rel, '[data-crumb="/' + rel.replace(/"/g, '') + '"]'); return; }
     api('/api/fs/read?path=' + encodeURIComponent('/' + rel)).then(function(r){
       S.currentFile = '/' + rel; el('fileTitle').textContent = S.currentFile; el('fileEditor').value = r.content || '';
     }).catch(function(e){ toast(e.message); });
@@ -250,13 +256,15 @@
     var rows = (sec.audit || []).map(function(e){ return '<div class="list-row"><div class="grow"><strong>' + esc(e.kind) + '</strong><small>' + esc(e.ts) + ' · ' + esc(e.detail) + '</small></div></div>'; }).join('');
     if(el('auditList')) el('auditList').innerHTML = rows || '<div class="empty">暂无审计</div>';
     if(el('platformCaps')) el('platformCaps').innerHTML = '<div class="list-row"><div class="grow"><strong>平台</strong><small>' + esc(sec.platform) + '</small></div></div><div class="list-row"><div class="grow"><strong>内核级防火墙</strong><small>Termux 不可用；完整平台启用</small></div></div>';
+    if(S.focusLevel){ var b=document.querySelector('[data-level="' + String(S.focusLevel).replace(/"/g,'') + '"]'); if(b) b.focus(); S.focusLevel=null; }
   }
   function loadSecurity(){
     showLoading('levelBtns'); showLoading('auditList');
     api('/api/security').then(renderSecurity).catch(function(e){ showErr('levelBtns', e, 'security'); showErr('auditList', e, 'security'); });
   }
   function setLevel(level){
-    api('/api/security/level', { method:'POST', body: JSON.stringify({ level: level }) }).then(function(){ toast('安全等级：' + level); loadSecurity(); }).catch(function(e){ toast(e.message); });
+    S.focusLevel = level;
+    api('/api/security/level', { method:'POST', body: JSON.stringify({ level: level }) }).then(function(){ toast('安全等级：' + level); loadSecurity(); }).catch(function(e){ S.focusLevel = null; toast(e.message); });
   }
   function sendChat(){
     var t = el('chatText').value.trim(); if(!t) return;
@@ -383,8 +391,8 @@
       api('/api/devices/discover', { method:'POST', body: JSON.stringify({protocol:''}) })
         .then(function(r){ toast('发现 ' + (r.count || 0) + ' 个（需适配器已配置）'); }).catch(function(e){ toast(e.message); });
     });
-    el('batchBtn').addEventListener('click', function(){ S.batch = !S.batch; S.sel = {}; renderDevices(); });
-    el('batchCancel').addEventListener('click', function(){ S.batch = false; S.sel = {}; renderDevices(); });
+    el('batchBtn').addEventListener('click', function(){ S.batch = !S.batch; S.sel = {}; renderDevices(); setTimeout(function(){ el('batchBtn').focus(); }, 0); });
+    el('batchCancel').addEventListener('click', function(){ S.batch = false; S.sel = {}; renderDevices(); setTimeout(function(){ el('batchBtn').focus(); }, 0); });
     el('addAclBtn').addEventListener('click', addAcl);
     el('addUserBtn').addEventListener('click', addUser);
     el('haCfgBtn').addEventListener('click', cfgHA);
@@ -443,7 +451,7 @@
         S.batch = false; S.sel = {}; renderDevices();
         return;
       }
-      var fl = e.target.closest('[data-filter]'); if(fl){ S.deviceFilter = fl.getAttribute('data-filter'); renderDevices(); return; }
+      var fl = e.target.closest('[data-filter]'); if(fl){ var fv=fl.getAttribute('data-filter'); S.deviceFilter = fv; renderDevices('[data-filter="' + String(fv).replace(/"/g,'') + '"]'); return; }
       var dc = e.target.closest('[data-disclosure]'); if(dc){
         var dp = el(dc.getAttribute('aria-controls'));
         if(dp){ var open = dc.getAttribute('aria-expanded') === 'true'; dc.setAttribute('aria-expanded', String(!open)); dp.hidden = open; }
@@ -453,7 +461,7 @@
       var lv = e.target.closest('[data-level]'); if(lv){ ripple(lv, e); setLevel(lv.getAttribute('data-level')); return; }
       var fi = e.target.closest('.file-row'); if(fi){ openFile(fi.getAttribute('data-rel'), fi.getAttribute('data-dir') === '1'); return; }
       var tk = e.target.closest('[data-task]'); if(tk){ showApp(tk.getAttribute('data-task'), true); return; }
-      var cr = e.target.closest('[data-crumb]'); if(cr){ loadFiles(cr.getAttribute('data-crumb')); return; }
+      var cr = e.target.closest('[data-crumb]'); if(cr){ var cp=String(cr.getAttribute('data-crumb')); loadFiles(cp, '[data-crumb="' + cp.replace(/"/g,'') + '"]'); return; }
       var rt = e.target.closest('[data-retry]'); if(rt){
         var k = rt.getAttribute('data-retry');
         if(k === 'home' || k === 'devices') loadHome();
@@ -471,7 +479,7 @@
     var names = {home:'概览',devices:'设备',files:'文件',security:'安全',ai:'AI 助手',settings:'设置'};
     var icons = {home:'⌂',devices:'◈',files:'▤',security:'◇',ai:'✦',settings:'⚙'};
     el('startApps').innerHTML = startApps.map(function(id){ return '<button class="start-app" data-app="' + id + '"><div>' + icons[id] + '</div>' + names[id] + '</button>'; }).join('');
-    el('fileUp').addEventListener('click', function(){ if(S.filePath !== '/') loadFiles(parentPath(S.filePath)); });
+    el('fileUp').addEventListener('click', function(){ if(S.filePath !== '/'){ var pp=parentPath(S.filePath); loadFiles(pp, '[data-crumb="' + pp + '"]'); } });
     document.addEventListener('change', function(e){
       var br = e.target.closest('.brightness'); if(br){ devCmd(br.getAttribute('data-dev'), 'brightness', { value: Number(br.value) }); return; }
       var bs = e.target.closest('.batch-sel'); if(bs){
