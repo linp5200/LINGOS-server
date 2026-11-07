@@ -83,7 +83,7 @@
 
     <section id="view-files" class="view">
       <div class="view-head"><div><div class="eyebrow">FILES</div><h1>文件</h1></div><div class="row"><button class="btn" id="openFilesBtn">独立打开</button><button class="btn" id="refreshFiles">刷新</button></div></div>
-      <div class="filebar"><span id="fileCrumb">/</span><span class="muted" id="fileAclHint">ACL：管理员全权</span></div>
+      <div class="filebar"><button class="icon-btn" id="fileUp" title="上级目录" aria-label="上级目录">↑</button><span id="fileCrumb" class="crumb">/</span><span class="muted" id="fileAclHint">ACL：管理员全权</span></div>
       <div class="grid two">
         <article class="card"><div id="fileList" class="file-list"></div></article>
         <article class="card"><div class="card-head"><h2 id="fileTitle">选择文件</h2><button class="link" id="saveFile">保存</button></div><textarea id="fileEditor" placeholder="选择文件查看；或输入内容后保存到当前目录的新文件"></textarea><input id="fileNewName" placeholder="新文件名（保存时使用）"></article>
@@ -125,6 +125,14 @@
     <div id="taskApps" class="task-apps"></div>
     <div class="tray"><span id="trayNet">●</span><span id="traySecurity">L1</span><span id="trayClock">--:--</span></div>
   </footer>
+
+  <nav class="tabbar" aria-label="主导航">
+    <button class="tab-app active" data-app="home" aria-current="page">概览</button>
+    <button class="tab-app" data-app="devices">设备</button>
+    <button class="tab-app" data-app="files">文件</button>
+    <button class="tab-app" data-app="security">安全</button>
+    <button class="tab-app" data-app="ai">AI</button>
+  </nav>
 
   <div id="startMenu" class="start-menu hidden">
     <div class="start-head"><b>LING OS</b><span class="muted">0.13.0</span></div>

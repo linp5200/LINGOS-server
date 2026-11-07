@@ -2,8 +2,9 @@
 <html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>LING OS · 文件管理器</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('lingos-theme')||'dark'}catch(e){}</script>
 <link rel="stylesheet" href="/assets/style.css">
 <style>
 body{overflow:auto;background:var(--bg)}
@@ -52,16 +53,22 @@ body{overflow:auto;background:var(--bg)}
     el('refresh').addEventListener('click',function(){load(S.path);});
     el('save').addEventListener('click',save);
     el('del').addEventListener('click',del);
-    document.addEventListener('click',function(e){var r=e.target.closest('.file-row'); if(r){open(r.getAttribute('data-rel'),r.getAttribute('data-dir')==='1');}});
+    document.addEventListener('click',function(e){
+      var up=e.target.closest('[data-up]'); if(up){load(parent(S.path));return;}
+      var r=e.target.closest('.file-row'); if(r){open(r.getAttribute('data-rel'),r.getAttribute('data-dir')==='1');}
+    });
   }
+  function parent(p){var a=String(p||'/').split('/').filter(Boolean);a.pop();return a.length?'/'+a.join('/'):'/';}
   function load(p){
     S.path=p||'/'; el('path').textContent=S.path;
+    el('list').innerHTML='<div class="empty">加载中…</div>';
     api('/api/fs/list?path='+encodeURIComponent(S.path)).then(function(r){
-      var rows=(r.entries||[]).map(function(x){
-        return '<div class="file-row" data-rel="'+esc(x.rel)+'" data-dir="'+(x.dir?1:0)+'"><span>'+(x.dir?'▸':'·')+'</span><span class="name">'+esc(x.name)+'</span><span class="size">'+(x.dir?'':esc(String(x.size)))+'</span></div>';
-      }).join('');
-      el('list').innerHTML=rows||'<div class="muted">空目录</div>';
-    }).catch(function(e){el('list').innerHTML='<div class="muted">'+esc(e.message)+'</div>';});
+      var rows=(S.path!=='/'?'<button type="button" class="file-row" data-up="1"><span>↑</span><span class="name">上级目录</span></button>':'')+
+        (r.entries||[]).map(function(x){
+          return '<button type="button" class="file-row" data-rel="'+esc(x.rel)+'" data-dir="'+(x.dir?1:0)+'"><span>'+(x.dir?'▸':'·')+'</span><span class="name">'+esc(x.name)+'</span><span class="size">'+(x.dir?'':esc(String(x.size)))+'</span></button>';
+        }).join('');
+      el('list').innerHTML=rows||'<div class="empty">空目录</div>';
+    }).catch(function(e){el('list').innerHTML='<div class="load-error">无法加载：'+esc(e.message)+'</div>';});
   }
   function open(rel,dir){
     if(dir){load('/'+rel);return;}

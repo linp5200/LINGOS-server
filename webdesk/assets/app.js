@@ -65,6 +65,11 @@
       S.me = me; showDesktop(); toast(S.setup ? '管理员已创建' : '欢迎回来');
     }).catch(function(e){ el('loginError').textContent = e.message || '登录失败'; });
   }
+  function showErr(id, err, retry){
+    var n = el(id); if(!n) return;
+    n.innerHTML = '<div class="load-error">无法加载：' + esc(err && err.message ? err.message : '未知错误') +
+      '<button class="link" data-retry="' + esc(retry) + '">重试</button></div>';
+  }
   function loadNotifs(){
     api('/api/events').then(function(r){
       S.events = r.events || [];
@@ -74,20 +79,23 @@
       if(list){
         list.innerHTML = S.events.slice(0,30).map(function(e){
           return '<div class="list-row"><div class="grow"><strong>' + esc(e.kind) + '</strong><small>' + esc(e.ts) + ' · ' + esc(e.detail) + '</small></div></div>';
-        }).join('') || '<div class="muted">暂无通知</div>';
+        }).join('') || '<div class="empty">暂无通知</div>';
       }
-    }).catch(function(){});
+    }).catch(function(e){ showErr('notifList', e, 'notifs'); });
   }
   function loadHome(){
-    api('/api/devices').then(function(r){ S.devices = r.devices || []; S.adapters = r.adapters || []; renderHomeDevices(); renderDevices(); renderAdapterChips(); }).catch(function(){});
+    api('/api/devices').then(function(r){
+      S.devices = r.devices || []; S.adapters = r.adapters || [];
+      renderHomeDevices(); renderDevices(); renderAdapterChips();
+    }).catch(function(e){ showErr('deviceGrid', e, 'home'); showErr('homeDevices', e, 'home'); });
     api('/api/events').then(function(r){
       var rows = (r.events || []).slice(0,6).map(function(e){ return '<div class="list-row"><span class="dot"></span><div class="grow"><strong>' + esc(e.kind) + '</strong><small>' + esc(e.ts) + ' · ' + esc(e.detail) + '</small></div></div>'; }).join('');
-      if(el('homeEvents')) el('homeEvents').innerHTML = rows || '<div class="muted">暂无事件</div>';
-    }).catch(function(){});
-    api('/api/security').then(function(sec){ S.security = sec; renderSecurity(); }).catch(function(){});
+      if(el('homeEvents')) el('homeEvents').innerHTML = rows || '<div class="empty">暂无事件</div>';
+    }).catch(function(e){ showErr('homeEvents', e, 'home'); });
+    api('/api/security').then(function(sec){ S.security = sec; renderSecurity(sec); }).catch(function(e){ showErr('levelBtns', e, 'home'); });
     if(S.health){
       el('statPlatform').textContent = (S.health.platform || '--').replace('linux','Termux/Linux');
-      el('statUptime').textContent = '0.13';
+      el('statUptime').textContent = (S.health.version || '0.13.1');
       el('chipLan').textContent = S.health.lan ? '局域网' : '本地';
     }
   }
@@ -113,14 +121,20 @@
     api('/api/devices/' + encodeURIComponent(id) + '/command', { method:'POST', body: JSON.stringify({ cmd: cmd, args:{} }) })
       .then(function(r){ toast('已发送：' + cmd); loadHome(); }).catch(function(e){ toast(e.message); });
   }
-  function showApp(id){
+  function showApp(id, minimize){
     var views = document.querySelectorAll('.view');
     var v = el('view-' + id);
     var names = {home:'概览',devices:'设备',files:'文件',security:'安全',ai:'AI 助手',settings:'设置'};
     var ta = el('taskApps');
     if(S.activeApp === id && v && v.classList.contains('active')){
-      v.classList.remove('active'); S.minimized = true;
-      ta.innerHTML = '<button class="task-app" data-task="' + esc(id) + '">' + esc(names[id] || id) + ' · 已最小化</button>';
+      if(minimize){
+        v.classList.remove('active'); S.minimized = true;
+        ta.innerHTML = '<button class="task-app" data-task="' + esc(id) + '">' + esc(names[id] || id) + ' · 已最小化</button>';
+        el('startMenu').classList.add('hidden');
+        return;
+      }
+      var heading = v.querySelector('h1');
+      if(heading){ heading.tabIndex = -1; heading.focus(); }
       el('startMenu').classList.add('hidden');
       return;
     }
@@ -128,6 +142,11 @@
     if(v) v.classList.add('active');
     S.activeApp = id; S.minimized = false;
     document.querySelectorAll('.dock-app').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-app') === id); });
+    document.querySelectorAll('.tab-app').forEach(function(b){
+      var on = b.getAttribute('data-app') === id;
+      b.classList.toggle('active', on);
+      if(on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
     ta.innerHTML = '<button class="task-app active" data-task="' + esc(id) + '">' + esc(names[id] || id) + '</button>';
     if(id === 'files') loadFiles(S.filePath);
     if(id === 'security') loadSecurity();
@@ -135,15 +154,34 @@
     if(id === 'home') loadHome();
     el('startMenu').classList.add('hidden');
   }
+  function parentPath(p){
+    var parts = String(p || '/').split('/').filter(Boolean);
+    parts.pop();
+    return parts.length ? '/' + parts.join('/') : '/';
+  }
+  function renderCrumb(path){
+    var node = el('fileCrumb'); if(!node) return;
+    var parts = String(path || '/').split('/').filter(Boolean);
+    var html = '<button data-crumb="/" title="根目录">/</button>';
+    var acc = '';
+    parts.forEach(function(p){
+      acc += '/' + p;
+      html += '<span class="sep">/</span><button data-crumb="' + esc(acc) + '" title="' + esc(acc) + '">' + esc(p) + '</button>';
+    });
+    node.innerHTML = html;
+    var up = el('fileUp');
+    if(up) up.disabled = path === '/';
+  }
   function loadFiles(path){
     S.filePath = path || '/';
-    el('fileCrumb').textContent = S.filePath;
+    renderCrumb(S.filePath);
+    el('fileList').innerHTML = '<div class="empty">加载中…</div>';
     api('/api/fs/list?path=' + encodeURIComponent(S.filePath)).then(function(r){
       var rows = (r.entries || []).map(function(e){
-        return '<div class="file-row" data-rel="' + esc(e.rel) + '" data-dir="' + (e.dir?1:0) + '"><span>' + (e.dir?'▸':'·') + '</span><span class="name">' + esc(e.name) + '</span><span class="size">' + (e.dir?'':esc(String(e.size))) + '</span></div>';
+        return '<button type="button" class="file-row" data-rel="' + esc(e.rel) + '" data-dir="' + (e.dir?1:0) + '"><span>' + (e.dir?'▸':'·') + '</span><span class="name">' + esc(e.name) + '</span><span class="size">' + (e.dir?'':esc(String(e.size))) + '</span></button>';
       }).join('');
-      el('fileList').innerHTML = rows || '<div class="muted">空目录</div>';
-    }).catch(function(e){ el('fileList').innerHTML = '<div class="muted">' + esc(e.message) + '</div>'; });
+      el('fileList').innerHTML = rows || '<div class="empty">空目录</div>';
+    }).catch(function(e){ showErr('fileList', e, 'files'); });
   }
   function openFile(rel, dir){
     if(dir){ loadFiles('/' + rel); return; }
@@ -160,19 +198,21 @@
       .then(function(){ toast('已保存 ' + rel); S.currentFile = rel; loadFiles(S.filePath); })
       .catch(function(e){ toast(e.message); });
   }
+  function renderSecurity(sec){
+    S.security = sec;
+    if(el('statSecurity')) el('statSecurity').textContent = sec.level;
+    if(el('statSecurityName')) el('statSecurityName').textContent = sec.name;
+    if(el('chipSecurity')) el('chipSecurity').textContent = '安全 ' + sec.level;
+    if(el('secDesc')) el('secDesc').textContent = sec.name + '：' + sec.description;
+    if(el('levelBtns')) el('levelBtns').innerHTML = (sec.levels || []).map(function(l){
+      return '<button class="btn ' + (l.id === sec.level ? 'active' : '') + '" data-level="' + esc(l.id) + '">' + esc(l.id) + ' ' + esc(l.name) + '</button>';
+    }).join('');
+    var rows = (sec.audit || []).map(function(e){ return '<div class="list-row"><div class="grow"><strong>' + esc(e.kind) + '</strong><small>' + esc(e.ts) + ' · ' + esc(e.detail) + '</small></div></div>'; }).join('');
+    if(el('auditList')) el('auditList').innerHTML = rows || '<div class="empty">暂无审计</div>';
+    if(el('platformCaps')) el('platformCaps').innerHTML = '<div class="list-row"><div class="grow"><strong>平台</strong><small>' + esc(sec.platform) + '</small></div></div><div class="list-row"><div class="grow"><strong>内核级防火墙</strong><small>Termux 不可用；完整平台启用</small></div></div>';
+  }
   function loadSecurity(){
-    api('/api/security').then(function(sec){
-      S.security = sec;
-      el('statSecurity').textContent = sec.level; el('statSecurityName').textContent = sec.name;
-      el('chipSecurity').textContent = '安全 ' + sec.level;
-      el('secDesc').textContent = sec.name + '：' + sec.description;
-      el('levelBtns').innerHTML = (sec.levels || []).map(function(l){
-        return '<button class="btn ' + (l.id === sec.level ? 'active' : '') + '" data-level="' + esc(l.id) + '">' + esc(l.id) + ' ' + esc(l.name) + '</button>';
-      }).join('');
-      var rows = (sec.audit || []).map(function(e){ return '<div class="list-row"><div class="grow"><strong>' + esc(e.kind) + '</strong><small>' + esc(e.ts) + ' · ' + esc(e.detail) + '</small></div></div>'; }).join('');
-      if(el('auditList')) el('auditList').innerHTML = rows || '<div class="muted">暂无审计</div>';
-      if(el('platformCaps')) el('platformCaps').innerHTML = '<div class="list-row"><div class="grow"><strong>平台</strong><small>' + esc(sec.platform) + '</small></div></div><div class="list-row"><div class="grow"><strong>内核级防火墙</strong><small>Termux 不可用；完整平台启用</small></div></div>';
-    }).catch(function(){});
+    api('/api/security').then(renderSecurity).catch(function(e){ showErr('levelBtns', e, 'security'); showErr('auditList', e, 'security'); });
   }
   function setLevel(level){
     api('/api/security/level', { method:'POST', body: JSON.stringify({ level: level }) }).then(function(){ toast('安全等级：' + level); loadSecurity(); }).catch(function(e){ toast(e.message); });
@@ -217,7 +257,7 @@
         return '<div class="list-row"><div class="grow"><strong>' + esc(a.subject) + ' → ' + esc(a.path) + '</strong><small>' + esc(a.perm) + '</small></div><button class="btn danger" data-del-acl data-subject="' + esc(a.subject) + '" data-path="' + esc(a.path) + '">删除</button></div>';
       }).join('');
       if(el('aclList')) el('aclList').innerHTML = rows || '<div class="muted">暂无 ACL（admin 全权）</div>';
-    }).catch(function(e){ if(el('aclList')) el('aclList').innerHTML = '<div class="muted">' + esc(e.message) + '</div>'; });
+    }).catch(function(e){ showErr('aclList', e, 'settings'); });
   }
   function addAcl(){
     var subject = prompt('用户或角色（例如 user / bob / admin）'); if(!subject) return;
@@ -232,7 +272,7 @@
         return '<div class="list-row"><div class="grow"><strong>' + esc(u.username) + '</strong><small>' + esc(u.role) + ' · ' + esc(u.created) + '</small></div>' + (u.role === 'admin' ? '' : '<button class="btn danger" data-del-user="' + esc(String(u.id)) + '">删除</button>') + '</div>';
       }).join('');
       if(el('userList')) el('userList').innerHTML = rows || '<div class="muted">无</div>';
-    }).catch(function(e){ if(el('userList')) el('userList').innerHTML = '<div class="muted">' + esc(e.message) + '</div>'; });
+    }).catch(function(e){ showErr('userList', e, 'settings'); });
   }
   function addUser(){
     var username = prompt('新用户名'); if(!username) return;
@@ -241,7 +281,7 @@
       .then(function(){ toast('用户已创建'); loadUsers(); }).catch(function(e){ toast(e.message); });
   }
   function loadAdapters(){
-    api('/api/adapters').then(function(r){ S.adapters = r.adapters || []; renderAdapterChips(); }).catch(function(){});
+    api('/api/adapters').then(function(r){ S.adapters = r.adapters || []; renderAdapterChips(); }).catch(function(e){ showErr('adapterChips', e, 'settings'); });
   }
   function loadAdapterSettings(){
     api('/api/settings').then(function(r){
@@ -252,7 +292,7 @@
         return '<div class="list-row"><div class="grow"><strong>' + esc(k) + '</strong><small>' + esc(v || '未配置') + '</small></div></div>';
       }).join('');
       if(el('adapterSettings')) el('adapterSettings').innerHTML = rows;
-    }).catch(function(){});
+    }).catch(function(e){ showErr('adapterSettings', e, 'settings'); });
   }
   function cfgHA(){
     var url = prompt('Home Assistant URL（如 http://192.168.1.10:8123）', (S.settings && S.settings.ha_url) || ''); if(url == null) return;
@@ -352,7 +392,17 @@
       var dev = e.target.closest('[data-dev]'); if(dev){ devCmd(dev.getAttribute('data-dev'), dev.getAttribute('data-cmd')); return; }
       var lv = e.target.closest('[data-level]'); if(lv){ setLevel(lv.getAttribute('data-level')); return; }
       var fi = e.target.closest('.file-row'); if(fi){ openFile(fi.getAttribute('data-rel'), fi.getAttribute('data-dir') === '1'); return; }
-      var tk = e.target.closest('[data-task]'); if(tk){ showApp(tk.getAttribute('data-task')); return; }
+      var tk = e.target.closest('[data-task]'); if(tk){ showApp(tk.getAttribute('data-task'), true); return; }
+      var cr = e.target.closest('[data-crumb]'); if(cr){ loadFiles(cr.getAttribute('data-crumb')); return; }
+      var rt = e.target.closest('[data-retry]'); if(rt){
+        var k = rt.getAttribute('data-retry');
+        if(k === 'home' || k === 'devices') loadHome();
+        else if(k === 'files') loadFiles(S.filePath);
+        else if(k === 'security') loadSecurity();
+        else if(k === 'notifs') loadNotifs();
+        else if(k === 'settings') loadSettings();
+        return;
+      }
       var da = e.target.closest('[data-del-acl]'); if(da){ if(confirm('删除该 ACL？')){ api('/api/acl?subject=' + encodeURIComponent(da.getAttribute('data-subject')) + '&path=' + encodeURIComponent(da.getAttribute('data-path')), withRoot({ method:'DELETE', body:'{}' })).then(loadAcl).catch(function(err){ toast(err.message); }); } return; }
       var du = e.target.closest('[data-del-user]'); if(du){ if(confirm('删除该用户？')){ api('/api/users/' + encodeURIComponent(du.getAttribute('data-del-user')), withRoot({ method:'DELETE', body:'{}' })).then(loadUsers).catch(function(err){ toast(err.message); }); } return; }
       var dd = e.target.closest('[data-del-dev]'); if(dd){ if(confirm('删除该虚拟设备？')){ api('/api/devices/' + encodeURIComponent(dd.getAttribute('data-del-dev')), withRoot({ method:'DELETE', body:'{}' })).then(loadHome).catch(function(err){ toast(err.message); }); } return; }
@@ -361,7 +411,7 @@
     var names = {home:'概览',devices:'设备',files:'文件',security:'安全',ai:'AI 助手',settings:'设置'};
     var icons = {home:'⌂',devices:'◈',files:'▤',security:'◇',ai:'✦',settings:'⚙'};
     el('startApps').innerHTML = startApps.map(function(id){ return '<button class="start-app" data-app="' + id + '"><div>' + icons[id] + '</div>' + names[id] + '</button>'; }).join('');
-    document.querySelectorAll('.dock-app').forEach(function(b){ b.setAttribute('data-app', b.getAttribute('data-app')); b.addEventListener('click', function(){ showApp(b.getAttribute('data-app')); }); });
+    el('fileUp').addEventListener('click', function(){ if(S.filePath !== '/') loadFiles(parentPath(S.filePath)); });
     if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(function(){}); }
     document.addEventListener('keydown', function(e){ if(e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA'){ e.preventDefault(); el('quickSearch').focus(); } });
     el('quickSearch').addEventListener('keydown', function(e){
