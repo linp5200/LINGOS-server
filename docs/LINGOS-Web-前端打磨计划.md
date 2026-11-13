@@ -107,6 +107,14 @@
 - `webdesk/assets/app.css` 补分层说明；`index.html` 各区块加注释。
 - 新增 `webdesk/README.md`：运行方式、路由与数据来源、布局模式、约定、校验命令。
 
+**扩展批次（2026-11-14 自主执行）**
+- 后端新增（`services/lingos_web/server.py`）：`GET/POST /api/ai/providers`、`/api/ai/providers/remove`、`/api/ai/active`、`/api/ai/test`（经 `run/ai.sock` 的 provider_list/provider_add/provider_remove/model_switch/model_list_query，仅 admin，key 返回前脱敏）；`GET/POST /api/cameras`（写 camera 设备 `state.stream`/`snapshot`）；`GET/POST /api/notify/settings`、`POST /api/notify/test`（webhook/email/sms）。
+- 前端设置页新增三块：「AI 引擎」（三协议 openai/anthropic/gemini + 本地 Ollama，列表/编辑/设当前/测试/删除）、「摄像头」（ONVIF/RTSP/RTMP/HTTP，保存即写设备 state）、「通知」（Webhook/邮件 SMTP/短信接口位，可分别测试）。
+- 首页预览：`state.stream` 或 `state.snapshot` 任一存在且开关打开才渲染；纯 RTSP 流给「需转 HLS/WebRTC」说明，不假装能播。
+- 修复：设备删除路径 URL 解码；摄像头 id 改 ASCII slug（中文名不再进 id）。
+- 0.14 灾害模型文档：`docs/LINGOS-0.14-灾害预警与CAP模型.md`（CAP 1.2 字段 + severity×urgency 分级 + 数据源 + 落地顺序）。
+- 自测：14 项 Web 单测全过；webhook 实测到达本地接收端（HTTP 200，payload 正确）；设置页三面板渲染与保存通过，无 console error。
+
 **待做**：B4（CI 前置检查）。
 
 ## 六、风险

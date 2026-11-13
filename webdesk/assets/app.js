@@ -181,7 +181,12 @@
     lastError: '',
     discovered: [],
     acl: null,
-    selectedDev: null
+    selectedDev: null,
+    aiProviders: null,
+    aiActive: '',
+    aiError: '',
+    cameras: null,
+    notifyLoaded: false
   };
 
   /* 主题 */
@@ -466,7 +471,8 @@
     var online = S.devices.filter(function (d) { return d.online; }).length;
     var offline = S.devices.length - online;
     var cam = S.devices.filter(function (d) { return d.type === 'camera'; })[0];
-    var showCam = previewOn() && cam && cam.online && cam.state && cam.state.stream;
+    var camSrc = cam && cam.state && (cam.state.stream || cam.state.snapshot);
+    var showCam = previewOn() && cam && cam.online && camSrc;
     var head = homeHeadline();
     var events = S.events.slice(0, 8);
 
@@ -491,7 +497,10 @@
           '</section>' +
         '</div>' +
         '<div class="home-side">' +
-          (showCam ? '<div class="cam-preview"><div class="frame"><img src="' + esc(cam.state.stream) + '" alt="' + esc(cam.name) + '"></div><div class="cap"><span>' + esc(cam.name) + '</span><span>实时画面</span></div></div>' : '') +
+          (showCam ? '<div class="cam-preview"><div class="frame">' +
+            (cam.state.snapshot ? '<img src="' + esc(cam.state.snapshot) + '" alt="' + esc(cam.name) + '">'
+              : '<div style="display:grid;place-items:center;height:100%;color:#cfc8b3;font-size:12px">RTSP 流已配置<br>浏览器需转 HLS/WebRTC 才能播</div>') +
+            '</div><div class="cap"><span>' + esc(cam.name) + '</span><span>' + (cam.state.snapshot ? '快照' : '流地址') + '</span></div></div>' : '') +
           '<div class="panel"><div class="panel-head"><h2>防线</h2><span class="more">' + (S.security ? esc(S.security.platform) : '') + '</span></div>' +
             '<ul class="mini">' + (S.devices.length ? S.devices.slice(0, 6).map(function (d) {
               return '<li><i class="' + (d.online ? '' : 'warn') + '"></i><div><b>' + esc(d.name) + '</b><small>' + esc(devStateText(d)) + '</small></div></li>';
@@ -904,6 +913,35 @@
           (S.adapters.length ? S.adapters.map(function (a) {
             return '<div class="adapter"><span class="badge ' + (a.available ? 'ok' : 'no') + '">' + (a.available ? '可用' : '未配') + '</span><b>' + esc(a.protocol) + '</b><span class="muted">' + esc(a.detail || '') + '</span></div>';
           }).join('') : '<div class="tl-empty">后台没有返回适配器。</div>') + '</section>' +
+        '<section class="panel-block"><h2>AI 引擎</h2><p>云端三协议（openai / anthropic / gemini）+ 本地 Ollama；Key 只显示脱敏。</p>' +
+          '<div id="aiProviderList">' + aiProvidersHTML() + '</div>' +
+          '<label class="field" style="margin-top:10px"><span>id</span><input id="aiPid" placeholder="deepseek"></label>' +
+          '<label class="field"><span>名称</span><input id="aiName" placeholder="DeepSeek"></label>' +
+          '<label class="field"><span>协议</span><select id="aiFormat" style="height:38px;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;background:var(--paper);color:var(--ink)"><option value="openai">openai（兼容）</option><option value="anthropic">anthropic</option><option value="gemini">gemini</option></select></label>' +
+          '<label class="field"><span>Base URL</span><input id="aiBase" placeholder="https://api.deepseek.com/v1"></label>' +
+          '<label class="field"><span>模型</span><input id="aiModel" placeholder="deepseek-chat"></label>' +
+          '<label class="field"><span>API Key（留空=不改）</span><input id="aiKey" type="password"></label>' +
+          '<button class="btn btn--primary" data-act="ai-save">保存提供商</button></section>' +
+        '<section class="panel-block"><h2>摄像头</h2><p>支持 ONVIF / RTSP / RTMP / HTTP 快照。保存后写进 camera 设备的 stream，首页预览只读它。</p>' +
+          '<div id="cameraList">' + camerasHTML() + '</div>' +
+          '<label class="field" style="margin-top:10px"><span>名称</span><input id="camName" placeholder="门口摄像头"></label>' +
+          '<label class="field"><span>协议</span><select id="camProto" style="height:38px;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;background:var(--paper);color:var(--ink)"><option>rtsp</option><option>rtmp</option><option>onvif</option><option>http</option></select></label>' +
+          '<label class="field"><span>流地址</span><input id="camUrl" placeholder="rtsp://192.168.1.10/stream1"></label>' +
+          '<label class="field"><span>快照地址（可选）</span><input id="camSnap" placeholder="http://192.168.1.10/snapshot.jpg"></label>' +
+          '<button class="btn btn--primary" data-act="cam-save">保存摄像头</button></section>' +
+        '<section class="panel-block"><h2>通知</h2><p>Webhook / 邮件 / 短信。邮件用 SMTP，短信只要服务商接口位（未接就如实报错）。</p>' +
+          '<label class="field" style="margin-top:10px"><span>Webhook 地址</span><input id="ntWebhook" value="' + esc((S.settings && S.settings.notify_webhook) || '') + '" placeholder="https://…"></label>' +
+          '<label class="field"><span>收件邮箱</span><input id="ntEmail" value="' + esc((S.settings && S.settings.notify_email_to) || '') + '"></label>' +
+          '<label class="field"><span>SMTP 主机</span><input id="ntHost" value="' + esc((S.settings && S.settings.smtp_host) || '') + '"></label>' +
+          '<label class="field"><span>SMTP 端口</span><input id="ntPort" value="' + esc((S.settings && S.settings.smtp_port) || '587') + '"></label>' +
+          '<label class="field"><span>SMTP 用户</span><input id="ntUser" value="' + esc((S.settings && S.settings.smtp_user) || '') + '"></label>' +
+          '<label class="field"><span>SMTP 密码（留空=不改）</span><input id="ntPass" type="password"></label>' +
+          '<label class="field"><span>发件人</span><input id="ntFrom" value="' + esc((S.settings && S.settings.smtp_from) || '') + '"></label>' +
+          '<label class="field"><span>短信服务商</span><input id="ntSms" value="' + esc((S.settings && S.settings.sms_provider) || '') + '" placeholder="aliyun / twilio"></label>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn--primary" data-act="notify-save">保存通知</button>' +
+          '<button class="btn" data-act="notify-test" data-channel="webhook">测 Webhook</button>' +
+          '<button class="btn" data-act="notify-test" data-channel="email">测邮件</button>' +
+          '<button class="btn" data-act="notify-test" data-channel="sms">测短信</button></div></section>' +
         '<section class="panel-block"><h2>App Token</h2><p>App 用 Bearer 走同一套接口，只显示一次。</p>' +
           '<div class="row" style="margin-top:10px"><span>生成</span><button class="btn btn--sm" data-act="new-token">生成 Token</button></div>' +
           '<pre class="cmd-out" id="tokenOut" style="margin-top:10px"></pre></section>' +
@@ -914,9 +952,52 @@
         '</section>' +
       '</div>';
     if (!settingsLoaded) { settingsLoaded = true; loadSettings(); }
+    if (S.aiProviders === null) loadAiProviders();
+    if (S.cameras === null) loadCameras();
   }
 
   /** 设置与用户列表只有 admin 能读；403 时保持空状态由页面提示。 */
+  function aiProvidersHTML() {
+    if (S.aiProviders === null) return '<div class="tl-empty">读取中…</div>';
+    if (S.aiError) return '<div class="tl-empty">AI 引擎未连接：' + esc(S.aiError) + '</div>';
+    if (!S.aiProviders.length) return '<div class="tl-empty">还没有提供商。下面加一个（云端或本地 Ollama）。</div>';
+    return S.aiProviders.map(function (p) {
+      return '<div class="adapter"><b>' + esc(p.name || p.id) + '</b><span class="badge">' + esc(p.format) + '</span>' +
+        '<span class="muted">' + esc(p.model || '') + ' · ' + esc(p.api_key_masked || '无 key') + '</span>' +
+        '<span style="margin-left:auto;display:flex;gap:6px">' +
+        (S.aiActive === p.id ? '<span class="badge ok">当前</span>' : '<button class="btn btn--sm" data-ai-active="' + esc(p.id) + '">设为当前</button>') +
+        '<button class="btn btn--sm" data-ai-test="' + esc(p.id) + '">测试</button>' +
+        '<button class="btn btn--sm" data-ai-edit="' + esc(p.id) + '">编辑</button>' +
+        '<button class="btn btn--sm" data-ai-remove="' + esc(p.id) + '">删除</button></span></div>';
+    }).join('');
+  }
+
+  function camerasHTML() {
+    if (S.cameras === null) return '<div class="tl-empty">读取中…</div>';
+    if (!S.cameras.length) return '<div class="tl-empty">还没有摄像头。下面填一个 RTSP/RTMP/HTTP 快照源。</div>';
+    return S.cameras.map(function (c) {
+      var st = c.state || {};
+      return '<div class="adapter"><b>' + esc(c.name) + '</b><span class="badge">' + esc(st.protocol || c.protocol || '') + '</span>' +
+        '<span class="muted">' + esc(st.stream || st.snapshot || '没有地址') + '</span>' +
+        '<span class="badge ' + (c.online ? 'ok' : 'no') + '" style="margin-left:auto">' + (c.online ? '在线' : '离线') + '</span></div>';
+    }).join('');
+  }
+
+  function loadAiProviders() {
+    api('/api/ai/providers').then(function (r) {
+      if (r.ok && r.data) { S.aiProviders = r.data.providers || []; S.aiActive = r.data.active || ''; S.aiError = ''; }
+      else { S.aiProviders = []; S.aiError = (r.data && (r.data.error || r.data.detail)) || ('HTTP ' + r.status); }
+      if (S.view === 'settings') renderSettings();
+    });
+  }
+
+  function loadCameras() {
+    api('/api/cameras').then(function (r) {
+      S.cameras = (r.ok && r.data && r.data.cameras) ? r.data.cameras : [];
+      if (S.view === 'settings') renderSettings();
+    });
+  }
+
   function loadSettings() {
     api('/api/settings').then(function (r) {
       if (r.ok && r.data && r.data.settings) {
@@ -1053,6 +1134,40 @@
       if (sysDanger(c)) {
         confirmBox({ title: '执行 ' + c + '？', body: '这条会改系统状态，确认后再跑。', okText: '执行', onOk: function () { sysCall(c, sys); } });
       } else sysCall(c, sys);
+      return;
+    }
+
+    var ai = e.target.closest('[data-ai-test],[data-ai-remove],[data-ai-active],[data-ai-edit]');
+    if (ai) {
+      if (ai.hasAttribute('data-ai-test')) {
+        var tid = ai.getAttribute('data-ai-test');
+        api('/api/ai/test', { method: 'POST', body: { id: tid } }).then(function (r) {
+          var d = (r.data && (r.data.detail || r.data.error)) || r.status;
+          toast((r.ok ? '连通：' : '不通：') + String(typeof d === 'string' ? d : JSON.stringify(d)).slice(0, 80));
+        });
+      } else if (ai.hasAttribute('data-ai-active')) {
+        var aid = ai.getAttribute('data-ai-active');
+        api('/api/ai/active', { method: 'POST', body: { id: aid } }).then(function (r) {
+          toast(r.ok ? '已切换' : ('没切成功：' + ((r.data && r.data.detail) || r.status)));
+          S.aiProviders = null; loadAiProviders();
+        });
+      } else if (ai.hasAttribute('data-ai-remove')) {
+        var rid = ai.getAttribute('data-ai-remove');
+        confirmBox({ title: '删掉这个提供商？', body: rid + ' 会从 provider.json 移除。', okText: '删除', onOk: function () {
+          api('/api/ai/providers/remove', { method: 'POST', body: { id: rid } }).then(function () {
+            toast('已删除'); S.aiProviders = null; loadAiProviders();
+          });
+        } });
+      } else if (ai.hasAttribute('data-ai-edit')) {
+        var eid = ai.getAttribute('data-ai-edit');
+        var prov = (S.aiProviders || []).filter(function (x) { return x.id === eid; })[0];
+        if (prov) {
+          var set = function (id, v) { var el = document.getElementById(id); if (el) el.value = v || ''; };
+          set('aiPid', prov.id); set('aiName', prov.name); set('aiFormat', prov.format);
+          set('aiBase', prov.base_url); set('aiModel', prov.model); set('aiKey', '');
+          toast('已填入表单，改完点保存');
+        }
+      }
       return;
     }
 

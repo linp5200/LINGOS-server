@@ -18,8 +18,10 @@ import hashlib
 import io
 import json
 import os
+import re
 import secrets
 import shutil
+import smtplib
 import socket
 import sqlite3
 import sys
@@ -29,6 +31,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from email.mime.text import MIMEText
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -655,6 +658,35 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {"users": self.store.users()})
             return
+        if path == "/api/ai/providers":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            r = self._ai_call("provider_list")
+            if r.get("status") != "ok":
+                self._json(502, {"error": "AI 引擎未连接", "detail": r.get("msg") or r})
+                return
+            data = r.get("data") or {}
+            self._json(200, {"providers": [self._mask_provider(x) for x in (data.get("providers") or [])],
+                             "active": data.get("active") or ""})
+            return
+        if path == "/api/cameras":
+            if not self._require():
+                return
+            cams = [d for d in self.store.devices() if d.get("type") == "camera"]
+            self._json(200, {"cameras": cams})
+            return
+        if path == "/api/notify/settings":
+            usr = self._require()
+            if not usr:
+                return
+            keys = ("notify_webhook", "notify_email_to", "smtp_host", "smtp_port", "smtp_user", "smtp_from",
+                    "sms_provider", "sms_key")
+            self._json(200, {"settings": {k: self.store.setting_get(k, "") for k in keys}})
+            return
         if path == "/api/settings":
             usr = self._require()
             if not usr:
@@ -662,7 +694,9 @@ class Handler(BaseHTTPRequestHandler):
             if usr["role"] != "admin":
                 self._json(403, {"error": "admin required"})
                 return
-            keys = ("ha_url", "ha_token", "mqtt_host", "mqtt_port", "mqtt_user", "mqtt_pass", "mqtt_prefix", "miio_devices")
+            keys = ("ha_url", "ha_token", "mqtt_host", "mqtt_port", "mqtt_user", "mqtt_pass", "mqtt_prefix", "miio_devices",
+                    "notify_webhook", "notify_email_to", "smtp_host", "smtp_port", "smtp_user", "smtp_from",
+                    "sms_provider", "sms_key")
             self._json(200, {"settings": {k: self.store.setting_get(k, "") for k in keys}})
             return
         if path == "/api/events":
@@ -951,7 +985,9 @@ class Handler(BaseHTTPRequestHandler):
             if usr["role"] != "admin":
                 self._json(403, {"error": "admin required"})
                 return
-            allowed = ("ha_url", "ha_token", "mqtt_host", "mqtt_port", "mqtt_user", "mqtt_pass", "mqtt_prefix", "miio_devices")
+            allowed = ("ha_url", "ha_token", "mqtt_host", "mqtt_port", "mqtt_user", "mqtt_pass", "mqtt_prefix", "miio_devices",
+                       "notify_webhook", "notify_email_to", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from",
+                       "sms_provider", "sms_key")
             for k, v in (body or {}).items():
                 if k in allowed:
                     self.store.setting_set(k, str(v))
@@ -1017,6 +1053,131 @@ class Handler(BaseHTTPRequestHandler):
             self.store.event("security", f"level={level}")
             self._json(200, {"ok": True, "level": level})
             return
+        if path == "/api/ai/providers":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            pid = str(body.get("id") or "").strip()
+            base = str(body.get("base_url") or "").strip()
+            model = str(body.get("model") or "").strip()
+            if not pid or not base or not model:
+                self._json(400, {"error": "需要 id / base_url / model"})
+                return
+            fmt = str(body.get("format") or "openai")
+            if fmt not in ("openai", "anthropic", "gemini"):
+                self._json(400, {"error": "format 只支持 openai/anthropic/gemini"})
+                return
+            r = self._ai_call("provider_add", id=pid, name=str(body.get("name") or pid), format=fmt,
+                              base_url=base, api_key=str(body.get("api_key") or ""), model=model,
+                              thinking_enabled=bool(body.get("thinking_enabled", True)),
+                              reasoning_effort=str(body.get("reasoning_effort") or "high"))
+            if r.get("status") != "ok":
+                self._json(502, {"error": "保存失败", "detail": r.get("msg") or r})
+                return
+            self.store.event("settings", "ai provider saved: " + pid)
+            self._json(200, {"ok": True, "data": r.get("data") or {}})
+            return
+        if path == "/api/ai/providers/remove":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            pid = str(body.get("id") or "").strip()
+            if not pid:
+                self._json(400, {"error": "需要 id"})
+                return
+            r = self._ai_call("provider_remove", id=pid)
+            self._json(200 if r.get("status") == "ok" else 502, {"ok": r.get("status") == "ok", "data": r.get("data") or {}, "detail": r.get("msg")})
+            return
+        if path == "/api/ai/active":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            pid = str(body.get("id") or "").strip()
+            r = self._ai_call("model_switch", model_id=pid)
+            self._json(200 if r.get("status") == "ok" else 400, {"ok": r.get("status") == "ok", "detail": r.get("msg")})
+            return
+        if path == "/api/ai/test":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            pid = str(body.get("id") or "").strip()
+            r = self._ai_call("model_list_query", provider_id=pid)
+            ok = r.get("status") == "ok"
+            self._json(200 if ok else 502, {"ok": ok, "detail": (r.get("data") if ok else (r.get("msg") or r))})
+            return
+        if path == "/api/cameras":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            r = self._camera_upsert(body or {})
+            if r.get("error"):
+                self._json(400, {"error": r["error"]})
+                return
+            self._json(200, r)
+            return
+        if path == "/api/notify/settings":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            allowed = ("notify_webhook", "notify_email_to", "smtp_host", "smtp_port", "smtp_user", "smtp_from",
+                       "sms_provider", "sms_key")
+            for k, v in (body or {}).items():
+                if k in allowed:
+                    self.store.setting_set(k, str(v))
+            self._json(200, {"ok": True})
+            return
+        if path == "/api/notify/test":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            channel = str(body.get("channel") or "webhook")
+            if channel == "webhook":
+                url = str(body.get("url") or self.store.setting_get("notify_webhook", ""))
+                if not url:
+                    self._json(400, {"error": "还没配 webhook 地址"})
+                    return
+                ok, msg = self._webhook_send(url, {"source": "ling-os", "text": "告警测试：家宅防线在叫你。"})
+                self._json(200 if ok else 502, {"ok": ok, "detail": msg})
+                return
+            if channel == "email":
+                host = self.store.setting_get("smtp_host", "")
+                to = str(body.get("to") or self.store.setting_get("notify_email_to", ""))
+                if not host or not to:
+                    self._json(400, {"error": "还没配 SMTP 或收件人"})
+                    return
+                ok, msg = self._smtp_send(host, int(self.store.setting_get("smtp_port", "587") or 587),
+                                          self.store.setting_get("smtp_user", ""), self.store.setting_get("smtp_pass", ""),
+                                          self.store.setting_get("smtp_from", ""), to,
+                                          "LING OS 告警测试", "这是一封测试邮件：家宅防线已接通。")
+                self._json(200 if ok else 502, {"ok": ok, "detail": msg})
+                return
+            if channel == "sms":
+                prov = self.store.setting_get("sms_provider", "")
+                self._json(501, {"ok": False, "error": "短信服务商未接入", "detail": prov or "先配置 sms_provider"})
+                return
+            self._json(400, {"error": "channel 只支持 webhook/email/sms"})
+            return
         if path == "/api/chat":
             text = str(body.get("text") or "").strip()
             if not text:
@@ -1071,7 +1232,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if not self._require_root():
                 return
-            self.manager.remove(u.path[len("/api/devices/"):].strip("/"))
+            dev_id = urllib.parse.unquote(u.path[len("/api/devices/"):].strip("/"))
+            self.manager.remove(dev_id)
             self._json(200, {"ok": True})
             return
         if u.path.startswith("/api/users/"):
@@ -1105,6 +1267,111 @@ class Handler(BaseHTTPRequestHandler):
         if self._level() in ("L3", "L4") and usr["role"] != "admin":
             return False
         return self.store.acl_check(usr, rel, need)
+
+    # ---- AI 引擎（经 run/ai.sock，仅 admin 写） ----
+    def _ai_call(self, cmd: str, **params) -> dict:
+        """向 ai_server 的 Unix socket 发一条命令，返回原始 JSON。
+
+        socket 缺失 / 超时 / 解析失败都返回 {status:error, code:ai_unavailable}，
+        由调用方决定是 502 还是原样返回，不在这里伪造结果。
+        """
+        sock_path = self.chat_sock or str(self.store.root / "run" / "ai.sock")
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(10)
+            s.connect(sock_path)
+            payload = {"cmd": cmd}
+            if params:
+                payload["params"] = params
+            s.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode())
+            data = b""
+            while len(data) < 2 * 1024 * 1024:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+                if b"\n" in chunk:
+                    break
+            s.close()
+            obj = json.loads(data.decode("utf-8", "replace").strip().splitlines()[0])
+            return obj if isinstance(obj, dict) else {"status": "ok", "data": obj}
+        except Exception as e:
+            return {"status": "error", "code": "ai_unavailable", "msg": str(e)}
+
+    @staticmethod
+    def _mask_provider(p: dict) -> dict:
+        """把 api_key 脱敏后再给浏览器：只留 前4…后4 或「已设置」。"""
+        out = dict(p or {})
+        key = out.pop("api_key", "") or ""
+        out["api_key_set"] = bool(key)
+        out["api_key_masked"] = (key[:4] + "…" + key[-4:]) if len(key) >= 12 else ("已设置" if key else "")
+        return out
+
+    # ---- 摄像头：camera.* 设备，state.stream 给首页预览用 ----
+    def _camera_upsert(self, body: dict) -> dict:
+        name = str(body.get("name") or "摄像头").strip()[:64] or "摄像头"
+        proto = str(body.get("protocol") or "rtsp").strip()
+        if proto not in ("rtsp", "rtmp", "onvif", "http"):
+            return {"error": "protocol 只支持 rtsp/rtmp/onvif/http"}
+        url = str(body.get("url") or "").strip()
+        snapshot = str(body.get("snapshot") or "").strip()
+        dev_id = str(body.get("id") or "").strip()
+        if not dev_id:
+            slug = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-")[:32]
+            if not slug:
+                import hashlib as _h
+                slug = _h.sha1(name.encode("utf-8")).hexdigest()[:8]
+            base = "camera." + slug
+            dev_id = base
+            n = 2
+            while self.store.get_device(dev_id):
+                dev_id = base + "-" + str(n)
+                n += 1
+        existing = self.store.get_device(dev_id)
+        state = dict((existing or {}).get("state") or {})
+        state["stream"] = url
+        state["snapshot"] = snapshot
+        state["protocol"] = proto
+        if existing:
+            self.store.update_device_state(dev_id, state)
+        else:
+            self.store.add_device(dev_id, name, "camera", proto, 1, state)
+        self.store.event("device", "camera upsert %s (%s)" % (dev_id, proto))
+        return {"ok": True, "id": dev_id, "state": state}
+
+    @staticmethod
+    def _smtp_send(host: str, port: int, user: str, pw: str, sender: str, to: str, subject: str, body: str) -> tuple[bool, str]:
+        """标准库 SMTP 发送；465 用 SSL，其它端口尝试 STARTTLS。"""
+        try:
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["Subject"] = subject
+            msg["From"] = sender or user
+            msg["To"] = to
+            if int(port) == 465:
+                srv = smtplib.SMTP_SSL(host, int(port), timeout=10)
+            else:
+                srv = smtplib.SMTP(host, int(port or 25), timeout=10)
+                try:
+                    srv.starttls()
+                except Exception:
+                    pass
+            if user:
+                srv.login(user, pw)
+            srv.sendmail(msg["From"], [x.strip() for x in to.split(",") if x.strip()], msg.as_string())
+            srv.quit()
+            return True, "sent"
+        except Exception as e:
+            return False, str(e)
+
+    @staticmethod
+    def _webhook_send(url: str, payload: dict) -> tuple[bool, str]:
+        try:
+            req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST",
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return True, "HTTP %s" % r.status
+        except Exception as e:
+            return False, str(e)
 
     def _security_state(self):
         sp = self.store.root / "system" / "config" / "security-policy.json"

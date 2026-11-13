@@ -32,13 +32,19 @@ manifest.json       PWA（可添加到主屏幕）
 | `#/security` | 安全 + ACL + 用户 | `/api/security` `/api/acl` `/api/users` `/api/security/level` |
 | `#/ai` | 管家 | `POST /api/chat` |
 | `#/system` | 系统命令 | `POST /api/cmd`（转到 127.0.0.1:18080） |
-| `#/settings` | 设置 | `/api/settings` `/api/token` `/api/backup` `/api/restore` |
+| `#/settings` | 设置 | `/api/settings` `/api/token` `/api/backup` `/api/restore`；AI 引擎 `/api/ai/providers`；摄像头 `/api/cameras`；通知 `/api/notify/*` |
 
 ## 布局
 
 - `body[data-layout]` 由 `detectLayout()` 按高矮判断：竖屏（手机）用底栏 + 单列，横屏（电脑）用侧栏 + 多栏。
 - 摄像头预览默认关（`localStorage.lo-preview`），只有开关打开且设备在线、`state.stream` 非空才渲染。
 - 主题日/夜两套令牌，`localStorage.lo-theme`，head 内预置避免闪白。
+
+## 新增接口（0.14 方向）
+
+- `GET/POST /api/ai/providers`、`POST /api/ai/providers/remove`、`POST /api/ai/active`、`POST /api/ai/test` — 模型提供商管理，经 `run/ai.sock`，仅 admin，`api_key` 返回前脱敏。
+- `GET/POST /api/cameras` — 摄像头（ONVIF/RTSP/RTMP/HTTP）写入 `camera.*` 的 `state.stream` / `state.snapshot`。
+- `GET/POST /api/notify/settings`、`POST /api/notify/test` — Webhook / SMTP 邮件 / 短信接口位（未接服务商时明确 501）。
 
 ## 约定
 
