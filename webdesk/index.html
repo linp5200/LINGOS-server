@@ -1,159 +1,107 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="day">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f1115">
-<title>LING OS · Web 桌面</title>
-<link rel="manifest" href="/manifest.json">
-<link rel="stylesheet" href="/assets/style.css">
+<meta name="theme-color" content="#f1ecdf">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icon.svg">
+<title>LING OS · 家宅防线</title>
+<link rel="stylesheet" href="assets/app.css">
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem('lo-theme');
+    if (t !== 'day' && t !== 'night') {
+      var h = new Date().getHours();
+      t = (h >= 19 || h < 7) ? 'night' : 'day';
+    }
+    document.documentElement.dataset.theme = t;
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
-<div id="login" class="login hidden">
-  <div class="login-card">
-    <div class="brand"><span class="brand-mark">L</span><div><b>LING OS</b><small>Web 桌面 · 0.13</small></div></div>
-    <div id="loginTitle" class="login-title">登录</div>
-    <div id="loginHint" class="muted">本地安全入口。首次使用请创建管理员。</div>
-    <label class="field"><span>用户名</span><input id="username" autocomplete="username" value="admin"></label>
-    <label class="field"><span>密码</span><input id="password" type="password" autocomplete="current-password" placeholder="至少 8 位"></label>
-    <label class="field hidden" id="pairWrap"><span>配对码</span><input id="pair" inputmode="numeric" placeholder="局域网首次登录需配对码"></label>
-    <div id="loginError" class="error" role="status" aria-live="polite"></div>
-    <button id="loginBtn" class="btn primary wide">进入桌面</button>
-    <div class="login-foot muted">本机 http://127.0.0.1:8080 · 默认仅本机可访问</div>
-  </div>
-</div>
 
-<div id="desktop" class="desktop hidden">
-  <header class="topbar">
-    <button class="icon-btn" id="startBtn" title="开始" aria-label="打开开始菜单">☰</button>
-    <div class="brand small"><span class="brand-mark">L</span><b>LING OS</b><span class="tag">0.13</span></div>
-    <div class="top-search"><input id="quickSearch" placeholder="搜索应用 / 设备 / 文件（/）"></div>
-    <div class="top-right">
-      <span class="chip" id="chipLan">本地</span>
-      <span class="chip" id="chipSecurity">安全 L1</span>
-      <span class="clock" id="clock">--:--</span>
-      <button class="icon-btn" id="notifBtn" title="通知" aria-label="通知">◔<span id="notifBadge" class="badge hidden">0</span></button>
-      <button class="icon-btn" id="themeBtn" title="浅色/深色" aria-label="切换主题">◐</button>
-      <button class="icon-btn" id="fullBtn" title="全屏" aria-label="全屏">⛶</button>
-      <button class="avatar" id="avatarBtn" title="账户" aria-label="账户设置">A</button>
+<!-- 启动 / 错误屏：先探 /api/health。失败只显示 err-noserver，绝不渲染模拟数据。 -->
+<div class="boot" id="boot">
+  <div class="boot-card">
+    <div class="boot-logo">L</div>
+    <div class="boot-body">
+      <div class="boot-code" id="bootCode">正在连接 LING OS</div>
+      <h1 id="bootTitle">等后台回话</h1>
+      <p id="bootText">正在检查同一地址下的 Web 服务。</p>
+      <div class="boot-meta" id="bootMeta"></div>
+      <div class="boot-actions">
+        <button class="btn btn--primary" id="bootRetry">重试连接</button>
+        <button class="btn" id="bootSettings">填后台地址</button>
+      </div>
     </div>
-  </header>
-
-  <aside class="dock">
-    <button class="dock-app active" data-app="home" title="概览"><span>⌂</span><em>概览</em></button>
-    <button class="dock-app" data-app="devices" title="设备"><span>◈</span><em>设备</em></button>
-    <button class="dock-app" data-app="files" title="文件"><span>▤</span><em>文件</em></button>
-    <button class="dock-app" data-app="security" title="安全"><span>◇</span><em>安全</em></button>
-    <button class="dock-app" data-app="ai" title="AI"><span>✦</span><em>AI</em></button>
-    <div class="dock-spacer"></div>
-    <button class="dock-app" data-app="settings" title="设置"><span>⚙</span><em>设置</em></button>
-  </aside>
-
-  <main class="workspace">
-    <section id="view-home" class="view active">
-      <div class="hero">
-        <div>
-          <div class="eyebrow">LING OS / HOME SECURITY</div>
-          <h1>晚上好，<span id="helloName">先生</span></h1>
-          <p class="muted">居家安防 · 敏感人物安防 · 数据保护 · 智能控制</p>
-        </div>
-        <div class="hero-actions">
-          <button class="btn" id="openDevices">查看设备</button>
-          <button class="btn primary" id="openAI">问 AI 助手</button>
-        </div>
-      </div>
-      <div class="grid cards">
-        <article class="card stat"><div class="muted">在线设备</div><strong id="statDevices">--</strong><small>虚拟 / 局域网</small></article>
-        <article class="card stat"><div class="muted">安全等级</div><strong id="statSecurity">L1</strong><small id="statSecurityName">常规</small></article>
-        <article class="card stat"><div class="muted">平台</div><strong id="statPlatform">--</strong><small>Termux / Web</small></article>
-        <article class="card stat"><div class="muted">版本</div><strong id="statUptime">--</strong><small>Web 0.13.1</small></article>
-      </div>
-      <div class="grid two">
-        <article class="card"><div class="card-head"><h2>设备概览</h2><button class="link" data-app="devices">全部</button></div><div id="homeDevices" class="list"></div></article>
-        <article class="card"><div class="card-head"><h2>最近事件</h2><button class="link" data-app="security">审计</button></div><div id="homeEvents" class="list"></div></article>
-      </div>
-    </section>
-
-    <section id="view-devices" class="view">
-      <div class="view-head"><div><div class="eyebrow">DEVICES</div><h1>设备</h1></div><div class="row"><button class="btn" id="addDeviceBtn">添加虚拟设备</button><button class="btn" id="discoverBtn">发现设备</button><button class="btn" id="batchBtn" aria-pressed="false">批量</button><button class="btn" id="refreshDevices">刷新</button></div></div>
-      <div id="adapterChips" class="row"></div>
-      <div id="deviceFilters" class="row filter-row" aria-label="设备筛选"></div>
-      <div id="batchBar" class="batch-bar hidden"><span id="batchCount" aria-live="polite">已选 0 台</span><button class="btn" data-batch-cmd="on">全开</button><button class="btn" data-batch-cmd="off">全关</button><button class="btn" id="batchCancel">取消</button></div>
-      <div id="deviceGrid" class="grid cards"></div>
-      <div class="muted small-note">虚拟设备可用；HA/MQTT/米家适配器在设置中配置。离线优先：局域网设备不依赖云端。</div>
-    </section>
-
-    <section id="view-files" class="view">
-      <div class="view-head"><div><div class="eyebrow">FILES</div><h1>文件</h1></div><div class="row"><button class="btn" id="openFilesBtn">独立打开</button><button class="btn" id="refreshFiles">刷新</button></div></div>
-      <div class="filebar"><button class="icon-btn" id="fileUp" title="上级目录" aria-label="上级目录">↑</button><span id="fileCrumb" class="crumb">/</span><span class="muted" id="fileAclHint">ACL：管理员全权</span></div>
-      <div class="grid two">
-        <article class="card"><div id="fileList" class="file-list"></div></article>
-        <article class="card"><div class="card-head"><h2 id="fileTitle">选择文件</h2><button class="link" id="saveFile">保存</button></div><textarea id="fileEditor" placeholder="选择文件查看；或输入内容后保存到当前目录的新文件"></textarea><input id="fileNewName" placeholder="新文件名（保存时使用）"></article>
-      </div>
-      <div class="muted small-note">目录 ACL 在 0.13.2 提供管理界面；当前管理员全权，普通用户默认拒绝。</div>
-    </section>
-
-    <section id="view-security" class="view">
-      <div class="view-head"><div><div class="eyebrow">SECURITY</div><h1>安全中心</h1></div><button class="btn" id="refreshSecurity">刷新</button></div>
-      <div class="grid two">
-        <article class="card"><h2>隐私等级</h2><p class="muted" id="secDesc">--</p><div id="levelBtns" class="level-row"></div>
-          <button class="disclosure" data-disclosure="levelHelp" aria-expanded="false" aria-controls="levelHelp">等级说明 <span class="disclosure-arrow" aria-hidden="true">⌄</span></button>
-          <div id="levelHelp" class="disclosure-panel" hidden>
-            <p><b>L0 关闭</b>：不做限制，兼容优先。</p>
-            <p><b>L1 常规</b>：推荐默认，阻止常见跟踪。</p>
-            <p><b>L2 限制</b>：默认拒绝出站，白名单放行。</p>
-            <p><b>L3 严格</b>：最小权限，设备/网络默认关闭。</p>
-            <p><b>L4 MAX</b>：逐次手动批准（高级）。</p>
-            <p class="muted small-note">当前 Web 服务强制文件访问限制；网络/内核级拦截由完整平台执行。</p>
-          </div>
-        </article>
-        <article class="card"><h2>审计</h2><div id="auditList" class="list"></div></article>
-      </div>
-      <div class="muted small-note">Termux 无内核级防火墙；这里应用层策略与审计。完整平台会启用 nft/seccomp。</div>
-    </section>
-
-    <section id="view-ai" class="view">
-      <div class="view-head"><div><div class="eyebrow">AGENT</div><h1>AI 助手</h1></div><button class="btn" id="clearChat">清空</button></div>
-      <div class="chat card"><div id="chatLog" class="chat-log"></div><div class="chat-input"><textarea id="chatText" placeholder="输入消息，Enter 发送；Shift+Enter 换行"></textarea><button id="chatSend" class="btn primary">发送</button></div></div>
-      <div class="muted small-note">当前接入 /LINGOS/run/ai.sock；后端未启动时显示提示。</div>
-    </section>
-
-    <section id="view-settings" class="view">
-      <div class="view-head"><div><div class="eyebrow">SETTINGS</div><h1>设置</h1></div></div>
-      <div class="grid two">
-        <article class="card"><h2>外观</h2><p class="muted">浅色 / 深色，自动记忆。</p><div class="row"><button class="btn" id="themeBtn2">切换主题</button><button class="btn" id="fullBtn2">全屏</button></div></article>
-        <article class="card"><h2>账户</h2><p class="muted" id="accountInfo">--</p><div class="row"><button class="btn" id="rootKeyBtn">轮换 root key</button><button class="btn" id="appTokenBtn">生成 App Token</button><button class="btn" id="exportAuditBtn">导出审计</button><button class="btn" id="backupBtn">备份</button><button class="btn" id="restoreBtn">恢复备份</button><input type="file" id="restoreFile" accept=".gz,application/gzip" style="display:none"><button class="btn danger" id="logoutBtn">退出登录</button></div></article>
-        <article class="card"><h2>关于</h2><p class="muted">LING OS 0.13.0 · Web 桌面 · Termux rootfs<br>默认仅本机；局域网需启动终端 --lan 并配对。</p><a class="btn" href="/debug.html" target="_blank" rel="noopener">调试控制台</a></article>
-        <article class="card"><h2>平台能力</h2><div id="platformCaps" class="list"></div></article>
-        <article class="card"><h2>目录访问控制</h2><p class="muted">允许谁访问哪个目录；文件管理器独立应用。</p><div id="aclList" class="list"></div><button class="btn" id="addAclBtn">添加 ACL</button></article>
-        <article class="card"><h2>用户</h2><p class="muted">admin 全权；普通用户按 ACL 访问。</p><div id="userList" class="list"></div><button class="btn" id="addUserBtn">添加用户</button></article>
-        <article class="card"><h2>设备适配器</h2><div id="adapterSettings" class="list"></div><div class="row"><button class="btn" id="haCfgBtn">配置 HA</button><button class="btn" id="mqttCfgBtn">配置 MQTT</button><button class="btn" id="miioCfgBtn">配置米家</button></div></article>
-      </div>
-    </section>
-  </main>
-
-  <footer class="taskbar">
-    <button class="start" id="taskStart">◉ 开始</button>
-    <div id="taskApps" class="task-apps"></div>
-    <div class="tray"><span id="trayNet">●</span><span id="traySecurity">L1</span><span id="trayClock">--:--</span></div>
-  </footer>
-
-  <nav class="tabbar" aria-label="主导航">
-    <button class="tab-app active" data-app="home" aria-current="page">概览</button>
-    <button class="tab-app" data-app="devices">设备</button>
-    <button class="tab-app" data-app="files">文件</button>
-    <button class="tab-app" data-app="security">安全</button>
-    <button class="tab-app" data-app="ai">AI</button>
-  </nav>
-
-  <div id="startMenu" class="start-menu hidden">
-    <div class="start-head"><b>LING OS</b><span class="muted">0.13.0</span></div>
-    <div id="startApps" class="start-grid"></div>
-    <div class="start-foot"><button class="link" data-app="settings">设置</button><button class="link" id="startLogout">退出</button></div>
   </div>
-  <div id="notifPanel" class="notif-panel hidden"><div class="card-head"><h2>通知</h2><button class="link" id="notifClose">关闭</button></div><div id="notifList" class="list"></div></div>
-  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 </div>
-<script src="/assets/app.js"></script>
+
+<!-- 登录 / 初始化：setup=true 时同一表单用于创建管理员；成功后显示一次性 root key。 -->
+<div class="auth" id="auth" hidden>
+  <form class="auth-card" id="authForm">
+    <div class="auth-head">
+      <div class="boot-logo">L</div>
+      <div><b>LING OS</b><small id="authSub">本机安全入口</small></div>
+    </div>
+    <div class="auth-title" id="authTitle">登录</div>
+    <p class="auth-hint" id="authHint">这个家里的 Web 服务在本机，数据不出门。</p>
+    <label class="field"><span>用户名</span><input id="authUser" autocomplete="username" value="admin" required></label>
+    <label class="field"><span>密码</span><input id="authPass" type="password" autocomplete="current-password" minlength="8" placeholder="至少 8 位" required></label>
+    <label class="field" id="pairField" hidden><span>配对码</span><input id="authPair" inputmode="numeric" placeholder="局域网首次访问要这 6 位"></label>
+    <div class="auth-error" id="authError" role="status" aria-live="polite"></div>
+    <button class="btn btn--primary auth-submit" id="authSubmit" type="submit">进入</button>
+    <p class="auth-foot">本机 8080 · 首次使用会创建管理员</p>
+  </form>
+</div>
+
+<!-- 主界面：七个视图由 app.js 渲染；data-layout 在竖屏/横屏之间自动切换。 -->
+<div class="app" id="app" hidden>
+  <aside class="rail" id="rail" aria-label="主导航"></aside>
+
+  <div class="stage">
+    <header class="bar">
+      <div class="brand">LING OS <small id="barWhere">家宅防线</small></div>
+      <div class="bar-spacer"></div>
+      <div class="bar-tools">
+        <span class="clock" id="clock" aria-label="当前时间">--:--</span>
+        <button class="icon-btn" id="refreshBtn" aria-label="刷新" title="刷新"><span data-icon="refresh" data-icon-size="17"></span></button>
+        <button class="icon-btn" id="themeBtn" aria-label="日夜切换" title="日夜切换"><span data-icon="moon" data-icon-size="17"></span></button>
+        <button class="icon-btn" id="logoutBtn" aria-label="退出" title="退出"><span data-icon="person" data-icon-size="17"></span></button>
+      </div>
+    </header>
+
+    <main class="board" id="board">
+      <section class="view" id="view-home" hidden></section>
+      <section class="view" id="view-devices" hidden></section>
+      <section class="view" id="view-files" hidden></section>
+      <section class="view" id="view-security" hidden></section>
+      <section class="view" id="view-ai" hidden></section>
+      <section class="view" id="view-system" hidden></section>
+      <section class="view" id="view-settings" hidden></section>
+    </main>
+  </div>
+</div>
+
+<div class="tabbar" id="tabbar" hidden aria-label="底部导航"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- 危险动作确认条：开锁 / 切等级 / 删用户或设备 / 恢复备份 -->
+<div class="confirm" id="confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody">
+  <div class="confirm-card">
+    <h3 id="confirmTitle" data-confirm-title>确认一下</h3>
+    <p data-confirm-body id="confirmBody"></p>
+    <div class="confirm-cols">
+      <button class="btn" data-confirm-cancel>算了</button>
+      <button class="btn btn--primary" data-confirm-ok>确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
 </body>
 </html>

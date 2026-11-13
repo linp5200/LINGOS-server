@@ -1,16 +1,16 @@
 {
-  "name": "LING OS Web 桌面",
+  "name": "LING OS · 家宅防线",
   "short_name": "LING OS",
-  "description": "居家安防 · 敏感人物安防 · 数据保护 · 智能控制",
+  "description": "居家安防、敏感人物安防、数据保护与智能控制的 Web 桌面",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0f1115",
-  "theme_color": "#0f1115",
+  "background_color": "#f1ecdf",
+  "theme_color": "#f1ecdf",
   "icons": [
     {
-      "src": "/assets/icon.svg",
+      "src": "assets/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

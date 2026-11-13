@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300" role="img" aria-label="门口夜视示意图">
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b241c"/>
+      <stop offset="1" stop-color="#0c110c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.62" cy="0.42" r="0.55">
+      <stop offset="0" stop-color="#7fae7f" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#7fae7f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141b14"/>
+      <stop offset="1" stop-color="#0a0d0a"/>
+    </linearGradient>
+    <filter id="noise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.14"/></feComponentTransfer>
+      <feComposite operator="in" in2="SourceGraphic"/>
+    </filter>
+    <filter id="soft"><feGaussianBlur stdDeviation="7"/></filter>
+  </defs>
+
+  <rect width="400" height="300" fill="url(#wall)"/>
+  <!-- 地面 -->
+  <path d="M0 214 H400 V300 H0 Z" fill="url(#floor)"/>
+  <!-- 走廊透视 -->
+  <path d="M-20 214 L150 186 L150 300 L-20 300 Z" fill="#101610" opacity=".85"/>
+  <path d="M420 214 L250 186 L250 300 L420 300 Z" fill="#101610" opacity=".75"/>
+  <!-- 门框 -->
+  <rect x="150" y="64" width="140" height="152" rx="3" fill="#151d15" stroke="#2c3a2b" stroke-width="2"/>
+  <rect x="160" y="74" width="120" height="134" rx="2" fill="#0d120d" stroke="#243024" stroke-width="1"/>
+  <!-- 门缝光 -->
+  <path d="M272 76 V206" stroke="#5d7f57" stroke-width="2" opacity=".5"/>
+  <!-- 地垫 -->
+  <path d="M168 218 H276 L286 240 H158 Z" fill="#111811" stroke="#253024" stroke-width="1"/>
+  <!-- 人形热区（示意） -->
+  <g filter="url(#soft)" opacity=".55">
+    <ellipse cx="238" cy="150" rx="26" ry="34" fill="#93c48f"/>
+    <ellipse cx="238" cy="112" rx="14" ry="16" fill="#93c48f"/>
+  </g>
+  <g opacity=".85">
+    <ellipse cx="238" cy="150" rx="20" ry="28" fill="#0e150e" stroke="#8fbe8b" stroke-width="1.6" stroke-dasharray="4 4"/>
+    <circle cx="238" cy="110" r="11" fill="#0e150e" stroke="#8fbe8b" stroke-width="1.6" stroke-dasharray="4 4"/>
+  </g>
+  <!-- 夜视泛光 -->
+  <rect width="400" height="300" fill="url(#glow)"/>
+  <!-- 扫描线 -->
+  <g stroke="#a8d6a4" stroke-width="0.6" opacity=".08">
+    <path d="M0 26 H400"/><path d="M0 58 H400"/><path d="M0 90 H400"/><path d="M0 122 H400"/>
+    <path d="M0 154 H400"/><path d="M0 186 H400"/><path d="M0 218 H400"/><path d="M0 250 H400"/>
+  </g>
+  <!-- 噪点 -->
+  <rect width="400" height="300" filter="url(#noise)" opacity=".5" fill="#7fa87b"/>
+  <!-- 角落框 -->
+  <g stroke="#8fbe8b" stroke-width="1.4" opacity=".45" fill="none">
+    <path d="M14 44 V14 H44"/><path d="M356 14 H386 V44"/>
+    <path d="M14 256 V286 H44"/><path d="M356 286 H386 V256"/>
+  </g>
+</svg>
