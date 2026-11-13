@@ -1409,6 +1409,12 @@ class Handler(BaseHTTPRequestHandler):
                 for k in ("reply", "content", "message", "text"):
                     if isinstance(obj.get(k), str) and obj[k].strip():
                         return obj[k]
+                # 兼容 {status, data:{reply}} 包装（部分版本/AI 服务会这样回）
+                data = obj.get("data")
+                if isinstance(data, dict):
+                    for k in ("reply", "content", "message", "text"):
+                        if isinstance(data.get(k), str) and data[k].strip():
+                            return data[k]
                 if obj.get("ok") is False:
                     return "AI 服务返回错误：" + str(obj.get("error") or obj)[:300]
             return json.dumps(obj, ensure_ascii=False)[:2000]
