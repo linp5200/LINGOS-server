@@ -109,6 +109,7 @@
 
 **扩展批次（2026-11-14 自主执行）**
 - 后端新增（`services/lingos_web/server.py`）：`GET/POST /api/ai/providers`、`/api/ai/providers/remove`、`/api/ai/active`、`/api/ai/test`（经 `run/ai.sock` 的 provider_list/provider_add/provider_remove/model_switch/model_list_query，仅 admin，key 返回前脱敏）；`GET/POST /api/cameras`（写 camera 设备 `state.stream`/`snapshot`）；`GET/POST /api/notify/settings`、`POST /api/notify/test`（webhook/email/sms）。
+- ONVIF 发现：`POST /api/cameras/discover` 用 WS-Discovery 组播探测（无设备时明确提示，不报错），设置页「发现 ONVIF」可把结果填进表单。
 - 前端设置页新增三块：「AI 引擎」（三协议 openai/anthropic/gemini + 本地 Ollama，列表/编辑/设当前/测试/删除）、「摄像头」（ONVIF/RTSP/RTMP/HTTP，保存即写设备 state）、「通知」（Webhook/邮件 SMTP/短信接口位，可分别测试）。
 - 首页预览：`state.stream` 或 `state.snapshot` 任一存在且开关打开才渲染；纯 RTSP 流给「需转 HLS/WebRTC」说明，不假装能播。
 - 修复：设备删除路径 URL 解码；摄像头 id 改 ASCII slug（中文名不再进 id）。

@@ -186,6 +186,7 @@
     aiActive: '',
     aiError: '',
     cameras: null,
+    onvif: [],
     notifyLoaded: false
   };
 
@@ -928,7 +929,12 @@
           '<label class="field"><span>协议</span><select id="camProto" style="height:38px;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;background:var(--paper);color:var(--ink)"><option>rtsp</option><option>rtmp</option><option>onvif</option><option>http</option></select></label>' +
           '<label class="field"><span>流地址</span><input id="camUrl" placeholder="rtsp://192.168.1.10/stream1"></label>' +
           '<label class="field"><span>快照地址（可选）</span><input id="camSnap" placeholder="http://192.168.1.10/snapshot.jpg"></label>' +
-          '<button class="btn btn--primary" data-act="cam-save">保存摄像头</button></section>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn btn--primary" data-act="cam-save">保存摄像头</button>' +
+          '<button class="btn" data-act="cam-discover">发现 ONVIF</button></div>' +
+          (S.onvif.length ? '<div style="margin-top:10px">' + S.onvif.map(function (d, i) {
+            return '<div class="adapter"><b>' + esc(d.ip) + '</b><span class="muted">' + esc((d.xaddrs || []).join(' ')) + '</span>' +
+              '<button class="btn btn--sm" style="margin-left:auto" data-onvif-fill="' + i + '">填入</button></div>';
+          }).join('') + '</div>' : '') + '</section>' +
         '<section class="panel-block"><h2>通知</h2><p>Webhook / 邮件 / 短信。邮件用 SMTP，短信只要服务商接口位（未接就如实报错）。</p>' +
           '<label class="field" style="margin-top:10px"><span>Webhook 地址</span><input id="ntWebhook" value="' + esc((S.settings && S.settings.notify_webhook) || '') + '" placeholder="https://…"></label>' +
           '<label class="field"><span>收件邮箱</span><input id="ntEmail" value="' + esc((S.settings && S.settings.notify_email_to) || '') + '"></label>' +
@@ -1079,6 +1085,19 @@
       return;
     }
 
+    var ov = e.target.closest('[data-onvif-fill]');
+    if (ov) {
+      var item = S.onvif[parseInt(ov.getAttribute('data-onvif-fill'), 10)];
+      if (item) {
+        var setV = function (id, v) { var el = document.getElementById(id); if (el) el.value = v || ''; };
+        setV('camName', 'ONVIF ' + item.ip);
+        setV('camProto', 'onvif');
+        setV('camUrl', (item.xaddrs || [])[0] || '');
+        toast('已填入，补个名字再保存');
+      }
+      return;
+    }
+
     var af = e.target.closest('[data-addfound]');
     if (af) {
       var item = S.discovered[parseInt(af.getAttribute('data-addfound'), 10)];
@@ -1222,6 +1241,62 @@
         else toast('没加成：' + ((r.data && r.data.error) || r.status));
       });
     } else if (act === 'ai-clear') { aiMsgs = []; saveAi(); renderAiThread(); }
+    else if (act === 'ai-save') {
+      var pid = ($('#aiPid') || {}).value || '';
+      var base = ($('#aiBase') || {}).value || '';
+      var model = ($('#aiModel') || {}).value || '';
+      if (!pid.trim() || !base.trim() || !model.trim()) { toast('id / Base URL / 模型都要填'); return; }
+      api('/api/ai/providers', { method: 'POST', body: {
+        id: pid.trim(), name: ($('#aiName') || {}).value || pid.trim(),
+        format: ($('#aiFormat') || {}).value || 'openai',
+        base_url: base.trim(), model: model.trim(),
+        api_key: ($('#aiKey') || {}).value || ''
+      } }).then(function (r) {
+        if (r.ok) { toast('提供商已保存'); S.aiProviders = null; loadAiProviders(); }
+        else toast('没保存：' + ((r.data && (r.data.error || r.data.detail)) || r.status));
+      });
+    } else if (act === 'cam-save') {
+      var cn = ($('#camName') || {}).value || '';
+      var cu = ($('#camUrl') || {}).value || '';
+      if (!cn.trim() || !cu.trim()) { toast('名称和流地址都要填'); return; }
+      api('/api/cameras', { method: 'POST', body: {
+        name: cn.trim(), protocol: ($('#camProto') || {}).value || 'rtsp',
+        url: cu.trim(), snapshot: ($('#camSnap') || {}).value || ''
+      } }).then(function (r) {
+        if (r.ok) { toast('摄像头已保存'); S.cameras = null; loadCameras(); }
+        else toast('没保存：' + ((r.data && r.data.error) || r.status));
+      });
+    } else if (act === 'cam-discover') {
+      toast('正在找 ONVIF 设备…');
+      api('/api/cameras/discover', { method: 'POST', body: { timeout: 3 }, timeout: 8000 }).then(function (r) {
+        if (r.ok && r.data) {
+          S.onvif = r.data.devices || [];
+          renderSettings();
+          toast(r.data.detail || ('发现 ' + S.onvif.length + ' 个'));
+        } else toast('发现失败：' + ((r.data && (r.data.error || r.data.detail)) || r.status));
+      });
+    } else if (act === 'notify-save') {
+      var nt = {
+        notify_webhook: ($('#ntWebhook') || {}).value || '',
+        notify_email_to: ($('#ntEmail') || {}).value || '',
+        smtp_host: ($('#ntHost') || {}).value || '',
+        smtp_port: ($('#ntPort') || {}).value || '',
+        smtp_user: ($('#ntUser') || {}).value || '',
+        smtp_pass: ($('#ntPass') || {}).value || '',
+        smtp_from: ($('#ntFrom') || {}).value || '',
+        sms_provider: ($('#ntSms') || {}).value || ''
+      };
+      api('/api/notify/settings', { method: 'POST', body: nt }).then(function (r) {
+        toast(r.ok ? '通知设置已保存' : '没保存：' + ((r.data && r.data.error) || r.status));
+        settingsLoaded = false; renderSettings();
+      });
+    } else if (act === 'notify-test') {
+      var ch = b.getAttribute('data-channel');
+      api('/api/notify/test', { method: 'POST', body: { channel: ch } }).then(function (r) {
+        var d = (r.data && (r.data.detail || r.data.error)) || ('HTTP ' + r.status);
+        toast((r.ok ? '测试通过：' : '测试失败：') + String(d).slice(0, 90));
+      });
+    }
     else if (act === 'settings-reload') { settingsLoaded = false; renderSettings(); }
     else if (act === 'save-api') {
       var v = ($('#setApi') && $('#setApi').value.trim()) || '';

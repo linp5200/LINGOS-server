@@ -1117,6 +1117,17 @@ class Handler(BaseHTTPRequestHandler):
             ok = r.get("status") == "ok"
             self._json(200 if ok else 502, {"ok": ok, "detail": (r.get("data") if ok else (r.get("msg") or r))})
             return
+        if path == "/api/cameras/discover":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            found = self._onvif_discover(float(body.get("timeout") or 3))
+            detail = "发现 %d 个 ONVIF 设备" % len(found) if found else "没有设备回应（网络/组播/设备都要开）"
+            self._json(200, {"devices": found, "count": len(found), "detail": detail})
+            return
         if path == "/api/cameras":
             usr = self._require()
             if not usr:
@@ -1308,6 +1319,54 @@ class Handler(BaseHTTPRequestHandler):
         return out
 
     # ---- 摄像头：camera.* 设备，state.stream 给首页预览用 ----
+    @staticmethod
+    def _onvif_discover(timeout: float = 3.0) -> list:
+        """WS-Discovery 组播探测 ONVIF 设备。
+
+        标准 Probe → 239.255.255.250:3702；返回 XAddrs（设备服务地址）。
+        没有设备/网络不支持组播时返回空列表，由调用方提示，不抛异常。
+        """
+        probe = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope" '
+            'xmlns:w="http://schemas.xmlsoap.org/ws/2004/08/addressing" '
+            'xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" '
+            'xmlns:dn="http://www.onvif.org/ver10/network/wsdl">'
+            '<e:Header><w:MessageID>uuid:%s</w:MessageID>'
+            '<w:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>'
+            '<w:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action></e:Header>'
+            '<e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types></d:Probe></e:Body></e:Envelope>'
+        ) % secrets.token_hex(8)
+        out = []
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.settimeout(0.5)
+            sock.sendto(probe.encode("utf-8"), ("239.255.255.250", 3702))
+            deadline = time.time() + max(0.5, float(timeout))
+            while time.time() < deadline:
+                try:
+                    data, addr = sock.recvfrom(65535)
+                except socket.timeout:
+                    continue
+                text = data.decode("utf-8", "replace")
+                m = re.search(r"<[^>]*XAddrs[^>]*>([^<]+)</[^>]*XAddrs>", text)
+                xaddrs = m.group(1).split() if m else []
+                scope = re.search(r"<[^>]*Scopes[^>]*>([^<]+)</[^>]*Scopes>", text)
+                out.append({"ip": addr[0], "xaddrs": xaddrs,
+                            "scopes": (scope.group(1).split() if scope else [])})
+            sock.close()
+        except Exception:
+            pass
+        # 按 IP+XAddr 去重
+        seen, uniq = set(), []
+        for it in out:
+            key = (it["ip"], tuple(it["xaddrs"]))
+            if key not in seen:
+                seen.add(key)
+                uniq.append(it)
+        return uniq
+
     def _camera_upsert(self, body: dict) -> dict:
         name = str(body.get("name") or "摄像头").strip()[:64] or "摄像头"
         proto = str(body.get("protocol") or "rtsp").strip()
