@@ -402,5 +402,18 @@ class WebTest(unittest.TestCase):
         WebTest.cookie = admin_cookie
 
 
+    def test_21_plugin_request_validation(self):
+        """插件请求体/ID/布尔校验。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        st, _ = self.req("POST", "/api/plugins/import", {"manifest": {"id": "a", "name": "单字", "version": "0.1"}})
+        self.assertEqual(st, 200)
+        st, _ = self.req("POST", "/api/plugins/toggle", {"id": "a", "enabled": False})
+        self.assertEqual(st, 200)
+        st, _ = self.req("POST", "/api/plugins/toggle", {"id": "a", "enabled": "false"})
+        self.assertEqual(st, 400)
+        st, _ = self.req("POST", "/api/plugins/toggle", [1, 2])
+        self.assertEqual(st, 400)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

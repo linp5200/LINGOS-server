@@ -75,7 +75,7 @@
     });
   }
 
-  var KIND = { auth: '登录', device: '设备', user: '用户', security: '安全', settings: '设置', fs: '文件', acl: '权限' };
+  var KIND = { auth: '登录', device: '设备', user: '用户', security: '安全', settings: '设置', fs: '文件', acl: '权限', plugin: '插件', ai: 'AI' };
   function kindName(k) { return KIND[k] || k || '事件'; }
 
   function roleName(r) { return ({ admin: '管理员', user: '普通用户' })[r] || r || '—'; }
@@ -574,7 +574,7 @@
     }
   }
 
-  var WEB_VERSION = '0.14';
+  var WEB_VERSION = '0.15';
 
   var TITLES = { home: '家宅防线', devices: '设备', files: '文件', security: '安全', ai: '管家', system: '系统', settings: '设置' };
 
@@ -582,15 +582,12 @@
   function route(hash) {
     var m = /^#\/([a-z]+)/.exec(hash || '');
     var v = m && TITLES[m[1]] ? m[1] : 'home';
+    var order = ['home','devices','files','security','ai','system','settings'];
+    document.documentElement.dataset.navdir = order.indexOf(v) >= order.indexOf(S.view) ? 'forward' : 'back';
     S.view = v;
     $all('.view').forEach(function (el) {
       var on = el.id === 'view-' + v;
       el.hidden = !on;
-      if (on && prefs().motionLevel !== 'off') {
-        el.classList.remove('is-enter');
-        void el.offsetWidth;
-        el.classList.add('is-enter');
-      }
     });
     var where = $('#barWhere');
     if (where) where.textContent = TITLES[v];
@@ -635,7 +632,16 @@
       S.loadError = errs.length ? errs.join('；') : '';
       S.loaded = true;
       S.loading = false;
-      route(location.hash || '#/home');
+      var skel = document.querySelector('.skel');
+      if (skel && prefs().motionLevel !== 'off') {
+        document.body.classList.add('skel-out');
+        setTimeout(function () {
+          document.body.classList.remove('skel-out');
+          route(location.hash || '#/home');
+        }, 120);
+      } else {
+        route(location.hash || '#/home');
+      }
       return !S.loadError;
     });
   }
@@ -742,7 +748,7 @@
         '<div class="view-actions"><button class="btn btn--primary" data-act="refresh">' + icon('refresh', 16) + '刷新</button></div>' +
       '</div>' +
       (S.loadError ? '<div class="errorbar" role="alert"><span>暂时读不到：' + esc(S.loadError) + '</span><button class="btn btn--sm" data-act="refresh">重试</button></div>' : '') +
-      (!S.devices.length ? '<section class="panel start-steps"><div class="panel-head"><h2>开始三步</h2><span class="more">可跳过</span></div>' +
+      (!S.devices.length && !localStorage.getItem('lo-skip-start') ? '<section class="panel start-steps"><div class="panel-head"><h2>开始三步</h2><button class="btn btn--sm" data-act="skip-start">跳过</button></div>' +
         '<ol><li><b>加设备</b><span>点「加一台」或局域网发现。</span><button class="btn btn--sm" data-nav="devices">去设备</button></li>' +
         '<li><b>接 AI</b><span>设置 → AI 引擎，填云端 key 或用本地 Ollama。</span><button class="btn btn--sm" data-nav="settings" data-set-target="ai">去设置</button></li>' +
         '<li><b>定隐私等级</b><span>安全页选 L1–L4，默认 L1。</span><button class="btn btn--sm" data-nav="security">去安全</button></li></ol></section>' : '') +
@@ -952,7 +958,7 @@
             '<div class="act">' + (isDir
               ? '<button class="btn btn--sm" data-fs-enter="' + esc(full) + '">打开</button>'
               : '<button class="btn btn--sm" data-fs-view="' + esc(full) + '">查看</button>' +
-                '<button class="btn btn--sm" data-fs-del="' + esc(full) + '">删除</button>') + '</div></div>';
+                '<button class="btn btn--sm btn--danger" data-fs-del="' + esc(full) + '">删除</button>') + '</div></div>';
         }).join('') : '<div class="fs-row"><div class="empty-state"><div class="empty-ic">' + icon('folder', 30) + '</div>' +
           '<b>这个目录是空的</b><p>写第一个文件，或从本机上传。</p>' +
           '<div class="empty-acts"><button class="btn btn--primary" data-act="fs-new">新建文件</button>' +
@@ -1384,7 +1390,7 @@
       body =
         '<section class="panel-block">' +
           '<div class="kv-row"><span>设备名</span><b>' + esc((S.settings && S.settings.display_name) || '未命名') + '</b></div>' +
-          '<div class="kv-row"><span>版本</span><b><button class="linkish" data-act="version-tap">Web ' + WEB_VERSION + ' · 后台 ' + esc(S.health ? S.health.version : '—') + '</button></b></div>' +
+          '<div class="kv-row"><span>版本</span><b><button class="linkish version-hit" data-act="version-tap">Web ' + WEB_VERSION + ' · 后台 ' + esc(S.health ? S.health.version : '—') + '</button></b></div>' +
           '<div class="kv-row"><span>后台</span><b>' + esc(apiBase || location.origin) + '</b></div>' +
           '<div class="kv-row"><span>平台</span><b>' + esc(S.health ? S.health.platform : '—') + '</b></div>' +
           '<div class="kv-row"><span>局域网</span><b>' + (S.health && S.health.lan ? '开' : '仅本机') + '</b></div>' +
@@ -1458,7 +1464,8 @@
     if (S.plugins === null) return '<div class="skel"><i></i><i></i></div>';
     var list = S.plugins.length ? S.plugins.map(function (p) {
       return '<div class="adapter"><b>' + esc(p.name || p.id) + '</b><span class="badge">' + esc(p.version || '—') + '</span>' +
-        '<span class="muted">' + esc(p.id) + '</span><span class="badge ' + (p.enabled ? 'ok' : 'no') + '" style="margin-left:auto">' + (p.enabled ? '已启用' : '停用') + '</span></div>';
+        '<span class="muted">' + esc(p.id) + '</span>' +
+        '<button class="btn btn--sm" style="margin-left:auto" data-plugin-toggle="' + esc(p.id) + '" data-enabled="' + (p.enabled ? '0' : '1') + '">' + (p.enabled ? '停用' : '启用') + '</button></div>';
     }).join('') : '<div class="tl-empty">还没有插件。选一个 JSON 清单导入。</div>';
     return '<section class="panel-block"><h2>已装插件</h2><div id="pluginList">' + list + '</div>' +
       '<div style="margin-top:12px"><span class="muted" style="font-size:12px">导入插件清单（JSON）</span><br>' +
@@ -1905,7 +1912,8 @@
         });
       };
       rd.readAsText(f);
-    } else if (act === 'probe-cmd') { cmdProbe = null; renderSystem(); return; }
+    } else if (act === 'skip-start') { localStorage.setItem('lo-skip-start','1'); renderHome(); toast('已跳过引导','info'); return; }
+    else if (act === 'probe-cmd') { cmdProbe = null; renderSystem(); return; }
     else if (act === 'events-all') { S.showAllEvents = true; renderHome(); } else if (act === 'ai-clear') { aiMsgs = []; saveAi(); renderAiThread(); var nn = $('#aiNotice'); if (nn) { nn.hidden = true; nn.innerHTML = ''; } }
     else if (act === 'ai-retry') { var last = aiMsgs.filter(function (m) { return m.who === 'user'; }).slice(-1)[0]; if (last) aiSend(last.text); }
     else if (act === 'ai-save') {
@@ -2018,17 +2026,6 @@
     if (br) {
       var d = S.devices.filter(function (x) { return x.id === br.getAttribute('data-bright'); })[0];
       if (d) sendCmd(d, 'brightness', { value: parseInt(br.value, 10) });
-      return;
-    }
-    if (e.target.id === 'fsFile' && e.target.files && e.target.files[0]) {
-      var f = e.target.files[0];
-      var reader = new FileReader();
-      reader.onload = function () {
-        api('/api/fs/write', { method: 'POST', body: { path: fsPath.replace(/\/$/, '') + '/' + f.name, content: String(reader.result || '') } }).then(function (r) {
-          if (r.ok) { toast('已上传'); loadFs(fsPath); } else toast('没上传成功：' + ((r.data && r.data.error) || r.status));
-        });
-      };
-      reader.readAsText(f);
       return;
     }
     if (e.target.id === 'restoreFile' && e.target.files && e.target.files[0]) {

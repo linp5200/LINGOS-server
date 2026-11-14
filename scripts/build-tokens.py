@@ -31,6 +31,10 @@ def main():
                 lines.append(f"  --{path[1]}: {val};")
         elif typ in ("dimension", "duration"):
             lines.append(f"  {name}: {val};")
+            if len(path) == 2 and path[0] == "radius":
+                lines.append(f"  --r-{path[1]}: {val};")
+            if len(path) == 2 and path[0] == "duration":
+                lines.append(f"  --dur-{path[1]}: {val};")
         elif typ == "typography" and isinstance(val, dict):
             lines.append(f"  {name}-size: {val.get('fontSize', '13px')};")
             lines.append(f"  {name}-weight: {val.get('fontWeight', 400)};")

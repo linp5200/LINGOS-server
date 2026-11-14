@@ -13,6 +13,11 @@ LINGOS_ROOT = _os.environ.get("LINGOS_ROOT", "/LINGOS")
 
 
 def _cfg_path(name: str) -> str:
+    env_map = {"ai_config.json": "LINGOS_AI_CONFIG", "voice.json": "LINGOS_VOICE_CONFIG",
+               "rules.json": "LINGOS_RULES_CONFIG"}
+    env = env_map.get(name)
+    if env and _os.environ.get(env):
+        return _os.environ[env]
     return _os.path.join(LINGOS_ROOT, "system", "config", name)
 
 import os
@@ -40,7 +45,7 @@ def set_skill_language(lang: str):
 def load_skill_language():
     global _current_lang
     try:
-        config_path = "/LINGOS/system/config/ai_config.json"
+        config_path = _cfg_path("ai_config.json")
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
                 cfg = json.load(f)
@@ -490,7 +495,7 @@ register_skill("agent_delegate", agent_delegate, risk="medium")
 def _get_search_cfg():
     """读取搜索配置（search_backend / max_urls / rate_limit）"""
     try:
-        with open("/LINGOS/system/config/ai_config.json", "r", encoding="utf-8") as f:
+        with open(_cfg_path("ai_config.json"), "r", encoding="utf-8") as f:
             cfg = json.load(f)
         backend = cfg.get("search_backend", "searxng")
         max_urls = int(cfg.get("search_max_urls", 50))
@@ -830,7 +835,7 @@ def config_read(args_json: str) -> Tuple[bool, str]:
         path = args.get("path")
         if not path:
             return False, t("Missing 'path'", "缺少 'path'")
-        if not path.startswith("/LINGOS/system/config/"):
+        if not path.startswith(_os.path.join(LINGOS_ROOT, "system", "config") + _os.sep):
             return False, t("Only config directory is allowed", "只允许读取配置目录")
         success, result = call_syscall("file_read", {"path": path})
         return (True, result) if success else (False, result)
@@ -845,7 +850,7 @@ def config_write(args_json: str) -> Tuple[bool, str]:
         content = args.get("content")
         if not path or content is None:
             return False, t("Missing 'path' or 'content'", "缺少 'path' 或 'content'")
-        if not path.startswith("/LINGOS/system/config/"):
+        if not path.startswith(_os.path.join(LINGOS_ROOT, "system", "config") + _os.sep):
             return False, t("Only config directory is allowed", "只允许写入配置目录")
         success, result = call_syscall("file_write", {"path": path, "content": content})
         if success:
@@ -868,7 +873,7 @@ def script_create(args_json: str) -> Tuple[bool, str]:
         content = args.get("content")
         if not path or content is None:
             return False, t("Missing 'path' or 'content'", "缺少 'path' 或 'content'")
-        if not path.startswith("/LINGOS/scripts/") and not path.startswith("/tmp/"):
+        if not path.startswith(_os.path.join(LINGOS_ROOT, "scripts") + _os.sep) and not path.startswith("/tmp/"):
             return False, t("Scripts only allowed in /LINGOS/scripts/ or /tmp/",
                            "脚本只允许放在 /LINGOS/scripts/ 或 /tmp/")
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1304,7 +1309,7 @@ def read_log(args_json: str) -> Tuple[bool, str]:
         log_name = args.get("log_name", "ai_server.log")
         lines = args.get("lines", 50)
         filter_keyword = args.get("keyword", "")
-        log_path = f"/LINGOS/Debug/{log_name}"
+        log_path = _os.path.join(LINGOS_ROOT, "Debug", str(log_name))
         if not os.path.exists(log_path):
             return False, t(f"Log file not found: {log_path}", f"日志文件不存在：{log_path}")
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -1343,7 +1348,7 @@ def write_help_file(args_json: str) -> Tuple[bool, str]:
         if not topic or not content:
             return False, t("Missing 'topic' or 'content'", "缺少 'topic' 或 'content'")
 
-        ah_dir = "/LINGOS/AH/ai_generated"
+        ah_dir = _os.path.join(LINGOS_ROOT, "AH", "ai_generated")
         os.makedirs(ah_dir, exist_ok=True)
 
         # 检查是否已存在相同主题
@@ -1379,7 +1384,7 @@ register_skill("write_help_file", write_help_file, risk="low")
 
 def update_knowledge_base(topic: str, content: str) -> None:
     """更新知识库"""
-    kb_path = "/LINGOS/system/config/common_issues.json"
+    kb_path = _cfg_path("common_issues.json")
     try:
         if os.path.exists(kb_path):
             with open(kb_path, "r", encoding="utf-8") as f:
@@ -1441,7 +1446,7 @@ def alert_query(args_json: str) -> Tuple[bool, str]:
             "count": len(events),
             "events": events,
             "query": {"location": location, "type": type_str, "hours": hours},
-            "source": "/LINGOS/data/alerts（alertd / alert_history.c 写入）",
+            "source": _os.path.join(LINGOS_ROOT, "data", "alerts") + "（alertd / alert_history.c 写入）",
         }, ensure_ascii=False)
 
     except Exception as e:
@@ -1553,7 +1558,7 @@ def vision_locate(args_json: str) -> Tuple[bool, str]:
         if not object_name:
             return False, t("Missing 'object' parameter", "缺少 'object' 参数")
 
-        db_path = "/LINGOS/data/vision/vision.db"
+        db_path = _os.path.join(LINGOS_ROOT, "data", "vision", "vision.db")
         if not os.path.exists(db_path):
             return True, json.dumps({
                 "status": "ok", "object": object_name, "found": False,
@@ -1676,7 +1681,7 @@ def voice_command(args_json: str) -> Tuple[bool, str]:
             pass
 
         # ② 唤醒词配置（voice_config）
-        wake_cfg = "/LINGOS/system/config/voice.json"
+        wake_cfg = _cfg_path("voice.json")
         wake_info = {}
         try:
             if os.path.exists(wake_cfg):
@@ -1732,7 +1737,7 @@ def rule_query(args_json: str) -> Tuple[bool, str]:
         args = json.loads(args_json or "{}")
         rule_name = args.get("rule_name", "")
 
-        rules_path = "/LINGOS/system/config/rules.json"
+        rules_path = _cfg_path("rules.json")
         rules = []
         storage_present = os.path.exists(rules_path)
         meta = {"version": None, "count": None, "updated_at": None}

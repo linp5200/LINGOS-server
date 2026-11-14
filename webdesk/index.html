@@ -11,23 +11,25 @@
 <link rel="stylesheet" href="assets/tokens.css">
 <link rel="stylesheet" href="assets/app.css">
 <script>
-/* 旧 webdesk 注册过 sw.js，升级到新前端后旧 SW 仍可能接管请求，导致手机一直停在启动屏。
-   这里注销所有旧 SW 并清掉 cache，避免“页面是新的、请求走旧缓存”的混合状态。 */
+/* 一次性迁移：清掉 0.13 旧 SW/缓存，然后注册当前 SW；之后每次加载不再自毁。 */
 (function () {
+  if (!('serviceWorker' in navigator)) return;
+  var KEY = 'lo-sw-migrated-0.15';
+  function reg() { navigator.serviceWorker.register('sw.js').catch(function () {}); }
   try {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function (rs) {
-        rs.forEach(function (r) { r.unregister(); });
-      }).catch(function () {});
-    }
-    if (window.caches && caches.keys) {
-      caches.keys().then(function (ks) {
-        ks.forEach(function (k) {
-          if (k.indexOf('lingos') >= 0 || k.indexOf('LINGOS') >= 0) caches.delete(k);
+    if (localStorage.getItem(KEY)) { reg(); return; }
+    navigator.serviceWorker.getRegistrations().then(function (rs) {
+      return Promise.all(rs.map(function (r) { return r.unregister(); }));
+    }).then(function () {
+      if (window.caches && caches.keys) {
+        return caches.keys().then(function (ks) {
+          return Promise.all(ks.filter(function (k) {
+            return k !== 'lingos-webdesk-0.15.0' && /lingos/i.test(k);
+          }).map(function (k) { return caches.delete(k); }));
         });
-      }).catch(function () {});
-    }
-  } catch (e) {}
+      }
+    }).then(function () { localStorage.setItem(KEY, '1'); reg(); }).catch(reg);
+  } catch (e) { reg(); }
 })();
 </script>
 <script>

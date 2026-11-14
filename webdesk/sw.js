@@ -1,6 +1,6 @@
 'use strict';
-const CACHE = 'lingos-webdesk-0.13.1';
-const SHELL = ['/', '/index.html', '/files.html', '/debug.html', '/assets/style.css', '/assets/app.js', '/manifest.json', '/assets/icon.svg'];
+const CACHE = 'lingos-webdesk-0.15.0';
+const SHELL = ['/', '/index.html', '/files.html', '/debug.html', '/assets/style.css', '/assets/app.css', '/assets/tokens.css', '/assets/app.js', '/manifest.json', '/assets/icon.svg'];
 self.addEventListener('install', function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(SHELL).catch(function(){}); }).then(function(){ return self.skipWaiting(); }));
 });

@@ -1029,6 +1029,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(403, {"error": "bad host"})
             return
         body = {} if path == "/api/restore" else self._read_json()
+        if not isinstance(body, dict):
+            self._json(400, {"error": "请求体必须是 JSON 对象"})
+            return
         if path == "/api/restore":
             usr = self._require("admin")
             if not usr:
@@ -1456,7 +1459,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(403, {"error": "admin required"})
                 return
             pid = str(body.get("id") or "").strip()
-            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,63}", pid):
+            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", pid):
                 self._json(400, {"error": "非法插件 id"})
                 return
             pdir = self.store.root / "plugins"
@@ -1469,7 +1472,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._json(500, {"error": "插件清单损坏"})
                 return
-            man["enabled"] = bool(body.get("enabled", True))
+            if not isinstance(man, dict):
+                self._json(400, {"error": "插件清单必须是对象"})
+                return
+            enabled = body.get("enabled", True)
+            if not isinstance(enabled, bool):
+                self._json(400, {"error": "enabled 必须是布尔值"})
+                return
+            man["enabled"] = enabled
             fd, tname = tempfile.mkstemp(prefix=".plugin-" + pid + "-", suffix=".tmp", dir=str(pdir))
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
