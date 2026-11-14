@@ -251,8 +251,10 @@ CRASH_LOG = os.path.join(LOG_DIR, "ai_server_crash.log")
 
 # ========== 常量 ==========
 AUTH_SOCKET_PATH = "/LINGOS/run/auth.sock"
-CONFIG_PATH = "/LINGOS/system/config/ai_config.json"
-AI_SOCKET_PATH = "/LINGOS/run/ai.sock"
+# 【0.14】Termux 原生模式允许用环境变量改根，不写死 /LINGOS（Android 根分区只读）
+LINGOS_ROOT = os.environ.get("LINGOS_ROOT", "/LINGOS")
+CONFIG_PATH = os.environ.get("LINGOS_AI_CONFIG", os.path.join(LINGOS_ROOT, "system/config/ai_config.json"))
+AI_SOCKET_PATH = os.environ.get("LINGOS_AI_SOCKET", os.path.join(LINGOS_ROOT, "run/ai.sock"))
 DAEMON_SOCKET_PATH = "/LINGOS/run/daemon.sock"
 
 # 【0.2.1】HA 事件广播：活跃连接集合（线程安全——锁保护增删/遍历）

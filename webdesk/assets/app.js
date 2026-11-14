@@ -28,7 +28,7 @@
     chat: '<path d="M20.5 11.6a8.2 8.2 0 0 1-8.2 8.2H7l-3.5 2.2 1.2-4.6A8.2 8.2 0 1 1 20.5 11.6z"/>',
     shield: '<path d="M12 3 4.5 6v5.6c0 4.3 3.2 7.5 7.5 9.4 4.3-1.9 7.5-5.1 7.5-9.4V6L12 3z"/><path d="m8.8 12.2 2.2 2.2 4.2-4.4"/>',
     folder: '<path d="M3.5 6.5h6l2 2h9v11h-17z"/>',
-    settings: '<circle cx="12" cy="12" r="2.6"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
     lock: '<rect x="5" y="10" width="14" height="10.5" rx="2.5"/><path d="M8 10V7.2a4 4 0 0 1 8 0V10"/><circle cx="12" cy="15.2" r="1.3"/>',
     lamp: '<path d="M9 19h6M10 21.5h4"/><path d="M8.2 15.5a6 6 0 1 1 7.6 0c-1 1-1 2-1 4h-5.6c0-2 0-3-1-4z"/>',
     sensor: '<circle cx="12" cy="12" r="1.8"/><path d="M7.4 7.4a6.5 6.5 0 0 0 0 9.2M16.6 7.4a6.5 6.5 0 0 1 0 9.2M4.6 4.6a10.5 10.5 0 0 0 0 14.8M19.4 4.6a10.5 10.5 0 0 1 0 14.8"/>',
@@ -78,6 +78,18 @@
   var KIND = { auth: '登录', device: '设备', user: '用户', security: '安全', settings: '设置', fs: '文件', acl: '权限' };
   function kindName(k) { return KIND[k] || k || '事件'; }
 
+  /** 事件详情：常见英文记法翻成中文，未命中就原样显示（不猜）。 */
+  function detailText(detail) {
+    var d = String(detail || '');
+    var m = /^login (.+) from (.+)$/.exec(d);
+    if (m) return '登录 ' + m[1] + '，来源 ' + m[2];
+    m = /^created (?:user|admin) (.+)$/.exec(d);
+    if (m) return '创建账号 ' + m[1];
+    m = /^level=(.+)$/.exec(d);
+    if (m) return '隐私等级设为 ' + m[1];
+    return d;
+  }
+
   function fmtTime(iso) {
     if (!iso) return '—';
     var d = new Date(iso);
@@ -103,7 +115,16 @@
   }
 
   /* 全局确认条 */
+  /** 本地敏感缓存（root key / AI 对话）统一清掉，登出两处共用。 */
+  function clearLocalSession() {
+    try {
+      localStorage.removeItem('lo-rootkey');
+      localStorage.removeItem('lo-ai');
+    } catch (e) {}
+  }
+
   var confirmCb = null;
+  var confirmReturnFocus = null;
   /** 底部确认条：危险动作统一入口，焦点默认落在「算了」上。 */
   function confirmBox(opts) {
     var box = $('#confirm');
@@ -112,6 +133,7 @@
     box.querySelector('[data-confirm-body]').textContent = opts.body || '';
     box.querySelector('[data-confirm-ok]').textContent = opts.okText || '确定';
     confirmCb = opts.onOk || null;
+    confirmReturnFocus = document.activeElement;
     box.classList.add('is-open');
     var cancel = box.querySelector('[data-confirm-cancel]');
     if (cancel) setTimeout(function () { cancel.focus(); }, 40);
@@ -121,7 +143,24 @@
     var box = $('#confirm');
     if (box) box.classList.remove('is-open');
     confirmCb = null;
+    if (confirmReturnFocus && confirmReturnFocus.focus) {
+      try { confirmReturnFocus.focus(); } catch (e) {}
+    }
+    confirmReturnFocus = null;
   }
+
+  /* 弹层内 Tab 循环，别让焦点跑到背景 */
+  document.addEventListener('keydown', function (e) {
+    var box = $('#confirm');
+    if (!box || !box.classList.contains('is-open')) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeConfirm(); return; }
+    if (e.key !== 'Tab') return;
+    var items = box.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (!items.length) return;
+    var first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
 
   /* ============ 网络 ============ */
   var apiBase = localStorage.getItem('lo-api') || '';
@@ -358,10 +397,12 @@
     var tab = $('#tabbar');
     if (tab) {
       tab.innerHTML = NAV.map(function (n) {
-        return '<button data-nav="' + n[0] + '" class="' + (S.view === n[0] ? 'is-on' : '') + '">' + icon(n[2], 20) + '<span>' + n[1] + '</span></button>';
+        return '<button data-nav="' + n[0] + '" class="' + (S.view === n[0] ? 'is-on' : '') + '"' + (S.view === n[0] ? ' aria-current="page"' : '') + '>' + icon(n[2], 20) + '<span>' + n[1] + '</span></button>';
       }).join('');
     }
   }
+
+  var WEB_VERSION = '0.14';
 
   var TITLES = { home: '家宅防线', devices: '设备', files: '文件', security: '安全', ai: '管家', system: '系统', settings: '设置' };
 
@@ -381,6 +422,7 @@
     });
     var where = $('#barWhere');
     if (where) where.textContent = TITLES[v];
+    var board = $('#board'); if (board) board.scrollTop = 0;
     renderNav();
     if (v === 'home') renderHome();
     else if (v === 'devices') renderDevices();
@@ -395,23 +437,32 @@
   /** 一次性拉设备 / 事件 / 安全，三路并行；单路失败不影响其它视图。 */
   function loadAll() {
     S.loading = true;
-    Promise.all([
+    return Promise.all([
       api('/api/devices'),
       api('/api/events'),
       api('/api/security')
     ]).then(function (rs) {
       var dev = rs[0], ev = rs[1], sec = rs[2];
+      var errs = [];
       if (dev.ok && dev.data) { S.devices = dev.data.devices || []; S.adapters = dev.data.adapters || []; }
+      else errs.push('设备 ' + (dev.network ? '网络不通' : 'HTTP ' + dev.status));
       if (ev.ok && ev.data) S.events = ev.data.events || [];
+      else errs.push('事件 ' + (ev.network ? '网络不通' : 'HTTP ' + ev.status));
       if (sec.ok && sec.data) S.security = sec.data;
+      else errs.push('安全状态 ' + (sec.network ? '网络不通' : 'HTTP ' + sec.status));
+      S.loadError = errs.length ? errs.join('；') : '';
+      S.loaded = true;
       S.loading = false;
       route(location.hash || '#/home');
+      return !S.loadError;
     });
   }
 
   function refresh() {
-    loadAll();
-    toast('已刷新');
+    return loadAll().then(function (ok) {
+      toast(ok ? '已刷新' : '刷新失败：' + S.loadError);
+      return ok;
+    });
   }
 
   /* ============ 设备模型 ============ */
@@ -472,43 +523,65 @@
   /* ============ 首页 ============ */
   /** 首页标题由真实状态生成：门没锁 > 设备离线 > 一切正常。 */
   function homeHeadline() {
-    if (!S.devices.length) return { h: '后台还没有设备', p: '去「设备」页添加一个，或等局域网发现。' };
+    if (!S.devices.length) return { h: '还没有设备', p: '去「设备」页添加，或让局域网发现它。' };
     var offline = S.devices.filter(function (d) { return !d.online; });
-    var unlocked = S.devices.filter(function (d) { return d.type === 'lock' && d.state && d.state.locked === false; });
+    var locks = S.devices.filter(function (d) { return d.type === 'lock'; });
+    var unlocked = locks.filter(function (d) { return d.state && d.state.locked === false; });
+    var unknown = locks.filter(function (d) { return !d.state || typeof d.state.locked !== 'boolean'; });
+    var locked = locks.filter(function (d) { return d.state && d.state.locked === true; });
     if (unlocked.length) return { h: '有一扇门没锁', p: unlocked[0].name + ' 现在是开着的，先去设备页处理。' };
     if (offline.length) return { h: offline.length + ' 台设备离线', p: offline.map(function (d) { return d.name; }).join('、') + ' 没有回话。' };
-    return { h: '一切正常', p: '设备都在线，门锁着。' };
+    if (unknown.length) return { h: '门锁状态未知', p: unknown[0].name + ' 没回具体状态，去设备页看一下。' };
+    if (!locks.length) return { h: '设备都在线', p: '没有门锁可查。' };
+    return { h: '一切正常', p: '设备都在线，' + locked.length + ' 把门锁着。' };
   }
 
   /** 首页：设备聚合、最近事件、防线、后台信息；摄像头预览仅在开关打开且有 stream 时渲染。 */
   function renderHome() {
     var el = $('#view-home');
+    if (!S.loaded) {
+      el.innerHTML = '<div class="view-head"><div><h1>正在连后台</h1><p>读设备和事件，马上就好。</p></div></div>' +
+        '<div class="skel"><i></i><i></i><i></i><i></i></div>';
+      return;
+    }
     var online = S.devices.filter(function (d) { return d.online; }).length;
     var offline = S.devices.length - online;
+    var locks = S.devices.filter(function (d) { return d.type === 'lock'; });
+    var lockedCount = locks.filter(function (d) { return d.state && d.state.locked; }).length;
     var cam = S.devices.filter(function (d) { return d.type === 'camera'; })[0];
     var camSrc = cam && cam.state && (cam.state.stream || cam.state.snapshot);
     var showCam = previewOn() && cam && cam.online && camSrc;
     var head = homeHeadline();
-    var events = S.events.slice(0, 8);
+    var events = S.events.slice(0, S.showAllEvents ? 200 : 8);
 
     el.innerHTML =
       '<div class="view-head">' +
-        '<div><h1>' + esc(head.h) + '</h1><p>' + esc(head.p) + ' · ' + S.devices.length + ' 台设备 · ' + online + ' 台在线</p></div>' +
+        '<div><h1>' + esc(head.h) + '</h1><p>' + esc(head.p) + (S.devices.length ? ' · ' + S.devices.length + ' 台设备 · ' + online + ' 台在线' : '') + '</p></div>' +
         '<div class="view-actions"><button class="btn btn--primary" data-act="refresh">' + icon('refresh', 16) + '刷新</button></div>' +
       '</div>' +
+      (S.loadError ? '<div class="errorbar" role="alert"><span>暂时读不到：' + esc(S.loadError) + '</span><button class="btn btn--sm" data-act="refresh">重试</button></div>' : '') +
       '<div class="home-grid">' +
         '<div class="home-main">' +
           '<div class="summary">' +
-            '<div class="tile"><div class="tile-ic">' + icon('chip', 21) + '</div><div class="tile-body"><div class="big-num">' + online + '<small>/' + S.devices.length + '</small></div><div class="tile-label">设备在线</div></div><div class="tile-side">' + (offline ? offline + ' 台离线' : '全在线') + '</div></div>' +
-            '<div class="tile"><div class="tile-ic">' + icon('lock', 21) + '</div><div class="tile-body"><div class="big-num">' + (S.devices.filter(function (d) { return d.type === 'lock' && d.state && d.state.locked; }).length) + '<small>把</small></div><div class="tile-label">门锁已锁</div></div><div class="tile-side">' + (S.devices.filter(function (d) { return d.type === 'lock' && d.state && d.state.locked === false; }).length ? '有门开着' : '都锁着') + '</div></div>' +
-            '<div class="tile"><div class="tile-ic">' + icon('shield', 21) + '</div><div class="tile-body"><div class="big-num" style="font-size:22px">' + esc((S.security && S.security.level) || '—') + '</div><div class="tile-label">安全等级</div></div><div class="tile-side">' + esc((S.security && S.security.name) || '未设置') + '</div></div>' +
+            '<div class="tile"><div class="tile-ic">' + icon('chip', 21) + '</div><div class="tile-body"><div class="big-num">' +
+              (S.devices.length ? online + '<small>/' + S.devices.length + '</small>' : '—') +
+              '</div><div class="tile-label">设备在线</div></div><div class="tile-side">' +
+              (S.devices.length ? (offline ? offline + ' 台离线' : '全在线') : '还没有设备') + '</div></div>' +
+            '<div class="tile"><div class="tile-ic">' + icon('lock', 21) + '</div><div class="tile-body"><div class="big-num">' +
+              (locks.length ? lockedCount + '<small>把</small>' : '—') +
+              '</div><div class="tile-label">门锁已锁</div></div><div class="tile-side">' +
+              (locks.length ? (lockedCount < locks.length ? '有门开着' : '都锁着') : '没有门锁') + '</div></div>' +
+            '<div class="tile"><div class="tile-ic">' + icon('shield', 21) + '</div><div class="tile-body"><div class="big-num" style="font-size:22px">' +
+              esc(S.security ? (S.security.level || '—') : '…') + '</div><div class="tile-label">安全等级</div></div><div class="tile-side">' +
+              esc(S.security ? (S.security.name || '—') : '读取中') + '</div></div>' +
           '</div>' +
           '<section class="panel"><div class="panel-head"><h2>最近发生</h2><span class="more">' + (S.events.length ? S.events.length + ' 条' : '实时') + '</span></div>' +
             (events.length
               ? '<ul class="timeline">' + events.map(function (e) {
-                  return '<li class="tl-item"><time>' + fmtTime(e.ts) + '</time><i class="tl-dot' + (e.kind === 'security' ? ' tl-dot--warn' : '') + '"></i><div class="tl-body"><b>' + esc(kindName(e.kind)) + '</b><small>' + esc(e.detail) + '</small></div></li>';
+                  return '<li class="tl-item"><time>' + fmtTime(e.ts) + '</time><i class="tl-dot' + (e.kind === 'security' ? ' tl-dot--warn' : '') + '"></i><div class="tl-body"><b>' + esc(kindName(e.kind)) + '</b><small>' + esc(detailText(e.detail)) + '</small></div></li>';
                 }).join('') + '</ul>'
               : '<div class="tl-empty">后台还没有事件。做点什么就会记在这里。</div>') +
+            (S.events.length > events.length ? '<button class="btn btn--sm" data-act="events-all">查看全部 ' + S.events.length + ' 条</button>' : '') +
           '</section>' +
         '</div>' +
         '<div class="home-side">' +
@@ -574,6 +647,10 @@
   /** 设备页：场景快捷、选中详情、类型筛选、命令、发现结果、适配器状态。 */
   function renderDevices() {
     var el = $('#view-devices');
+    if (!S.loaded) {
+      el.innerHTML = '<div class="view-head"><div><h1>设备</h1><p>正在读设备列表…</p></div></div><div class="skel"><i></i><i></i><i></i></div>';
+      return;
+    }
     var types = [['all', '全部'], ['light', '灯'], ['lock', '门锁'], ['sensor', '传感器'], ['camera', '摄像头'], ['switch', '开关']];
     var list = S.devices.filter(function (d) { return devFilter === 'all' || d.type === devFilter; });
     var sel = S.selectedDev ? S.devices.filter(function (d) { return d.id === S.selectedDev; })[0] : null;
@@ -581,15 +658,16 @@
       '<div class="view-head"><div><h1>设备</h1><p>后台 <b>' + esc((S.health && S.health.version) || '') + '</b> 记住的每一台。离线也留着，方便排查。</p></div>' +
         '<div class="view-actions"><button class="btn" data-act="discover">' + icon('refresh', 16) + '发现</button>' +
         '<button class="btn btn--primary" data-act="add-device">' + icon('plus', 16) + '加一台</button></div></div>' +
+      (S.loadError ? '<div class="errorbar" role="alert"><span>读设备失败：' + esc(S.loadError) + '</span><button class="btn btn--sm" data-act="refresh">重试</button></div>' : '') +
       (S.lastError ? '<div class="errorbar" role="alert"><span>' + esc(S.lastError) + '</span><button class="btn btn--sm" data-act="clear-dev-error">知道了</button></div>' : '') +
       '<div class="dev-toolbar">' + types.map(function (t) {
         return '<button class="filter' + (devFilter === t[0] ? ' is-on' : '') + '" data-devfilter="' + t[0] + '">' + t[1] + '</button>';
       }).join('') + '</div>' +
-      '<div class="cards scenes" style="grid-template-columns:repeat(3,minmax(0,1fr))">' +
+      (S.devices.length ? '<div class="cards scenes" style="grid-template-columns:repeat(3,minmax(0,1fr))">' +
         ['night', 'away', 'home'].map(function (n) {
           var label = n === 'night' ? '夜间' : n === 'away' ? '离家' : '回家';
           return '<button class="panel-block" style="text-align:left;cursor:pointer" data-scene-run="' + n + '"><h2 style="font-size:14px">' + label + '</h2><p>' + sceneSummary(n) + '</p></button>';
-        }).join('') + '</div>' +
+        }).join('') + '</div>' : '') +
       (sel ? '<section class="panel"><div class="panel-head"><h2>' + esc(sel.name) + '</h2><span class="more">' + esc(sel.id) + '</span></div>' +
         '<div class="kv-row"><span>类型 / 协议</span><b>' + esc(sel.type) + ' · ' + esc(sel.protocol) + '</b></div>' +
         '<div class="kv-row"><span>在线</span><b>' + (sel.online ? '是' : '否') + '</b></div>' +
@@ -734,7 +812,7 @@
         '<div class="cmds" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">' +
         ['security.perm_list', 'security.behavior', 'security.input', 'security.privilege_status', 'rules.list', 'rules.toggle'].map(function (c) {
           return '<button class="cmd" data-sys="' + c + '">' + c + '</button>';
-        }).join('') + '</div></section>' +
+        }).join('') + '</div><pre class="cmd-out" id="secOut" style="margin-top:10px"></pre></section>' +
       '<section class="panel"><div class="panel-head"><h2>用户</h2><span class="more">' + users.length + ' 个</span></div>' +
         (users.length ? users.map(function (u) {
           return '<div class="adapter"><b>' + esc(u.username) + '</b><span class="badge">' + esc(u.role) + '</span><span class="muted">' + esc(u.created) + '</span>' +
@@ -745,7 +823,7 @@
         '<button class="btn" data-act="add-user">加用户</button></div></section>' +
       '<section class="panel"><div class="panel-head"><h2>审计</h2><span class="more">' + (sec.audit ? sec.audit.length : 0) + ' 条</span></div>' +
         (sec.audit && sec.audit.length ? '<ul class="timeline">' + sec.audit.slice(0, 20).map(function (e) {
-          return '<li class="tl-item"><time>' + fmtTime(e.ts) + '</time><i class="tl-dot"></i><div class="tl-body"><b>' + esc(kindName(e.kind)) + '</b><small>' + esc(e.detail) + '</small></div></li>';
+          return '<li class="tl-item"><time>' + fmtTime(e.ts) + '</time><i class="tl-dot"></i><div class="tl-body"><b>' + esc(kindName(e.kind)) + '</b><small>' + esc(detailText(e.detail)) + '</small></div></li>';
         }).join('') + '</ul>' : '<div class="tl-empty">还没有审计记录。</div>') + '</section>';
   }
 
@@ -769,9 +847,10 @@
   function renderAi() {
     var el = $('#view-ai');
     el.innerHTML =
-      '<div class="view-head"><div><h1>管家</h1><p>走后台的 /api/chat，本机模型；没接上会直接说「暂未连接」。</p></div>' +
-        '<div class="view-actions"><button class="btn" data-act="ai-clear">' + icon('trash', 16) + '清空</button></div></div>' +
+      '<div class="view-head"><div><h1>管家</h1><p>支持云端提供商与本地模型；没接上会直接说明。</p></div>' +
+        '<div class="view-actions"><button class="btn" data-act="ai-clear"' + (aiMsgs.length ? '' : ' disabled') + '>' + icon('trash', 16) + '清空</button></div></div>' +
       '<div class="ai-wrap"><div class="ai-thread" id="aiThread" role="log" aria-live="polite" aria-label="和管家的对话"></div>' +
+      '<div class="ai-notice" id="aiNotice" role="status" aria-live="polite" hidden></div>' +
       '<form class="ai-form" id="aiForm"><textarea id="aiInput" rows="1" placeholder="问点什么，比如：家里现在怎么样" aria-label="对管家说点什么"></textarea>' +
       '<button class="send btn btn--primary" type="submit" id="aiSend">' + icon('send', 14) + '发送</button></form></div>';
     renderAiThread();
@@ -781,26 +860,57 @@
     var t = $('#aiThread');
     if (!t) return;
     if (!aiMsgs.length) {
-      t.innerHTML = '<div class="tl-empty">还没有对话。发送第一条就会走 /api/chat。</div>';
+      t.innerHTML = '<div class="tl-empty">还没有对话。挑一句，或者直接问。</div>' +
+        '<div class="ai-chips">' + ['家里现在怎么样', '门锁好了吗', '今天有什么异常'].map(function (q) {
+          return '<button class="chip" data-ai-ask="' + esc(q) + '">' + esc(q) + '</button>';
+        }).join('') + '</div>';
       return;
     }
     t.innerHTML = '<div class="ai-list">' + aiMsgs.map(function (m) {
       return '<div class="msg ' + (m.who === 'user' ? 'user' : '') + '">' +
-        (m.who === 'user' ? '<div class="msg-body"><div class="msg-who"><b>先生</b><span>' + esc(m.time) + '</span></div><div class="msg-text"><p>' + esc(m.text) + '</p></div></div><div class="msg-av">先</div>'
+        (m.who === 'user' ? '<div class="msg-body"><div class="msg-who"><b>' + esc((S.me && S.me.username) || '我') + '</b><span>' + esc(m.time) + '</span></div><div class="msg-text"><p>' + esc(m.text) + '</p></div></div><div class="msg-av">' + esc(((S.me && S.me.username) || '我').slice(0, 1)) + '</div>'
           : '<div class="msg-av">L</div><div class="msg-body"><div class="msg-who"><b>管家</b><span>' + esc(m.time) + '</span></div><div class="msg-text"><p>' + esc(m.text) + '</p></div></div>') + '</div>';
     }).join('') + '</div>';
     t.scrollTop = t.scrollHeight;
   }
 
   /** 发送：先落用户消息，再把后端回复追加；回复原样显示，不包装成成功。 */
+  /** 发送一条：先落用户消息，再请求；重试只发请求不再落消息。 */
   function aiSend(text) {
     var now = new Date();
     var time = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
     aiMsgs.push({ who: 'user', text: text, time: time });
     saveAi();
     renderAiThread();
+    var n = $('#aiNotice'); if (n) { n.hidden = true; n.innerHTML = ''; }
+    aiRequest(text);
+  }
+
+  /** 只发请求、不重复追加用户消息（重试用）。 */
+  function aiRequest(text) {
+    var now = new Date();
+    var time = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+    var send = $('#aiSend');
+    if (send) { send.disabled = true; send.classList.add('is-busy'); }
     api('/api/chat', { method: 'POST', body: { text: text } }).then(function (r) {
-      var reply = (r.data && r.data.reply) || ('后台没有回话（HTTP ' + r.status + '）');
+      if (send) { send.disabled = false; send.classList.remove('is-busy'); }
+      if (!r.ok) {
+        var code = r.data && r.data.error;
+        var detail = r.data && r.data.detail;
+        var raw = String(detail || code || ('HTTP ' + r.status));
+        var down = code === 'ai_unavailable' || /Errno 2|ai server unavailable|暂未连接|refused|No such file/i.test(raw);
+        var n = $('#aiNotice');
+        if (n) {
+          n.hidden = false;
+          n.innerHTML = '<b>' + (down ? 'AI 引擎还没启动' : '这次没问到') + '</b><p>' +
+            (down ? '桌面已经能用；让 AI 服务起来后再试，或到设置里配好模型提供商。'
+                  : esc(raw)) + '</p>' +
+            '<button class="btn btn--sm" data-act="ai-retry">重试</button>';
+        }
+        return;
+      }
+      var n2 = $('#aiNotice'); if (n2) { n2.hidden = true; n2.innerHTML = ''; }
+      var reply = (r.data && r.data.reply) || '后台没有回话';
       aiMsgs.push({ who: 'bot', text: reply, time: time });
       saveAi();
       renderAiThread();
@@ -826,7 +936,7 @@
     var el = document.getElementById('cmdState');
     if (!el) return;
     if (cmdProbe !== null) {
-      el.textContent = cmdProbe === 'on' ? '在线' : cmdProbe === 'off' ? '未连（18080 未启动）' : '异常';
+      el.textContent = cmdProbe === 'on' ? '在线' : cmdProbe === 'off' ? '命令服务未启动' : '异常';
       return;
     }
     el.textContent = '检查中…';
@@ -835,7 +945,7 @@
       if (r.status === 502) cmdProbe = 'off';
       else if (r.ok) cmdProbe = 'on';
       else cmdProbe = 'err';
-      if (el2) el2.textContent = cmdProbe === 'on' ? '在线' : cmdProbe === 'off' ? '未连（18080 未启动）' : ('异常 HTTP ' + r.status);
+      if (el2) el2.textContent = cmdProbe === 'on' ? '在线' : cmdProbe === 'off' ? '命令服务未启动' : ('异常 HTTP ' + r.status);
     });
   }
 
@@ -850,15 +960,17 @@
     return api('/api/cmd', { method: 'POST', body: { cmd: cmd, args: {} }, timeout: 12000 }).then(function (r) {
       if (btn) { btn.disabled = false; btn.textContent = btn.dataset.old || cmd; }
       if (r.status === 502) {
-        sysOut = '系统命令服务未启动。\n\n/api/cmd 会转发到 127.0.0.1:18080，这个后端不属于 Web 进程。\n启动 lingos 核心（或 lingos.sh start）后再试。\n\n原始返回：' + JSON.stringify(r.data || {});
+        sysOut = '系统命令服务未启动。\n\n命令代理连不上核心进程，先启动 lingos（或 lingos.sh start）再试。\n\n原始返回：' + JSON.stringify(r.data || {});
       } else if (r.timeout) {
-        sysOut = '系统命令服务没回话（12 秒超时）。\n检查 127.0.0.1:18080 是否在跑。';
+        sysOut = '系统命令服务没回话（12 秒超时）。检查核心进程是否在跑。';
       } else if (!r.ok) {
         sysOut = '执行失败：HTTP ' + r.status + '\n' + JSON.stringify(r.data, null, 2);
       } else {
         sysOut = JSON.stringify(r.data, null, 2);
       }
       renderSystem();
+      var secOutEl = document.getElementById('secOut');
+      if (secOutEl) secOutEl.textContent = sysOut;
       toast(cmd + (r.ok ? ' 完成' : ' 失败'));
       probeCmd();
     });
@@ -868,7 +980,7 @@
   function renderSystem() {
     var el = $('#view-system');
     el.innerHTML =
-      '<div class="view-head"><div><h1>系统</h1><p>86 条统一命令的图形入口，全部走 <code>/api/cmd</code>。命令服务没起时会明确报错，不会伪造状态。</p></div>' +
+      '<div class="view-head"><div><h1>系统</h1><p>' + CMDS.reduce(function (n, g) { return n + g[1].length; }, 0) + ' 条命令的入口，全部走 <code>/api/cmd</code>。命令服务没起时会明确报错，不会伪造状态。</p></div>' +
         '<div class="view-actions"><button class="btn" data-sys="system.status">' + icon('refresh', 16) + '系统状态</button>' +
         '<button class="btn btn--primary" data-sys="core.health">' + icon('check', 16) + '健康检查</button></div></div>' +
       '<div class="cards"><section class="panel-block"><h2>常用</h2><p>先跑这两个看这台机器醒没醒。</p>' +
@@ -893,7 +1005,7 @@
   /* ============ 设置（左侧分类 + 子页；手机为列表进入） ============ */
   var settingsLoaded = false;
   var SET_SECTIONS = [
-    ['appearance', '外观与偏好', '主题、动效、步骤卡片、密度'],
+    ['appearance', '外观与偏好', '主题、动效、场景卡片、密度'],
     ['conn', '连接与外设', '后台地址、Home Assistant、MQTT、适配器'],
     ['ai', 'AI 引擎', '三协议、本地 Ollama、模型提供商'],
     ['camera', '摄像头', 'ONVIF / RTSP / RTMP / HTTP 快照'],
@@ -929,6 +1041,7 @@
 
   function setSection(id) {
     S.setSection = id;
+    var board2 = $('#board'); if (board2) board2.scrollTop = 0;
     renderSettings();
     var main = $('.set-main');
     if (main && document.body.dataset.layout === 'portrait') main.scrollIntoView({ behavior: prefs().motion ? 'smooth' : 'auto', block: 'start' });
@@ -952,11 +1065,11 @@
       body =
         '<section class="panel-block"><h2>外观</h2>' +
           '<div class="pref-row"><span><b>界面动效</b><small>页面切换、卡片入场、过渡动画</small></span>' +
-            '<button class="switch' + (prefs().motion ? ' is-on' : '') + '" data-pref="motion" role="switch" aria-checked="' + (prefs().motion ? 'true' : 'false') + '"><i></i></button></div>' +
-          '<div class="pref-row"><span><b>步骤卡片</b><small>首页展示步骤卡片与外勤分组</small></span>' +
-            '<button class="switch' + (prefs().cards ? ' is-on' : '') + '" data-pref="cards" role="switch" aria-checked="' + (prefs().cards ? 'true' : 'false') + '"><i></i></button></div>' +
+            '<button class="switch' + (prefs().motion ? ' is-on' : '') + '" data-pref="motion" role="switch" aria-label="界面动效" aria-checked="' + (prefs().motion ? 'true' : 'false') + '"><i></i></button></div>' +
+          '<div class="pref-row"><span><b>场景卡片</b><small>设备页显示夜间 / 离家 / 回家快捷卡</small></span>' +
+            '<button class="switch' + (prefs().cards ? ' is-on' : '') + '" data-pref="cards" role="switch" aria-label="场景卡片" aria-checked="' + (prefs().cards ? 'true' : 'false') + '"><i></i></button></div>' +
           '<div class="pref-row"><span><b>紧凑排版</b><small>缩小间距，一屏放更多内容</small></span>' +
-            '<button class="switch' + (prefs().compact ? ' is-on' : '') + '" data-pref="compact" role="switch" aria-checked="' + (prefs().compact ? 'true' : 'false') + '"><i></i></button></div>' +
+            '<button class="switch' + (prefs().compact ? ' is-on' : '') + '" data-pref="compact" role="switch" aria-label="紧凑排版" aria-checked="' + (prefs().compact ? 'true' : 'false') + '"><i></i></button></div>' +
           '<div class="pref-row"><span><b>深浅色</b><small>当前：' + (document.documentElement.dataset.theme === 'night' ? '夜间' : '日间') + '</small></span>' +
             '<button class="btn btn--sm" data-act="theme">切到' + (document.documentElement.dataset.theme === 'night' ? '日间' : '夜间') + '</button></div>' +
           '<div class="pref-row"><span><b>摄像头预览</b><small>没画面时首页不会留空白</small></span>' +
@@ -1047,14 +1160,15 @@
     } else if (sec === 'about') {
       body =
         '<section class="panel-block"><h2>关于</h2>' +
-          '<div class="kv-row"><span>版本</span><b>' + esc(S.health ? S.health.version : '—') + '</b></div>' +
+          '<div class="kv-row"><span>版本</span><b>Web ' + WEB_VERSION + ' · 后台 ' + esc(S.health ? S.health.version : '—') + '</b></div>' +
           '<div class="kv-row"><span>后台</span><b>' + esc(apiBase || location.origin) + '</b></div>' +
           '<div class="kv-row"><span>平台</span><b>' + esc(S.health ? S.health.platform : '—') + '</b></div>' +
           '<div class="kv-row"><span>局域网</span><b>' + (S.health && S.health.lan ? '开' : '仅本机') + '</b></div>' +
           '<div class="kv-row"><span>登录</span><b>' + esc(S.me ? S.me.username + ' · ' + S.me.role : '—') + '</b></div></section>';
     }
     el.innerHTML =
-      '<div class="view-head"><div><h1>设置</h1><p>按分类进入子页；电脑端分类在左侧，手机端点进去。</p></div>' +
+      '<div class="view-head"><div><h1>' + esc(sec ? (SET_SECTIONS.filter(function (x) { return x[0] === sec; })[0] || ['', '设置'])[1] : '设置') + '</h1>' +
+        '<p>' + esc(sec ? (SET_SECTIONS.filter(function (x) { return x[0] === sec; })[0] || ['', '', ''])[2] : '按分类进入子页。') + '</p></div>' +
         '<div class="view-actions"><button class="btn" data-act="settings-reload">' + icon('refresh', 16) + '重读</button></div></div>' +
       '<div class="settings-shell' + (portrait ? ' is-portrait' : '') + '">' +
         ((!portrait || !sec) ? '<nav class="set-nav" aria-label="设置分类">' + settingsNavHTML(sec) + '</nav>' : '') +
@@ -1065,7 +1179,25 @@
     if (!settingsLoaded) { settingsLoaded = true; loadSettings(); }
     if (S.aiProviders === null) loadAiProviders();
     if (S.cameras === null) loadCameras();
-    if (sec === 'kernel' && S.options === null) loadOptions();
+    if (sec === 'kernel') {
+      if (S.options === null) loadOptions();
+      var flt = $('#optFilter');
+      if (flt) flt.addEventListener('input', function () {
+        var q = flt.value.trim().toLowerCase();
+        var shown = 0;
+        $all('[data-opt-row]').forEach(function (row) {
+          var hit = !q || row.textContent.toLowerCase().indexOf(q) >= 0;
+          row.style.display = hit ? '' : 'none';
+          if (hit) shown++;
+        });
+        $all('.opt-group').forEach(function (g) {
+          var any = Array.prototype.some.call(g.querySelectorAll('[data-opt-row]'), function (r) { return r.style.display !== 'none'; });
+          g.style.display = any ? '' : 'none';
+        });
+        var empty = $('#optEmpty');
+        if (empty) empty.hidden = shown > 0;
+      });
+    }
   }
 
   /** 设置与用户列表只有 admin 能读；403 时保持空状态由页面提示。 */
@@ -1077,16 +1209,18 @@
     if (o.error) return '<div class="tl-empty">' + esc(o.error) + '</div>';
     var by = {};
     (o.schema || []).forEach(function (it) { (by[it.group] = by[it.group] || []).push(it); });
-    return Object.keys(by).map(function (g) {
+    return '<input class="opt-filter" id="optFilter" placeholder="搜索设置项（中文或键名）" aria-label="搜索内核设置项">' +
+      '<div class="tl-empty" id="optEmpty" hidden>没有匹配的设置项。</div>' +
+      Object.keys(by).map(function (g) {
       return '<div class="opt-group"><h3>' + esc(OPT_GROUPS[g] || g) + '</h3>' + by[g].map(function (it) {
         var v = !!o.values[it.key];
-        return '<div class="pref-row"><span><b>' + esc(it.zh) + '</b><small>' + esc(it.en || '') +
+        return '<label class="pref-row opt-row" data-opt-row><span><b>' + esc(it.zh) + '</b><small>' + esc(it.en || '') +
           (it.fixed ? ' · 安全底线，固定开' : (it.dangerous ? ' · 危险项，关闭要二次确认' : '')) + '</small></span>' +
           (it.fixed
             ? '<span class="badge ok">固定</span>'
             : '<input type="checkbox" class="opt-toggle" data-opt="' + esc(it.key) + '"' + (v ? ' checked' : '') +
               (it.dangerous ? ' data-danger="1"' : '') + ' aria-label="' + esc(it.zh) + '">') +
-          '</div>';
+          '</label>';
       }).join('') + '</div>';
     }).join('') + (o.path ? '<p class="muted" style="margin-top:10px">写入：' + esc(o.path) + '</p>' : '');
   }
@@ -1101,7 +1235,7 @@
 
   function aiProvidersHTML() {
     if (S.aiProviders === null) return '<div class="skel"><i></i><i></i><i></i></div>';
-    if (S.aiError) return '<div class="tl-empty">AI 引擎未连接：' + esc(S.aiError) + '</div>';
+    if (S.aiError) return '<div class="tl-empty">' + esc(S.aiError) + '</div>';
     if (!S.aiProviders.length) return '<div class="tl-empty">还没有提供商。下面加一个（云端或本地 Ollama）。</div>';
     return S.aiProviders.map(function (p) {
       return '<div class="adapter"><b>' + esc(p.name || p.id) + '</b><span class="badge">' + esc(p.format) + '</span>' +
@@ -1303,6 +1437,9 @@
       return;
     }
 
+    var ask = e.target.closest('[data-ai-ask]');
+    if (ask) { aiSend(ask.getAttribute('data-ai-ask')); return; }
+
     var ai = e.target.closest('[data-ai-test],[data-ai-remove],[data-ai-active],[data-ai-edit]');
     if (ai) {
       if (ai.hasAttribute('data-ai-test')) {
@@ -1363,7 +1500,7 @@
     else if (act === 'clear-dev-error') {
       S.lastError = ''; renderDevices();
     } else if (act === 'add-device') {
-      confirmBox({ title: '加一台虚拟设备', body: '先加一台灯，用来验证后端命令通路。', okText: '加灯', onOk: function () {
+      confirmBox({ title: '加一台灯', body: '先加一台灯，试试点开关、调亮度。', okText: '加灯', onOk: function () {
         api('/api/devices', { method: 'POST', body: { name: '新灯', type: 'light' } }).then(function (r) {
           if (r.ok) { toast('已加一台灯'); refresh(); } else toast('没加成：' + ((r.data && r.data.error) || r.status));
         });
@@ -1387,7 +1524,8 @@
         if (r.ok) { toast('已加用户'); nu.value = ''; np.value = ''; loadSettings(); renderSecurity(); }
         else toast('没加成：' + ((r.data && r.data.error) || r.status));
       });
-    } else if (act === 'ai-clear') { aiMsgs = []; saveAi(); renderAiThread(); }
+    } else if (act === 'events-all') { S.showAllEvents = true; renderHome(); } else if (act === 'ai-clear') { aiMsgs = []; saveAi(); renderAiThread(); var nn = $('#aiNotice'); if (nn) { nn.hidden = true; nn.innerHTML = ''; } }
+    else if (act === 'ai-retry') { var last = aiMsgs.filter(function (m) { return m.who === 'user'; }).slice(-1)[0]; if (last) aiSend(last.text); }
     else if (act === 'ai-save') {
       var pid = ($('#aiPid') || {}).value || '';
       var base = ($('#aiBase') || {}).value || '';
@@ -1477,6 +1615,7 @@
     } else if (act === 'theme') { toggleTheme(); renderSettings(); }
     else if (act === 'restore') { var rf = $('#restoreFile'); if (rf) rf.click(); }
     else if (act === 'logout') {
+      clearLocalSession();
       api('/api/logout', { method: 'POST', body: {} }).then(function () {
         S.me = null; location.hash = ''; location.reload();
       });
@@ -1529,6 +1668,11 @@
     else if (err.textContent.indexOf('密码还差') === 0) err.textContent = '';
   });
 
+  (function () {
+    var foot = document.querySelector('.auth-foot');
+    if (foot) foot.textContent = '本机 ' + (location.port || '80') + ' · 首次使用会创建管理员';
+  })();
+
   document.addEventListener('submit', function (e) {
     if (!e.target || e.target.id !== 'aiForm') return;
     e.preventDefault();
@@ -1563,7 +1707,8 @@
   if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
   var logoutBtn = $('#logoutBtn');
   if (logoutBtn) logoutBtn.addEventListener('click', function () {
-    confirmBox({ title: '退出登录？', body: '下次要重新输密码。', okText: '退出', onOk: function () {
+    confirmBox({ title: '退出登录？', body: '根 key 和本机 AI 对话会一起清掉，下次要重新输密码。', okText: '退出', onOk: function () {
+      clearLocalSession();
       api('/api/logout', { method: 'POST', body: {} }).then(function () { location.reload(); });
     } });
   });
@@ -1576,7 +1721,11 @@
     var send = function (confirm) {
       api('/api/options', { method: 'POST', body: { values: (function () { var o = {}; o[key] = val; return o; })(), confirm: !!confirm } })
         .then(function (r) {
-          if (r.ok) { toast('已保存：' + key); if (S.options) S.options.values[key] = val; }
+          if (r.ok) {
+            toast('已保存：' + key);
+            cb.checked = val;
+            if (S.options) S.options.values[key] = val;
+          }
           else if (r.status === 400 && r.data && r.data.need_confirm) {
             cb.checked = !val;
             confirmBox({ title: '关闭危险开关？', body: key + ' 关掉会降低安全强度。', okText: '仍然关闭', onOk: function () { send(true); } });
@@ -1590,10 +1739,19 @@
   });
 
   window.addEventListener('hashchange', function () { route(location.hash); });
+  var resizeTimer = null;
   window.addEventListener('resize', function () {
-    var before = document.body.dataset.layout;
-    detectLayout();
-    if (before !== document.body.dataset.layout) renderNav();
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      var before = document.body.dataset.layout;
+      detectLayout();
+      if (before !== document.body.dataset.layout) {
+        // 横竖屏切换会改变设置页结构与多栏布局：整视图重画，避免保留旧结构
+        renderNav();
+        route(location.hash || '#/home');
+        if (S.view === 'settings') renderSettings();
+      }
+    }, 150);
   });
 
   /* 演示时钟：接入后台时显示真实时间 */

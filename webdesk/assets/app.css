@@ -388,14 +388,6 @@ html[data-theme="night"] .filter.is-on{background:var(--moss);border-color:var(-
 .state--off{color:var(--ink-3)}
 .state--off i{background:var(--ink-3)}
 
-.switch{
-  width:46px;height:28px;border-radius:999px;border:1px solid var(--line-2);background:var(--paper-2);
-  position:relative;cursor:pointer;flex:none;padding:0;
-  transition:background .16s var(--ease),border-color .16s;
-}
-.switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--ink-3);transition:transform .18s var(--ease),background .18s}
-.switch[aria-checked="true"]{background:var(--switch-track);border-color:var(--moss)}
-.switch[aria-checked="true"]::after{transform:translateX(18px);background:var(--moss)}
 
 .cam-tile{grid-column:span 2;border:1px solid var(--line);border-radius:var(--r-l);overflow:hidden;background:#0e120c;position:relative;min-height:200px;box-shadow:var(--shadow)}
 .cam-tile img{width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0}
@@ -563,10 +555,7 @@ html[data-theme="night"] .composer-row .send{background:var(--moss);border-color
   .tabbar button.is-on{color:var(--moss)}
   .btn,.btn--sm,.icon-btn,.filter,.search,.modes button,.send,.msg-acts button{min-height:44px}
   .icon-btn{width:44px;height:44px}
-  .switch{width:56px;height:44px}
-  .switch::after{width:24px;height:24px;top:9px;left:4px}
-  .switch[aria-checked="true"]::after{transform:translateX(20px)}
-  .toast{bottom:calc(78px + env(safe-area-inset-bottom))}
+      .toast{bottom:calc(78px + env(safe-area-inset-bottom))}
   .board{padding-bottom:calc(104px + env(safe-area-inset-bottom))}
   .filters{flex-wrap:nowrap;overflow-x:auto;max-width:100%;padding-bottom:4px;-webkit-overflow-scrolling:touch}
   .composer-wrap{padding-bottom:calc(88px + env(safe-area-inset-bottom))}
@@ -822,7 +811,8 @@ body[data-layout="portrait"] .settings-shell.is-portrait .set-nav:empty{display:
 .pref-row b{font-size:13.5px}
 .pref-row small{font-size:11.5px;color:var(--ink-2)}
 .switch{width:44px;height:26px;border-radius:999px;border:1px solid var(--line-2);background:var(--paper-2);position:relative;cursor:pointer;transition:background .18s ease,border-color .18s ease;flex:0 0 auto}
-.switch i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.18);transition:transform .18s ease}
+.switch::before{content:"";position:absolute;inset:-9px;border-radius:999px}
+.switch i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--ink-3);box-shadow:0 1px 2px rgba(0,0,0,.18);transition:transform .18s ease,background .18s ease}
 .switch.is-on{background:var(--moss);border-color:var(--moss)}
 .switch.is-on i{transform:translateX(18px);background:#fff}
 .opt-group{border-top:1px solid var(--line);padding-top:10px;margin-top:6px}
@@ -861,3 +851,40 @@ body.pref-compact .view-head{margin-bottom:10px}
 @media (prefers-reduced-motion: reduce){
   *{animation-duration:.001ms!important;transition-duration:.001ms!important}
 }
+
+/* AI 提示卡与建议 */
+.ai-notice{margin:10px 0 0;border:1px solid var(--ember-line-soft);background:var(--ember-soft);border-radius:var(--r-m);padding:12px 14px;font-size:12.5px;line-height:1.6}
+.ai-notice b{display:block;margin-bottom:2px;font-size:13px}
+.ai-notice p{margin:0 0 8px;color:var(--ink-2)}
+.ai-chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.chip{border:1px solid var(--line-2);background:var(--card);color:var(--ink-2);border-radius:999px;padding:7px 12px;font-size:12px;cursor:pointer;transition:border-color .16s ease,color .16s ease,transform .16s ease}
+.chip:hover{border-color:var(--moss);color:var(--ink);transform:translateY(-1px)}
+.chip:active{transform:scale(.97)}
+
+/* AI 页：手机端撑满可用高度，输入区固定在底栏上方，短屏也不被遮挡 */
+body[data-layout="portrait"] #view-ai{display:flex;flex-direction:column;height:calc(100dvh - 54px - 62px - 24px - env(safe-area-inset-bottom));min-height:0}
+body[data-layout="portrait"] .ai-wrap{display:flex;flex-direction:column;gap:10px;flex:1;min-height:0}
+body[data-layout="portrait"] .ai-thread{flex:1;min-height:120px;max-height:none}
+body[data-layout="portrait"] .ai-form{flex:0 0 auto}
+input::placeholder,textarea::placeholder{color:var(--ink-2);opacity:1}
+.set-main{max-width:680px}
+.opt-row{cursor:pointer}
+.opt-row input{width:22px;height:22px;margin-right:4px}
+.opt-filter{width:100%;height:40px;border:1px solid var(--line-2);border-radius:var(--r-m);padding:0 12px;background:var(--card);color:var(--ink);margin-bottom:8px}
+
+/* 触控与细节（对照 WCAG 2.5.8） */
+body[data-layout="portrait"] .opt-row{min-height:52px}
+body[data-layout="portrait"] .opt-toggle{width:24px;height:24px}
+body[data-layout="portrait"] .cmd,body[data-layout="portrait"] .chip{min-height:36px;padding:8px 12px}
+body[data-layout="portrait"] .switch{min-width:44px;min-height:26px}
+.set-nav .set-link{min-height:52px}
+.kv-row b,.dev-card .dev-id,.toast{overflow-wrap:anywhere;min-width:0}
+
+/* 非文字对比：输入框/开关边界 ≥3:1 */
+.field input,.field select,.ai-form textarea,.opt-filter{border-color:var(--ink-3)}
+.switch{border-color:var(--ink-3)}
+
+/* P2 细节：行宽、搜索框、chip 触控 */
+.set-main .pref-row{max-width:560px}
+body[data-layout="portrait"] .opt-filter{height:44px}
+body[data-layout="portrait"] .cmd,body[data-layout="portrait"] .chip{min-height:44px}

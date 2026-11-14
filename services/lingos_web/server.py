@@ -1326,6 +1326,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "empty"})
                 return
             reply = self._chat(text)
+            # 连不上 AI 服务时如实报 502，前端据此显示「引擎未启动」提示卡，
+            # 不把底层 errno 当成管家回复塞进对话。
+            low = str(reply)
+            if ("Errno 2" in low or "ai server unavailable" in low or "暂未连接" in low
+                    or "No such file" in low or "未配置任何模型" in low):
+                self._json(502, {"error": "ai_unavailable", "detail": reply})
+                return
             self._json(200, {"reply": reply})
             return
         self._json(404, {"error": "not found"})
