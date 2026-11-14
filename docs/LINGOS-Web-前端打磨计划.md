@@ -129,7 +129,14 @@
 - 子代理 UI 审查两轮：首轮 6.3 / 6.5，修复后 **8.7 / 10**（P0=0、P1=0，剩 5 条 P2）。
 - 修复清单：首页锁状态模型（无锁不再说"门锁着"，未知状态单列）；AI 页手机 flex 撑满、输入框在底栏上方（390×667 实测 593 < 605）；开关删旧 `::after` 单旋钮 + aria + 44px 命中；危险内核项确认后 `cb.checked` 同步；事件"查看全部"；加载/错误/骨架三态与刷新结果真实；路由与分类滚动复位；横竖屏整页重渲染；确认弹层焦点 trap/归还；登出统一清 root key/AI 对话；内核 61 项搜索 + 整行 label；命令数动态、端口文案去硬编码、版本分 Web/后台；事件详情中文化。
 - 手机 Termux 已同步新前端并重启（含 AI 服务由 launcher 一并拉起，ai.sock 放数据根）。
-- 未做：代码审查子代理（因额度中断，待补）；日间主题与键盘全路径复测。
+- 代码审查（子代理）：6.5/10（P0：ai_server 日志目录 import 期写 /LINGOS、/api/cmd 不查角色）。已修并提交 `0c79d24`：
+  - ai_server 日志目录提前解析 + LINGOS_ROOT/LOG_DIR 覆盖 + FileHandler 失败回退；
+  - `/api/cmd` admin-only（普通 user 403）；
+  - provider 保存失败显性、provider.json 跟随 `LINGOS_AI_CONFIG`；
+  - api_key 只留后 4；options confirm 必须 `is True`、未知键 400、schema 空 503、写入 fsync+0600+唯一 tmp；
+  - 日志控制符清洗、`_chat` 返回 (ok,text)、`_static` 异常兜底；
+  - launcher 改 pidfile + 等 socket；新增 options 守卫与 /api/cmd 越权测试（16 项全过）。
+- 待做：代码复审分数、日间主题与键盘全路径复测。
 
 **待做**：B4（CI 前置检查）。
 
