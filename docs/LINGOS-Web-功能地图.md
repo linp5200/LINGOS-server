@@ -18,7 +18,7 @@
 | 家居 | home | `home.*` | `src/python/home_ext.py`、`ha_integration.py` | 设备页 · HA / MQTT / 米家 |
 | 监控 | monitor | `monitor.*` | `src/monitor`（lingos-monitor） | 摄像头 · 预览（默认关，未接不占位） |
 | 预警 | alert | `alert.*` | `src/alert`（lingos-alertd） | 首页 · 预警历史 |
-| AI | ai | `ai.*` | `src/ai`、`src/python/ai_server.py` | AI 页 · 对话 / 状态 / Provider |
+| AI | ai | `ai.*` | `src/ai`、`src/python/ai_server.py` | AI 页 · 对话 / 状态 / Provider（三协议 openai/anthropic/gemini；Ollama 走 openai chat） |
 | 技能 | skill | `skill.*` | `src/python/skill_*` | AI 页 · 技能库 |
 | AI 识别 | ai_vision | `ai_vision.*` | `src/vision` | 设置 · 识别叠加开关（默认关） |
 | OCR | ocr | `ocr.*` | `src/python/ocr_service.py` | 后续 |

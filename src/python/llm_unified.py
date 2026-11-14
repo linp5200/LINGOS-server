@@ -5,6 +5,7 @@ LING OS 统一 LLM 调用层（0.2.0——AI-AGENT#7 定稿）
 - 原生直连不做转换：用哪个模型调用哪个模型的格式（不建 OpenAI⇄Anthropic 转换层）
 - format: openai    → POST {base}/chat/completions（DeepSeek/Kimi/GLM/通义/Compatible/Ollama）
 - format: anthropic → POST {base}/v1/messages（Anthropic 原生 Messages API）
+- format: gemini    → POST {base}/v1beta/models/{model}:generateContent（Google Generative Language）
 - 对外事件统一（thinking/content/tool_calls/usage）；对内各 adapter 原生解析
 - 错误分类（HTTP 400/401/402/403/404/429/5xx/超时/网络）+ 建议动作
 - 429/5xx 指数退避重试 1 次
@@ -49,7 +50,7 @@ class LLMProvider:
     def __init__(self, data: dict):
         self.id = data.get("id", "unknown")
         self.name = data.get("name", self.id)
-        self.format = data.get("format", "openai")          # openai / anthropic
+        self.format = data.get("format", "openai")          # openai / anthropic / gemini
         self.base_url = (data.get("base_url") or "").rstrip("/")
         self.api_key = data.get("api_key", "")
         self.model = data.get("model", "")
@@ -889,6 +890,229 @@ def _anthropic_nonstream(provider: LLMProvider, messages: List[Dict], tools: Opt
 
 
 # ========== 统一入口 ==========
+# ========== Gemini 格式 adapter（Google Generative Language v1beta） ==========
+# 三个协议之一：openai（含 Ollama/DeepSeek/Kimi/GLM 等 chat 兼容）、anthropic、gemini。
+# 设计原则同其他 adapter：原生直连不做转换层，对外事件统一。
+
+def _gemini_url(provider: LLMProvider, stream: bool = False) -> str:
+    base = (provider.base_url or "https://generativelanguage.googleapis.com").rstrip("/")
+    if not base.endswith("/v1beta") and not base.endswith("/v1"):
+        base += "/v1beta"
+    action = "streamGenerateContent?alt=sse" if stream else "generateContent"
+    return "%s/models/%s:%s" % (base, provider.model, action)
+
+
+def _convert_to_gemini(messages: List[Dict]) -> Tuple[str, List[Dict]]:
+    """OpenAI 风格 messages → (system 文本, Gemini contents)。
+
+    工具结果没有 name 时用 "tool"（Gemini 的 functionResponse 必须带 name）。
+    """
+    system_parts: List[str] = []
+    contents: List[Dict] = []
+    for m in normalize_messages(messages):
+        role = m.get("role")
+        c = m.get("content")
+        if role == "system":
+            system_parts.append(c if isinstance(c, str) else json.dumps(c, ensure_ascii=False))
+            continue
+        if role == "tool":
+            name = m.get("name") or "tool"
+            text = c if isinstance(c, str) else json.dumps(c, ensure_ascii=False)
+            contents.append({"role": "user", "parts": [{"functionResponse": {"name": name, "response": {"content": text}}}]})
+            continue
+        if role == "assistant":
+            parts: List[Dict] = []
+            if isinstance(c, str) and c.strip():
+                parts.append({"text": c})
+            for tc in (m.get("tool_calls") or []):
+                fn = (tc or {}).get("function") or {}
+                args = fn.get("arguments")
+                try:
+                    argobj = json.loads(args) if isinstance(args, str) and args else (args or {})
+                except Exception:
+                    argobj = {"raw": args}
+                parts.append({"functionCall": {"name": fn.get("name", ""), "args": argobj}})
+            contents.append({"role": "model", "parts": parts or [{"text": ""}]})
+            continue
+        parts = []
+        if isinstance(c, str):
+            parts.append({"text": c})
+        elif isinstance(c, list):
+            for p in c:
+                if isinstance(p, dict) and p.get("type") == "text":
+                    parts.append({"text": p.get("text", "")})
+                else:
+                    parts.append({"text": str(p)})
+        else:
+            parts.append({"text": str(c or "")})
+        contents.append({"role": "user", "parts": parts})
+    return "\n".join(system_parts), contents
+
+
+def _gemini_tool_schema(tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
+    decls = []
+    for t in tools or []:
+        fn = (t or {}).get("function") or {}
+        if not fn.get("name"):
+            continue
+        decls.append({
+            "name": fn.get("name"),
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return [{"functionDeclarations": decls}] if decls else None
+
+
+def _gemini_payload(provider: LLMProvider, messages: List[Dict], tools: Optional[List[Dict]],
+                    temperature: Optional[float], stream: bool) -> Dict:
+    system, contents = _convert_to_gemini(messages)
+    payload: Dict = {"contents": contents}
+    if system:
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
+    tool_schema = _gemini_tool_schema(tools)
+    if tool_schema and provider.supports_tools:
+        payload["tools"] = tool_schema
+    gen: Dict = {"maxOutputTokens": MAX_TOKENS_DEFAULT}
+    if temperature is not None:
+        gen["temperature"] = temperature
+    payload["generationConfig"] = gen
+    return payload
+
+
+def _gemini_headers(provider: LLMProvider) -> Dict:
+    headers = {"Content-Type": "application/json"}
+    if provider.api_key:
+        headers["x-goog-api-key"] = provider.api_key
+    return headers
+
+
+def _gemini_parse_parts(parts: List[Dict]) -> Tuple[str, str, List[Dict]]:
+    """parts → (text, reasoning, tool_calls[openai 风格])"""
+    text_parts: List[str] = []
+    think_parts: List[str] = []
+    calls: List[Dict] = []
+    for p in parts or []:
+        if not isinstance(p, dict):
+            continue
+        if "text" in p and p.get("text"):
+            (think_parts if p.get("thought") else text_parts).append(p["text"])
+        fc = p.get("functionCall")
+        if isinstance(fc, dict) and fc.get("name"):
+            calls.append({"type": "function", "id": "call_%d" % len(calls),
+                          "function": {"name": fc.get("name"),
+                                       "arguments": json.dumps(fc.get("args") or {}, ensure_ascii=False)}})
+    return "".join(text_parts), "".join(think_parts), calls
+
+
+def _gemini_nonstream(provider: LLMProvider, messages: List[Dict], tools: Optional[List[Dict]],
+                      timeout: int, temperature: Optional[float]) -> Dict:
+    import requests
+    url = _gemini_url(provider, stream=False)
+    payload = _gemini_payload(provider, messages, tools, temperature, stream=False)
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            resp = requests.post(url, headers=_gemini_headers(provider), json=payload, timeout=timeout)
+            if resp.status_code != 200:
+                err_type, msg, action = classify_http_error(resp.status_code, provider)
+                if resp.status_code in (429,) or resp.status_code >= 500:
+                    if attempts == 1:
+                        time.sleep(1.5)
+                        continue
+                _dump_debug(provider, payload, resp.status_code, resp.text[:3000], err_type)
+                return {"content": "%s。%s" % (msg, action), "error_type": err_type,
+                        "action": action, "error": True}
+            data = resp.json()
+            cand = (data.get("candidates") or [{}])[0]
+            parts = (cand.get("content") or {}).get("parts") or []
+            content, reasoning, tcs = _gemini_parse_parts(parts)
+            um = data.get("usageMetadata") or {}
+            usage = {"prompt_tokens": um.get("promptTokenCount", 0),
+                     "completion_tokens": um.get("candidatesTokenCount", 0),
+                     "total_tokens": um.get("totalTokenCount", 0)}
+            return {"content": content, "reasoning": reasoning, "usage": usage, "tool_calls": tcs or None}
+        except Exception as e:
+            err_type, msg, action = classify_exception(e, provider)
+            if attempts == 1 and err_type in ("Timeout", "NetworkError"):
+                time.sleep(1.0)
+                continue
+            _dump_debug(provider, payload, 0, "exception: %s" % e, err_type)
+            return {"content": "%s。%s" % (msg, action), "error_type": err_type,
+                    "action": action, "error": True}
+
+
+def _gemini_stream(provider: LLMProvider, messages: List[Dict], tools: Optional[List[Dict]],
+                   timeout: int, temperature: Optional[float]) -> Generator[Dict, None, None]:
+    import requests
+    url = _gemini_url(provider, stream=True)
+    payload = _gemini_payload(provider, messages, tools, temperature, stream=True)
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            with requests.post(url, headers=_gemini_headers(provider), json=payload, timeout=timeout, stream=True) as resp:
+                if resp.status_code != 200:
+                    body = ""
+                    try:
+                        body = resp.text[:3000]
+                    except Exception:
+                        pass
+                    err_type, msg, action = classify_http_error(resp.status_code, provider)
+                    if resp.status_code in (429,) or resp.status_code >= 500:
+                        if attempts == 1:
+                            time.sleep(1.5)
+                            continue
+                    _dump_debug(provider, payload, resp.status_code, body, err_type)
+                    yield {"type": "error", "text": "%s。%s" % (msg, action),
+                           "error_type": err_type, "action": action}
+                    return
+                usage = None
+                tool_calls: List[Dict] = []
+                for line in resp.iter_lines(decode_unicode=True):
+                    if not line or not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if not raw or raw == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(raw)
+                    except Exception:
+                        continue
+                    cand = (chunk.get("candidates") or [{}])[0]
+                    parts = (cand.get("content") or {}).get("parts") or []
+                    for p in parts:
+                        if not isinstance(p, dict):
+                            continue
+                        if p.get("text"):
+                            yield {"type": "thinking" if p.get("thought") else "content",
+                                   "text": p["text"]}
+                        fc = p.get("functionCall")
+                        if isinstance(fc, dict) and fc.get("name"):
+                            tool_calls.append({"type": "function", "id": "call_%d" % len(tool_calls),
+                                               "function": {"name": fc.get("name"),
+                                                            "arguments": json.dumps(fc.get("args") or {}, ensure_ascii=False)}})
+                    um = chunk.get("usageMetadata")
+                    if um:
+                        usage = {"prompt_tokens": um.get("promptTokenCount", 0),
+                                 "completion_tokens": um.get("candidatesTokenCount", 0),
+                                 "total_tokens": um.get("totalTokenCount", 0)}
+                if tool_calls:
+                    yield {"type": "tool_calls", "tool_calls": tool_calls}
+                if usage:
+                    yield {"type": "usage", "usage": usage}
+                return
+        except Exception as e:
+            err_type, msg, action = classify_exception(e, provider)
+            if attempts == 1 and err_type in ("Timeout", "NetworkError"):
+                time.sleep(1.0)
+                continue
+            _dump_debug(provider, payload, 0, "exception: %s" % e, err_type)
+            yield {"type": "error", "text": "%s。%s" % (msg, action),
+                   "error_type": err_type, "action": action}
+            return
+
+
 def call_llm_stream(messages: List[Dict], tools: Optional[List[Dict]] = None,
                     provider: Optional[LLMProvider] = None, timeout: int = 120,
                     temperature: Optional[float] = None,
@@ -901,6 +1125,8 @@ def call_llm_stream(messages: List[Dict], tools: Optional[List[Dict]] = None,
         return
     if p.format == "anthropic":
         yield from _anthropic_stream(p, messages, tools, timeout, temperature)
+    elif p.format == "gemini":
+        yield from _gemini_stream(p, messages, tools, timeout, temperature)
     else:
         yield from _openai_stream(p, messages, tools, timeout, temperature, reasoning_effort)
 
@@ -915,4 +1141,6 @@ def call_llm_nonstream(messages: List[Dict], tools: Optional[List[Dict]] = None,
         return {"content": "未配置任何模型提供商——请在 AI 配置中添加", "error": True}
     if p.format == "anthropic":
         return _anthropic_nonstream(p, messages, tools, timeout, temperature)
+    if p.format == "gemini":
+        return _gemini_nonstream(p, messages, tools, timeout, temperature)
     return _openai_nonstream(p, messages, tools, timeout, temperature, reasoning_effort)

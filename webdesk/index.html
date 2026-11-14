@@ -10,6 +10,26 @@
 <title>LING OS · 家宅防线</title>
 <link rel="stylesheet" href="assets/app.css">
 <script>
+/* 旧 webdesk 注册过 sw.js，升级到新前端后旧 SW 仍可能接管请求，导致手机一直停在启动屏。
+   这里注销所有旧 SW 并清掉 cache，避免“页面是新的、请求走旧缓存”的混合状态。 */
+(function () {
+  try {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        rs.forEach(function (r) { r.unregister(); });
+      }).catch(function () {});
+    }
+    if (window.caches && caches.keys) {
+      caches.keys().then(function (ks) {
+        ks.forEach(function (k) {
+          if (k.indexOf('lingos') >= 0 || k.indexOf('LINGOS') >= 0) caches.delete(k);
+        });
+      }).catch(function () {});
+    }
+  } catch (e) {}
+})();
+</script>
+<script>
 (function () {
   try {
     var t = localStorage.getItem('lo-theme');
@@ -102,6 +122,23 @@
   </div>
 </div>
 
+<!-- 启动看门狗：主脚本异常/请求挂起时，也必须落到 err-noserver，不允许无限等待。 -->
+<script>
+setTimeout(function () {
+  try {
+    var boot = document.getElementById('boot');
+    var code = document.getElementById('bootCode');
+    if (!boot || boot.hidden || !code) return;
+    if (code.textContent.indexOf('正在连接') !== 0) return;
+    code.textContent = 'err-noserver';
+    document.getElementById('bootTitle').textContent = '后台没回话';
+    document.getElementById('bootText').textContent =
+      '这个页面必须接后台才能用。手机上先确认：地址是电脑/手机的局域网 IP、服务用 --lan 启动过、8080 没被别的程序占用。';
+    document.getElementById('bootMeta').textContent =
+      '页面：' + location.href + '\nUA：' + navigator.userAgent;
+  } catch (e) {}
+}, 6000);
+</script>
 <script src="assets/app.js"></script>
 </body>
 </html>

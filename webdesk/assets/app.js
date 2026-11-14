@@ -237,11 +237,15 @@
     api('/api/health').then(function (r) {
       if (r.network || !r.ok || !r.data || !r.data.ok) {
         var detail = r.network
-          ? '没有收到响应。检查 lingos-web 是否在运行、地址是否正确。'
+          ? (r.timeout ? '请求超时（8 秒）。' : '没有收到响应。') + ' 检查 lingos-web 是否在运行、地址是否正确。'
           : '后台返回 HTTP ' + r.status + '。检查 /api/health 是否可用。';
+        var lanHint = (location.hostname === '127.0.0.1' || location.hostname === 'localhost')
+          ? '\n如果是手机访问，127.0.0.1 指的是手机自己；要用电脑/手机的局域网 IP，并让后台以 --lan 启动。'
+          : '\n手机访问时后台必须监听局域网（lingos --lan），且首次登录要看配对码。';
         showBoot('err-noserver', '连不上 LING OS 后台',
           '这个页面必须接后台才能用。没有后台时不显示任何模拟数据。',
-          '地址：' + (apiBase || location.origin) + '\n' + detail);
+          '地址：' + (apiBase || location.origin) + '\n' + detail + lanHint +
+          '\n页面：' + location.href);
         return;
       }
       S.health = r.data;

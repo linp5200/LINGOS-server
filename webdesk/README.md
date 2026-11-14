@@ -42,7 +42,7 @@ manifest.json       PWA（可添加到主屏幕）
 
 ## 新增接口（0.14 方向）
 
-- `GET/POST /api/ai/providers`、`POST /api/ai/providers/remove`、`POST /api/ai/active`、`POST /api/ai/test` — 模型提供商管理，经 `run/ai.sock`，仅 admin，`api_key` 返回前脱敏。
+- `GET/POST /api/ai/providers`、`POST /api/ai/providers/remove`、`POST /api/ai/active`、`POST /api/ai/test` — 模型提供商管理，经 `run/ai.sock`，仅 admin，`api_key` 返回前脱敏。协议只有三种：openai chat（含 Ollama/DeepSeek/Kimi/GLM 等）、anthropic、gemini。
 - `GET/POST /api/cameras` — 摄像头（ONVIF/RTSP/RTMP/HTTP）写入 `camera.*` 的 `state.stream` / `state.snapshot`。
 - `GET/POST /api/notify/settings`、`POST /api/notify/test` — Webhook / SMTP 邮件 / 短信接口位（未接服务商时明确 501）。
 

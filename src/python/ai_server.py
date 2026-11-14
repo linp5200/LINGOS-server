@@ -4898,10 +4898,12 @@ def cmd_model_switch(model_id: str = "") -> dict:
 def cmd_provider_add(pid: str = "", name: str = "", fmt: str = "openai", base_url: str = "",
                      api_key: str = "", model: str = "",
                      thinking_enabled: bool = True, reasoning_effort: str = "high") -> dict:
-    """添加/更新提供商（写 provider.json——App ai_config_set 增强）
+    """添加/更新提供商（写 provider.json——三个协议：openai chat / anthropic / gemini；Ollama 走 openai chat）
     【0.2.2】新增 thinking_enabled（思考模式开关）+ reasoning_effort（思考强度 low/medium/high/xhigh/max）"""
     if not pid or not base_url or not model:
         return {"status": "error", "msg": "需要 id/base_url/model"}
+    if fmt not in ("openai", "anthropic", "gemini"):
+        return {"status": "error", "msg": "format 只支持 openai/anthropic/gemini（Ollama 用 openai）"}
     providers = llm_unified.get_providers()
     existing = None
     for p in providers:
