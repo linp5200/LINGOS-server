@@ -31,7 +31,8 @@ jobs:
           echo "LINGOS_VER=$LINGOS_VER"
           set -o pipefail
           set +e
-          sudo bash distro/rootfs/build-rootfs.sh 2>&1 | tee /tmp/rootfs-build.log
+          # sudo 会清环境：显式把带 sha 的版本传进去
+          sudo env LINGOS_VER="$LINGOS_VER" bash distro/rootfs/build-rootfs.sh 2>&1 | tee /tmp/rootfs-build.log
           rc=$?
           {
             echo "## rootfs build rc=$rc"
