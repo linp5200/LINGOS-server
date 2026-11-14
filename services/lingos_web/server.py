@@ -180,9 +180,21 @@ class Store:
     def options_write(self, values: dict) -> dict:
         p = self.options_file()
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(values, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(tmp, p)
+        import tempfile
+        fd, tmp_name = tempfile.mkstemp(prefix=".options-", suffix=".tmp", dir=str(p.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(values, f, ensure_ascii=False, indent=1)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp_name, 0o600)
+            os.replace(tmp_name, p)
+        finally:
+            try:
+                if os.path.exists(tmp_name):
+                    os.unlink(tmp_name)
+            except Exception:
+                pass
         return {"path": str(p), "saved": len(values)}
 
     # ---- users / sessions ----
@@ -668,6 +680,8 @@ class Handler(BaseHTTPRequestHandler):
             text = fmt % args
         except Exception:
             text = str(args)
+        # 控制符会往终端注入 ANSI/换行：未认证的路径也能进日志，必须清洗
+        text = "".join(ch if 32 <= ord(ch) < 127 or ch.isprintable() else "?" for ch in str(text))[:400]
         log("%s %s %.1fms" % (self.client_address[0], text, dt), level=level)
 
     # ---- HTTP verbs ----
@@ -1000,8 +1014,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "token": raw, "user": usr["username"]})
             return
         if path == "/api/cmd":
-            # App/Web same rights: authenticated Web/API-token callers reach the
-            # C command backend through loopback only. Never expose 18080 directly.
+            # 系统命令面只给管理员：普通 user 不能打 C 内核命令（system.update/plugin.load 等）
+            _u = self._require()
+            if not _u:
+                return
+            if _u["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
             # 通道 1：HTTP 18080（设计主通道）；通道 2：/run/daemon.sock（lingosctl 同协议）。
             backend = os.environ.get("LINGOS_BACKEND_HTTP", "http://127.0.0.1:18080").rstrip("/")
             cmd = str(body.get("cmd") or "")
@@ -1253,8 +1272,12 @@ class Handler(BaseHTTPRequestHandler):
             if usr["role"] != "admin":
                 self._json(403, {"error": "admin required"})
                 return
+            if not OPTIONS_SCHEMA:
+                self._json(503, {"error": "内核设置 schema 未加载"})
+                return
             incoming = body.get("values") if isinstance(body.get("values"), dict) else body
             by_key = {it["key"]: it for it in OPTIONS_SCHEMA}
+            confirmed = body.get("confirm") is True
             meta = self.store.options_read()
             values = dict(meta["values"])
             changed = 0
@@ -1263,9 +1286,13 @@ class Handler(BaseHTTPRequestHandler):
                     values[k] = bool(v)
                     changed += 1
                     continue
+                if not isinstance(v, bool):
+                    self._json(400, {"error": "值必须是布尔：" + k})
+                    return
                 it = by_key.get(k)
                 if not it:
-                    continue
+                    self._json(400, {"error": "未知设置项：" + k})
+                    return
                 if it.get("fixed"):
                     if not v:
                         self._json(400, {"error": "安全底线不可关闭：" + k})
@@ -1273,7 +1300,7 @@ class Handler(BaseHTTPRequestHandler):
                     values[k] = True
                     continue
                 # 危险项：任何偏离默认值的改动都要二次确认（开和关都算）
-                if it.get("dangerous") and bool(v) != bool(it.get("default")) and not body.get("confirm"):
+                if it.get("dangerous") and bool(v) != bool(it.get("default")) and not confirmed:
                     self._json(400, {"error": "危险开关需要二次确认：" + k, "need_confirm": True})
                     return
                 values[k] = bool(v)
@@ -1325,12 +1352,8 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 self._json(400, {"error": "empty"})
                 return
-            reply = self._chat(text)
-            # 连不上 AI 服务时如实报 502，前端据此显示「引擎未启动」提示卡，
-            # 不把底层 errno 当成管家回复塞进对话。
-            low = str(reply)
-            if ("Errno 2" in low or "ai server unavailable" in low or "暂未连接" in low
-                    or "No such file" in low or "未配置任何模型" in low):
+            ok, reply = self._chat(text)
+            if not ok:
                 self._json(502, {"error": "ai_unavailable", "detail": reply})
                 return
             self._json(200, {"reply": reply})
@@ -1478,7 +1501,7 @@ class Handler(BaseHTTPRequestHandler):
         out = dict(p or {})
         key = out.pop("api_key", "") or ""
         out["api_key_set"] = bool(key)
-        out["api_key_masked"] = (key[:4] + "…" + key[-4:]) if len(key) >= 12 else ("已设置" if key else "")
+        out["api_key_masked"] = ("…" + key[-4:]) if len(key) >= 8 else ("已设置" if key else "")
         return out
 
     # ---- 摄像头：camera.* 设备，state.stream 给首页预览用 ----
@@ -1610,7 +1633,8 @@ class Handler(BaseHTTPRequestHandler):
             "audit": self.store.events(30),
         }
 
-    def _chat(self, text: str) -> str:
+    def _chat(self, text: str) -> tuple[bool, str]:
+        """返回 (ok, text)。连不上 AI 服务时 ok=False，由调用方映射 502，不按文本猜。"""
         sock_path = self.chat_sock or str(self.store.root / "run" / "ai.sock")
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1630,18 +1654,18 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(obj, dict):
                 for k in ("reply", "content", "message", "text"):
                     if isinstance(obj.get(k), str) and obj[k].strip():
-                        return obj[k]
+                        return True, obj[k]
                 # 兼容 {status, data:{reply}} 包装（部分版本/AI 服务会这样回）
                 data = obj.get("data")
                 if isinstance(data, dict):
                     for k in ("reply", "content", "message", "text"):
                         if isinstance(data.get(k), str) and data[k].strip():
-                            return data[k]
+                            return True, data[k]
                 if obj.get("ok") is False:
-                    return "AI 服务返回错误：" + str(obj.get("error") or obj)[:300]
-            return json.dumps(obj, ensure_ascii=False)[:2000]
+                    return False, "AI 服务返回错误：" + str(obj.get("error") or obj)[:300]
+            return True, json.dumps(obj, ensure_ascii=False)[:2000]
         except Exception as e:
-            return f"AI 服务暂未连接（{e}）。Web 桌面已可用；启动 lingos 后端后会接入。"
+            return False, f"AI 服务暂未连接（{e}）。"
 
     def _static(self, path: str):
         if path.startswith("/api/"):
@@ -1653,13 +1677,24 @@ class Handler(BaseHTTPRequestHandler):
         if ".." in Path(rel).parts:
             self._json(400, {"error": "bad path"})
             return
-        p = (self.web_dir / rel).resolve()
-        if not str(p).startswith(str(self.web_dir.resolve())):
+        try:
+            p = (self.web_dir / rel).resolve()
+            inside = str(p).startswith(str(self.web_dir.resolve()) + os.sep) or p == self.web_dir.resolve()
+            exists = p.is_file()
+        except (OSError, ValueError):
+            # 超长路径/非法字节：直接 404，不让异常冒到线程外
+            self._json(404, {"error": "not found"})
+            return
+        if not inside:
             self._json(403, {"error": "forbidden"})
             return
-        if not p.is_file():
+        if not exists:
             p = self.web_dir / "index.html"
-        if not p.is_file():
+        try:
+            fallback = p.is_file()
+        except OSError:
+            fallback = False
+        if not fallback:
             self._json(404, {"error": "webdesk missing"})
             return
         ctype = {

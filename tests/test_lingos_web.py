@@ -208,6 +208,44 @@ class WebTest(unittest.TestCase):
         self.assertTrue(self.store.acl_check(bob, "/secret/file", "read"))
         self.assertFalse(self.store.acl_check(bob, "/secret/file", "write"))
 
+    def test_13_options_guards(self):
+        """内核设置：admin、固定项、危险项二次确认、未知键、布尔类型。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        st, body = self.req("GET", "/api/options")
+        self.assertEqual(st, 200)
+        self.assertEqual(len(json.loads(body)["schema"]), 61)
+        # 固定项不能关
+        st, _ = self.req("POST", "/api/options", {"values": {"security.token_no_log": False}})
+        self.assertEqual(st, 400)
+        # 危险项无 confirm → 400；字符串 "false" 不能当确认
+        st, body = self.req("POST", "/api/options", {"values": {"sec.allow_lan_highrisk": True}})
+        self.assertEqual(st, 400)
+        self.assertTrue(json.loads(body).get("need_confirm"))
+        st, _ = self.req("POST", "/api/options", {"values": {"sec.allow_lan_highrisk": True}, "confirm": "false"})
+        self.assertEqual(st, 400)
+        # 显式 True 才通过；再关回去
+        st, _ = self.req("POST", "/api/options", {"values": {"sec.allow_lan_highrisk": True}, "confirm": True})
+        self.assertEqual(st, 200)
+        st, _ = self.req("POST", "/api/options", {"values": {"sec.allow_lan_highrisk": False}, "confirm": True})
+        self.assertEqual(st, 200)
+        # 未知键与类型错误
+        st, _ = self.req("POST", "/api/options", {"values": {"no.such.key": True}})
+        self.assertEqual(st, 400)
+        st, _ = self.req("POST", "/api/options", {"values": {"ui.start_screen": "yes"}})
+        self.assertEqual(st, 400)
+
+    def test_14_cmd_requires_admin(self):
+        """普通 user 不能打 /api/cmd 的 C 命令面。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        self.req("POST", "/api/users", {"username": "carol", "password": "carolpass123", "role": "user"})
+        admin_cookie = WebTest.cookie
+        self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
+        st, _ = self.req("POST", "/api/cmd", {"cmd": "system.status", "args": {}})
+        self.assertEqual(st, 403)
+        WebTest.cookie = admin_cookie
+        st, _ = self.req("POST", "/api/cmd", {"cmd": "system.status", "args": {}})
+        self.assertIn(st, (200, 502))  # 有权限：可能连不上核心，但不是 403
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -23,7 +23,16 @@ from typing import Dict, List, Optional, Generator, Tuple
 
 logger = logging.getLogger("LLMUnified")
 
-PROVIDER_FILE = "/LINGOS/system/config/provider.json"
+# 【0.14】provider.json 跟随 LINGOS_AI_CONFIG 所在目录；原生 Termux 下用数据根，不写 /LINGOS
+def _provider_file_path() -> str:
+    cfg = os.environ.get("LINGOS_AI_CONFIG", "")
+    if cfg:
+        return os.path.join(os.path.dirname(os.path.abspath(cfg)), "provider.json")
+    root = os.environ.get("LINGOS_ROOT", "/LINGOS")
+    return os.path.join(root, "system/config/provider.json")
+
+
+PROVIDER_FILE = _provider_file_path()
 DEBUG_DIR = "/LINGOS/logs/api_debug"
 
 # 内置上下文窗口映射表（token）——模型名小写匹配，/v1/models 获取失败时兜底

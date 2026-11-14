@@ -82,12 +82,23 @@ DATA="${LINGOS_DATA:-$HOME/.lingos/data}"
 mkdir -p "$DATA" || { echo "无法创建数据目录：$DATA"; exit 3; }
 # 【0.14】原生模式下把 AI 服务一并拉起（ai.sock 放在数据根，不写死 /LINGOS）
 mkdir -p "$DATA/run" "$DATA/system/config"
-if [ -f "$ROOTFS/LINGOS/bin/ai_server.py" ]; then
-  if ! command -v pgrep >/dev/null 2>&1 || ! pgrep -f "rootfs/LINGOS/bin/ai_server.py" >/dev/null 2>&1; then
-    echo "启动 AI 引擎（ai.sock + 8088）..."
-    LINGOS_ROOT="$ROOTFS/LINGOS" LINGOS_AI_SOCKET="$DATA/run/ai.sock" \
-      LINGOS_AI_CONFIG="$DATA/system/config/ai_config.json" LINGOS_NO_PARENT_MONITOR=1 \
-      nohup "$PY" "$ROOTFS/LINGOS/bin/ai_server.py" >>"$HOME/.lingos/ai.log" 2>&1 &
+AI_PIDFILE="$DATA/run/ai_server.pid"
+AI_RUNNING=0
+if [ -f "$AI_PIDFILE" ] && kill -0 "$(cat "$AI_PIDFILE" 2>/dev/null)" 2>/dev/null; then
+  AI_RUNNING=1
+fi
+if [ -f "$ROOTFS/LINGOS/bin/ai_server.py" ] && [ "$AI_RUNNING" = "0" ]; then
+  echo "启动 AI 引擎（ai.sock + 8088）..."
+  LINGOS_ROOT="$ROOTFS/LINGOS" LINGOS_AI_SOCKET="$DATA/run/ai.sock" \
+    LINGOS_AI_CONFIG="$DATA/system/config/ai_config.json" LINGOS_NO_PARENT_MONITOR=1 \
+    nohup "$PY" "$ROOTFS/LINGOS/bin/ai_server.py" >>"$HOME/.lingos/ai.log" 2>&1 &
+  echo $! >"$AI_PIDFILE"
+  # 等 socket 出现（最多 8 秒），起不来就如实提示，不假装已启动
+  _n=0
+  while [ ! -S "$DATA/run/ai.sock" ] && [ "$_n" -lt 8 ]; do sleep 1; _n=$((_n+1)); done
+  if [ ! -S "$DATA/run/ai.sock" ]; then
+    echo "!! AI 引擎没起来，最后几行日志："
+    tail -6 "$HOME/.lingos/ai.log" 2>/dev/null
   fi
 fi
 if [ "$LAN" = "1" ]; then

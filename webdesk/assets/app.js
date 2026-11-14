@@ -93,7 +93,7 @@
   function fmtTime(iso) {
     if (!iso) return '—';
     var d = new Date(iso);
-    if (isNaN(d.getTime())) return String(iso);
+    if (isNaN(d.getTime())) return '—';
     return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
   }
   function fmtSize(n) {
@@ -1728,13 +1728,17 @@
           }
           else if (r.status === 400 && r.data && r.data.need_confirm) {
             cb.checked = !val;
-            confirmBox({ title: '关闭危险开关？', body: key + ' 关掉会降低安全强度。', okText: '仍然关闭', onOk: function () { send(true); } });
+            confirmBox({ title: (val ? '打开危险开关？' : '关闭危险开关？'),
+              body: val ? (key + ' 打开后会降低防护强度。') : (key + ' 关掉会降低安全强度。'),
+              okText: val ? '仍然打开' : '仍然关闭', onOk: function () { send(true); } });
           } else { cb.checked = !val; toast('没保存：' + ((r.data && r.data.error) || r.status)); }
         });
     };
     if (cb.hasAttribute('data-danger') && !val) {
       cb.checked = !val;
-      confirmBox({ title: '关闭危险开关？', body: key + ' 关掉会降低安全强度。', okText: '仍然关闭', onOk: function () { send(true); } });
+      confirmBox({ title: (val ? '打开危险开关？' : '关闭危险开关？'),
+        body: val ? (key + ' 打开后会降低防护强度。') : (key + ' 关掉会降低安全强度。'),
+        okText: val ? '仍然打开' : '仍然关闭', onOk: function () { send(true); } });
     } else send(false);
   });
 

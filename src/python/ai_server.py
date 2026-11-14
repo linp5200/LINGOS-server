@@ -100,8 +100,15 @@ if __name__ == "__main__":
 from repair_engine import get_engine, get_repair_history, get_repair_history_by_id, reload_repair_config
 
 # ========== 日志配置（2026-08-22 定稿：/log 单文件 JSON 四字段）==========
-LOG_DIR = "/LINGOS/log"
-os.makedirs(LOG_DIR, exist_ok=True)
+# 【P0 修复】日志目录必须在 import 阶段就能解析，且 Termux 原生模式不能写 /LINGOS。
+# 优先 env，其次 LINGOS_ROOT/log；都不可写时退到临时目录，绝不因建目录失败而退出。
+_LINGOS_ROOT_EARLY = os.environ.get("LINGOS_ROOT", "/LINGOS")
+LOG_DIR = os.environ.get("LINGOS_LOG_DIR", os.path.join(_LINGOS_ROOT_EARLY, "log"))
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+except Exception:
+    import tempfile as _tf
+    LOG_DIR = _tf.mkdtemp(prefix="lingos-log-")
 
 # 统一单文件（所有服务合一个）
 log_file = os.path.join(LOG_DIR, "lingos.log")
@@ -138,7 +145,11 @@ console_formatter = LingosConsoleFormatter("[%(asctime)s] [%(levelname)s] [%(nam
 console_handler.setFormatter(console_formatter)
 
 # 文件：单文件 JSON（默认 DEBUG 全量；文件保存开关由 set_log_level/file_log 控制）
-file_handler = logging.FileHandler(log_file, encoding="utf-8")
+try:
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+except Exception:
+    # 目录不可写（Termux 非 root /LINGOS）时退回 stderr，服务仍能启动
+    file_handler = logging.StreamHandler(sys.stderr)
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(LingosJsonFormatter())
 logger = logging.getLogger("AIServer")
@@ -4927,10 +4938,14 @@ def cmd_provider_add(pid: str = "", name: str = "", fmt: str = "openai", base_ur
             "base_url": base_url, "api_key": api_key, "model": model,
             "thinking_enabled": bool(thinking_enabled),
             "reasoning_effort": reasoning_effort or "high"}))
-    llm_unified.save_providers(providers, pid)
+    ok = llm_unified.save_providers(providers, pid)
+    if not ok:
+        return {"status": "error", "msg": "保存 provenance 失败（端点校验未通过或写盘失败）"}
     # 同步旧 ai_config.json（deepseek 兼容——保持旧行为不破坏）
     try:
-        cfg_path = "/LINGOS/config/ai_config.json"
+        cfg_path = os.environ.get(
+            "LINGOS_LEGACY_AI_CONFIG",
+            os.path.join(os.path.dirname(CONFIG_PATH), "ai_config.json"))
         cfg = {}
         if os.path.exists(cfg_path):
             with open(cfg_path) as f:
@@ -4958,7 +4973,8 @@ def cmd_provider_remove(pid: str = "") -> dict:
         new_active = active.id
     elif providers:
         new_active = providers[0].id
-    llm_unified.save_providers(providers, new_active)
+    if not llm_unified.save_providers(providers, new_active):
+        return {"status": "error", "msg": "写盘失败，未删除"}
     return {"status": "ok", "data": {"removed": pid, "active": new_active}}
 
 # =============================================================
