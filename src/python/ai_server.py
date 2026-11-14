@@ -491,7 +491,7 @@ TOOL_TIMEOUT_SEC = 180
 
 # ========== 配置变量 ==========
 current_backend = None
-ollama_url = "http://127.0.0.1:8080"
+ollama_url = "http://127.0.0.1:11434"  # 【0.13.3】Ollama 默认端口 11434；8080 是 Web 桌面，曾经写错导致 AI 连到 Web
 ollama_model = "glm-4.6:cloud"
 deepseek_api_key = ""
 deepseek_model = "deepseek-v4-pro"
@@ -814,7 +814,7 @@ def load_config():
 
         # 读取 ollama 配置
         ollama_cfg = cfg.get("ollama", {})
-        ollama_url = ollama_cfg.get("url", "http://127.0.0.1:8080")
+        ollama_url = ollama_cfg.get("url", "http://127.0.0.1:11434")
         ollama_model = ollama_cfg.get("model", "glm-4.6:cloud")
 
         # 读取 deepseek 配置（环境变量优先）

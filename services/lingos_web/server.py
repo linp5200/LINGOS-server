@@ -926,7 +926,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/cmd":
             # App/Web same rights: authenticated Web/API-token callers reach the
             # C command backend through loopback only. Never expose 18080 directly.
+            # 通道 1：HTTP 18080（设计主通道）；通道 2：/run/daemon.sock（lingosctl 同协议）。
             backend = os.environ.get("LINGOS_BACKEND_HTTP", "http://127.0.0.1:18080").rstrip("/")
+            cmd = str(body.get("cmd") or "")
+            args = body.get("args") or {}
+            detail = ""
             try:
                 data = json.dumps(body, ensure_ascii=False).encode("utf-8")
                 req = urllib.request.Request(backend + "/api/cmd", data=data, method="POST",
@@ -934,13 +938,24 @@ class Handler(BaseHTTPRequestHandler):
                 with urllib.request.urlopen(req, timeout=20) as rr:
                     raw = rr.read()
                     code = rr.status
-                self.send_response(code)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
+                bad = (b"Invalid JSON" in raw) or (b"empty body" in raw)
+                if code == 200 and raw and not bad:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                detail = "HTTP %s%s" % (code, "（body 未传到 AI）" if bad else "")
             except Exception as e:
-                self._json(502, {"error": "backend unavailable", "detail": str(e)})
+                detail = str(e)
+            if cmd:
+                r = self._daemon_call(cmd, args)
+                if r.get("code") != "daemon_unavailable":
+                    self._json(200, r)
+                    return
+                detail += "；daemon.sock: " + str(r.get("msg"))
+            self._json(502, {"error": "backend unavailable", "detail": detail})
             return
         if path == "/api/devices":
             if usr["role"] != "admin":
@@ -1278,6 +1293,31 @@ class Handler(BaseHTTPRequestHandler):
         if self._level() in ("L3", "L4") and usr["role"] != "admin":
             return False
         return self.store.acl_check(usr, rel, need)
+
+    def _daemon_call(self, cmd: str, args: dict) -> dict:
+        """C 守护 socket 兜底（/run/daemon.sock，lingosctl 同协议）。
+
+        0.13 部分安装形态里 18080 HTTP 的命令代理不可用（MHD 上传回调收不到 body），
+        但 daemon.sock 是通的；这里作为第二通道，避免系统页整块不可用。
+        """
+        sock_path = str(self.store.root / "run" / "daemon.sock")
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(10)
+            s.connect(sock_path)
+            req = {"id": 1, "command": cmd, "args": args or {}, "rely": True, "return": "json"}
+            s.sendall((json.dumps(req, ensure_ascii=False) + "\n").encode())
+            data = b""
+            while b"\n" not in data and len(data) < 2 * 1024 * 1024:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+            s.close()
+            obj = json.loads(data.decode("utf-8", "replace").strip().splitlines()[0])
+            return obj if isinstance(obj, dict) else {"status": "ok", "data": obj}
+        except Exception as e:
+            return {"status": "error", "code": "daemon_unavailable", "msg": str(e)}
 
     # ---- AI 引擎（经 run/ai.sock，仅 admin 写） ----
     def _ai_call(self, cmd: str, **params) -> dict:
