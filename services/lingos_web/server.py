@@ -44,7 +44,8 @@ def _detect_version() -> str:
     env = os.environ.get("LINGOS_VERSION", "").strip()
     if env:
         return env
-    for cand in (Path(__file__).resolve().parents[2] / "VERSION", Path("/LINGOS/version")):
+    base = Path(__file__).resolve().parents[2]
+    for cand in (base / "VERSION", base / "version", Path("/LINGOS/version")):
         try:
             text = cand.read_text(encoding="utf-8").strip().splitlines()[0]
             if text:
