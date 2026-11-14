@@ -480,8 +480,8 @@ def cmd_weather_set_city(city: str = "", lat: float = 0.0, lon: float = 0.0, api
             else:
                 return {"status": "error", "geo_ok": False,
                         "msg": "城市未识别（geocoding 无结果）：%s" % city}
-        os.makedirs("/LINGOS/system/config", exist_ok=True)
-        with open("/LINGOS/system/config/weather.json", "w", encoding="utf-8") as f:
+        os.makedirs(os.path.join(LINGOS_ROOT, "system/config"), exist_ok=True)
+        with open(os.path.join(LINGOS_ROOT, "system/config/weather.json"), "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         # 清缓存
         try:
@@ -679,7 +679,7 @@ def auth_service_monitor():
 # ========== 授权请求客户端 ==========
 # 【0.7.0-hf2】审批三态记忆：'始终允许'表（先生设定——对标 Android + sudo）
 #   存储：/LINGOS/system/config/auth_always.json {"tools": ["tool_a", ...]}
-_AUTH_ALWAYS_FILE = "/LINGOS/system/config/auth_always.json"
+_AUTH_ALWAYS_FILE = os.path.join(LINGOS_ROOT, "system/config/auth_always.json")
 _AUTH_ALWAYS_LOCK = threading.Lock()
 
 def _auth_always_load() -> set:
@@ -2878,7 +2878,7 @@ def react_loop_nonstream(messages: List[Dict], conn=None, max_iterations: int = 
     )
 
 # ========== 【0.2.0】上下文引擎（分层预算 + 70% 预压缩 + 压缩落盘 + 状态外部化） ==========
-SESSION_ARCHIVE_DIR = "/LINGOS/data/session_archives"
+SESSION_ARCHIVE_DIR = os.path.join(LINGOS_ROOT, "data/session_archives")
 CONTEXT_PRE_COMPRESS_RATIO = 0.7   # 达预算 70% 预压缩（先生决策：不等超限）
 OUTPUT_RESERVE_TOKENS = 4096       # 输出预留
 
@@ -2999,7 +2999,7 @@ def cmd_context_status(session_id: str = "default") -> dict:
 
 # ========== Unix Socket服务器 ==========
 # ========== 【协议v3】会话管理（sessions.json——多端同步） ==========
-SESSION_FILE = "/LINGOS/data/sessions.json"
+SESSION_FILE = os.path.join(LINGOS_ROOT, "data/sessions.json")
 
 def _sessions_load() -> dict:
     try:
@@ -4792,7 +4792,8 @@ def cmd_ai_config_set(provider: str = "", api_key: str = "", base_url: str = "",
     if provider not in ("deepseek", "ollama"):
         return {"status": "error", "msg": "provider 仅支持 deepseek/ollama"}
     try:
-        cfg_path = "/LINGOS/config/ai_config.json"
+        cfg_path = os.environ.get("LINGOS_LEGACY_AI_CONFIG",
+                                  os.path.join(LINGOS_ROOT, "config/ai_config.json"))
         cfg = {}
         if os.path.exists(cfg_path):
             with open(cfg_path) as f:
@@ -4814,6 +4815,7 @@ def cmd_ai_config_set(provider: str = "", api_key: str = "", base_url: str = "",
         os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
         with open(cfg_path, "w") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.chmod(cfg_path, 0o600)
         return {"status": "ok", "data": {"provider": provider}}
     except Exception as e:
         return {"status": "error", "msg": str(e)}
@@ -4945,20 +4947,21 @@ def cmd_provider_add(pid: str = "", name: str = "", fmt: str = "openai", base_ur
     try:
         cfg_path = os.environ.get(
             "LINGOS_LEGACY_AI_CONFIG",
-            os.path.join(os.path.dirname(CONFIG_PATH), "ai_config.json"))
+            os.path.join(LINGOS_ROOT, "config/ai_config.json"))
         cfg = {}
         if os.path.exists(cfg_path):
             with open(cfg_path) as f:
                 cfg = json.load(f)
         cfg["backend"] = pid
-        if api_key:
-            cfg["%s_api_key" % pid] = api_key
+        # api_key 不再写明文到兼容文件：provider.json 已加密+0600，单一来源
         if base_url:
             cfg["%s_base_url" % pid] = base_url
         if model:
             cfg["%s_model" % pid] = model
+        os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
         with open(cfg_path, "w") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.chmod(cfg_path, 0o600)
     except Exception:
         pass
     return {"status": "ok", "data": {"id": pid, "active": True}}

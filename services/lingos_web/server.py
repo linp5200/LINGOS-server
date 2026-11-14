@@ -1640,7 +1640,8 @@ class Handler(BaseHTTPRequestHandler):
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(8)
             s.connect(sock_path)
-            s.sendall((json.dumps({"cmd": "chat", "params": {"text": text}}, ensure_ascii=False) + "\n").encode())
+            # ai_server 的对话入口是 nook_ask（参数 prompt），不是 chat
+            s.sendall((json.dumps({"cmd": "nook_ask", "params": {"prompt": text}}, ensure_ascii=False) + "\n").encode())
             data = b""
             while len(data) < 2 * 1024 * 1024:
                 chunk = s.recv(65536)
@@ -1652,6 +1653,8 @@ class Handler(BaseHTTPRequestHandler):
             s.close()
             obj = json.loads(data.decode("utf-8", "replace").strip().splitlines()[0])
             if isinstance(obj, dict):
+                if obj.get("status") == "error" or obj.get("code") not in (None, 0):
+                    return False, str(obj.get("content") or obj.get("msg") or obj)[:300]
                 for k in ("reply", "content", "message", "text"):
                     if isinstance(obj.get(k), str) and obj[k].strip():
                         return True, obj[k]
