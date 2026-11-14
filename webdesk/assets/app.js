@@ -78,6 +78,8 @@
   var KIND = { auth: '登录', device: '设备', user: '用户', security: '安全', settings: '设置', fs: '文件', acl: '权限' };
   function kindName(k) { return KIND[k] || k || '事件'; }
 
+  function roleName(r) { return ({ admin: '管理员', user: '普通用户' })[r] || r || '—'; }
+
   /** 事件详情：常见英文记法翻成中文，未命中就原样显示（不猜）。 */
   function detailText(detail) {
     var d = String(detail || '');
@@ -105,14 +107,27 @@
 
   var toastTimer = null;
   /** 轻提示：2.4s 自动消失，同一时间只留一条。 */
-  function toast(msg) {
+  var toastKindTimer = null;
+  function toast(msg, kind) {
     var n = $('#toast');
     if (!n) return;
+    kind = kind || (/失败|没保存|没加成|没删|没切成功|读不了|没生成|没写成|没上传成功|没成|错误|不可用|超时|连不上|未连接|未启动/.test(String(msg)) ? 'err' : 'ok');
+    n.className = 'toast toast--' + kind;
+    n.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+    n.setAttribute('aria-live', kind === 'err' ? 'assertive' : 'polite');
     n.textContent = msg;
     n.classList.add('is-show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { n.classList.remove('is-show'); }, 2400);
+    clearTimeout(toastKindTimer);
+    if (kind !== 'err') {
+      toastKindTimer = setTimeout(function () { n.classList.remove('is-show'); }, 2600);
+    }
   }
+  // 点击 toast 手动关闭（错误提示不会自动消失）
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('#toast');
+    if (t) t.classList.remove('is-show');
+  });
 
   /* 全局确认条 */
   /** 本地敏感缓存（root key / AI 对话）统一清掉，登出两处共用。 */
@@ -123,6 +138,67 @@
     } catch (e) {}
   }
 
+  var modalLastFocus = null;
+  /**
+   * 居中模态框：标题 + HTML + 按钮。比 confirmBox（底部确认条）更正式，
+   * 用于一次性凭据、说明、错误详情；危险操作仍用底部确认条。
+   */
+  function modalBox(opts) {
+    opts = opts || {};
+    var old = document.getElementById('lmodal');
+    if (old) old.remove();
+    var wrap = document.createElement('div');
+    wrap.id = 'lmodal';
+    wrap.className = 'lmodal';
+    wrap.innerHTML =
+      '<div class="lmodal-card" role="dialog" aria-modal="true" aria-labelledby="lmodalTitle">' +
+        '<h2 id="lmodalTitle"></h2><div class="lmodal-body"></div>' +
+        '<div class="lmodal-acts"><button class="btn" data-modal-cancel>关闭</button>' +
+        '<button class="btn btn--primary" data-modal-ok hidden></button></div>' +
+      '</div>';
+    document.body.appendChild(wrap);
+    ['app', 'auth', 'boot', 'tabbar'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) { el.inert = true; el.setAttribute('aria-hidden', 'true'); }
+    });
+    wrap.querySelector('h2').textContent = opts.title || '提示';
+    wrap.querySelector('.lmodal-body').innerHTML = opts.html || '';
+    var ok = wrap.querySelector('[data-modal-ok]');
+    if (opts.okText) {
+      ok.hidden = false;
+      ok.textContent = opts.okText;
+      ok.onclick = function () { close(); if (opts.onOk) opts.onOk(); };
+    }
+    var cancel = wrap.querySelector('[data-modal-cancel]');
+    if (opts.cancelText) cancel.textContent = opts.cancelText;
+    if (opts.dismissible === false) cancel.hidden = true;
+    modalLastFocus = document.activeElement;
+    function close() {
+      wrap.remove();
+      ['app', 'auth', 'boot', 'tabbar'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) { el.inert = false; el.removeAttribute('aria-hidden'); }
+      });
+      document.removeEventListener('keydown', onKey);
+      if (modalLastFocus && modalLastFocus.focus) { try { modalLastFocus.focus(); } catch (e) {} }
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { if (opts.dismissible === false) return; e.preventDefault(); close(); }
+      if (e.key !== 'Tab') return;
+      var items = wrap.querySelectorAll('button, [href], input, select, textarea');
+      if (!items.length) return;
+      var first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    if (opts.dismissible !== false) {
+      wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    }
+    cancel.onclick = close;
+    document.addEventListener('keydown', onKey);
+    setTimeout(function () { (ok.hidden ? cancel : ok).focus(); }, 30);
+  }
+
   var confirmCb = null;
   var confirmReturnFocus = null;
   /** 底部确认条：危险动作统一入口，焦点默认落在「算了」上。 */
@@ -131,7 +207,10 @@
     if (!box) return;
     box.querySelector('[data-confirm-title]').textContent = opts.title || '确认一下';
     box.querySelector('[data-confirm-body]').textContent = opts.body || '';
-    box.querySelector('[data-confirm-ok]').textContent = opts.okText || '确定';
+    var okBtn = box.querySelector('[data-confirm-ok]');
+    okBtn.textContent = opts.okText || '确定';
+    var danger = opts.danger === true || /删除|开锁|恢复|停用|关闭/.test(String(opts.okText || ''));
+    okBtn.className = 'btn ' + (danger ? 'btn--danger' : 'btn--primary');
     confirmCb = opts.onOk || null;
     confirmReturnFocus = document.activeElement;
     box.classList.add('is-open');
@@ -160,6 +239,29 @@
     var first = items[0], last = items[items.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+
+  /* ============ 测试终端快捷键 ============ */
+  document.addEventListener('keydown', function (e) {
+    var inField = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || '');
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'a' || e.key === 'A') && !inField) {
+      if (!S.termOpen) { e.preventDefault(); openTerminal(); }
+    } else if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'q' || e.key === 'Q')) {
+      if (S.termOpen) { e.preventDefault(); closeTerminal(); }
+    }
+  });
+  document.addEventListener('submit', function (e) {
+    if (e.target && e.target.id === 'termForm') {
+      e.preventDefault();
+      var inp = $('#termInput');
+      if (!inp) return;
+      var val = inp.value;
+      inp.value = '';
+      termExec(val);
+    }
+  });
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('[data-act="close-term"]')) closeTerminal();
   });
 
   /* ============ 网络 ============ */
@@ -228,6 +330,11 @@
     onvif: [],
     setSection: '',
     options: null,
+    devMode: false,
+    termOpen: false,
+    versionTaps: 0,
+    versionTapAt: 0,
+    plugins: null,
     notifyLoaded: false
   };
 
@@ -311,6 +418,8 @@
     $('#authSubmit').textContent = setup ? '创建并进入' : '进入';
     $('#authSub').textContent = (S.health && S.health.version ? 'LING OS ' + S.health.version : '本机安全入口') + (setup ? ' · 初始化' : '');
     $('#pairField').hidden = !!(S.health && S.health.lan === false);
+    var adv = $('#setupAdvanced');
+    if (adv) { adv.hidden = !setup; adv.open = false; }  // 高级配置只在首次初始化出现
     $('#authError').textContent = '';
     auth.dataset.setup = setup ? '1' : '0';
     setTimeout(function () { $('#authUser').focus(); }, 40);
@@ -326,6 +435,15 @@
     };
     var pair = $('#authPair').value.trim();
     if (pair) body.pair = pair;
+    if (setup) {
+      // 首次配置的可选项，全部可跳过
+      var sn = ($('#setupName') || {}).value || '';
+      var sl = ($('#setupLang') || {}).value || '';
+      var sp = ($('#setupPriv') || {}).value || '';
+      if (sn.trim()) body.display_name = sn.trim();
+      if (sl) body.language = sl;
+      if (sp) body.privacy_level = sp;
+    }
     $('#authSubmit').disabled = true;
     api(setup ? '/api/setup' : '/api/login', { method: 'POST', body: body }).then(function (r) {
       $('#authSubmit').disabled = false;
@@ -333,11 +451,32 @@
         S.me = { username: r.data.username || body.username, role: r.data.role || 'admin' };
         if (setup && r.data.root_key) {
           try { localStorage.setItem('lo-rootkey', r.data.root_key); } catch (e) {}
-          $('#authError').textContent = '';
-          $('#authHint').textContent = '管理员建好了。root key 已存在这台浏览器（高风险操作用），只显示这一次：' + r.data.root_key;
+          var finish = function () {
+            modalBox({
+              title: '初始化完成',
+              html: '<p>管理员已创建。root key 只显示这一次，高风险操作（改 ACL、恢复备份）要用：</p>' +
+                '<pre class="cmd-out">' + esc(r.data.root_key) + '</pre>' +
+                '<p class="muted">已存在这台浏览器；换设备要重新输入。</p>',
+              okText: '进入桌面',
+              dismissible: false,
+              onOk: function () { enterApp(); }
+            });
+          };
+          var file = ($('#setupPlugin') || {}).files && ($('#setupPlugin') || {}).files[0];
+          if (!file) { finish(); return; }
+          var rd = new FileReader();
+          rd.onload = function () {
+            try { var man = JSON.parse(String(rd.result || '{}')); } catch (e) { toast('插件清单不是合法 JSON', 'err'); finish(); return; }
+            api('/api/plugins/import', { method: 'POST', body: { manifest: man } }).then(function (rr) {
+              toast(rr.ok ? '插件已导入' : ('插件导入失败：' + ((rr.data && rr.data.error) || rr.status)), rr.ok ? 'ok' : 'err');
+              finish();
+            });
+          };
+          rd.readAsText(file);
+          return;
         }
         enterApp();
-        toast(setup ? '管理员已创建' : '已登录');
+        toast(setup ? '管理员已创建' : '已登录', 'ok');
         return;
       }
       var msg = (r.data && (r.data.error || r.data.code)) || ('HTTP ' + r.status);
@@ -414,7 +553,7 @@
     $all('.view').forEach(function (el) {
       var on = el.id === 'view-' + v;
       el.hidden = !on;
-      if (on && prefs().motion) {
+      if (on && prefs().motionLevel !== 'off') {
         el.classList.remove('is-enter');
         void el.offsetWidth;
         el.classList.add('is-enter');
@@ -592,10 +731,11 @@
           '<div class="panel"><div class="panel-head"><h2>防线</h2><span class="more">' + (S.security ? esc(S.security.platform) : '') + '</span></div>' +
             '<ul class="mini">' + (S.devices.length ? S.devices.slice(0, 6).map(function (d) {
               return '<li><i class="' + (d.online ? '' : 'warn') + '"></i><div><b>' + esc(d.name) + '</b><small>' + esc(devStateText(d)) + '</small></div></li>';
-            }).join('') : '<li><i class="warn"></i><div><b>还没有设备</b><small>去设备页添加</small></div></li>') + '</ul></div>' +
+            }).join('') : '<li><i></i><div><b>还没有设备</b><small>去设备页添加</small></div></li>') + '</ul></div>' +
           '<div class="panel"><div class="panel-head"><h2>后台</h2><span class="more">' + esc((S.health && S.health.version) || '') + '</span></div>' +
             '<div class="kv-row"><span>地址</span><b>' + esc(apiBase || location.origin) + '</b></div>' +
-            '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username + ' · ' + S.me.role : '—') + '</b></div>' +
+            '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username : '—') + '</b></div>' +
+            '<div class="kv-row"><span>角色</span><b>' + esc(S.me ? roleName(S.me.role) : '—') + '</b></div>' +
             '<div class="kv-row"><span>局域网</span><b>' + (S.health && S.health.lan ? '已开' : '仅本机') + '</b></div></div>' +
         '</div>' +
       '</div>';
@@ -699,7 +839,11 @@
           '<div class="dev-foot"><span class="dev-sub">' + esc(d.id) + '</span><div class="dev-actions">' + actions + '</div></div>' +
         '</article>';
       }).join('') + '</div>'
-        : '<div class="panel"><div class="tl-empty">这个筛选下没有设备。' + (devFilter === 'all' ? '先加一台虚拟设备试命令。' : '换个类型看看。') + '</div></div>') +
+        : '<div class="panel"><div class="empty-state"><div class="empty-ic">' + icon('chip', 30) + '</div>' +
+            '<b>' + (devFilter === 'all' ? '还没有设备' : '这个类型下没有设备') + '</b>' +
+            '<p>' + (devFilter === 'all' ? '加一台，或扫描局域网里能控制的设备。' : '换个类型，或先加一台。') + '</p>' +
+            '<div class="empty-acts"><button class="btn btn--primary" data-act="add-device">加一台</button>' +
+            '<button class="btn" data-act="discover">发现设备</button></div></div></div>') +
       (S.discovered.length ? '<section class="panel"><div class="panel-head"><h2>发现到</h2><span class="more">' + S.discovered.length + ' 个</span></div>' +
         S.discovered.map(function (x, i) {
           return '<div class="adapter"><b>' + esc(x.name || x.id || '未命名') + '</b><span class="badge">' + esc(x.protocol || '') + '</span>' +
@@ -732,7 +876,7 @@
   function renderFiles() {
     var el = $('#view-files');
     var crumbs = fsPath.split('/').filter(Boolean);
-    var trail = '<button class="cmd" data-fs-enter="/">/</button>';
+    var trail = '<button class="cmd" data-fs-enter="/" aria-label="回到根目录" title="根目录">' + icon('home', 13) + '根</button>';
     var acc = '';
     crumbs.forEach(function (c) {
       acc += '/' + c;
@@ -743,7 +887,7 @@
     else if (fsSort === 'time') entries.sort(function (a, b) { return String(b.mtime || '').localeCompare(String(a.mtime || '')); });
     el.innerHTML =
       '<div class="view-head"><div><h1>文件</h1><p>后台的文件目录，读写都受 ACL 管。删目录不会删，只删文件。</p></div>' +
-        '<div class="view-actions"><button class="btn" data-act="fs-up">' + icon('back', 16) + '上一级</button>' +
+        '<div class="view-actions"><button class="btn" data-act="fs-up"' + (fsPath === '/' ? ' disabled aria-disabled="true"' : '') + '>' + icon('back', 16) + '上一级</button>' +
         '<button class="btn" data-act="fs-new">' + icon('plus', 16) + '新建</button>' +
         '<button class="btn" data-act="fs-upload">' + icon('upload', 16) + '上传</button>' +
         '<button class="btn btn--primary" data-act="fs-refresh">' + icon('refresh', 16) + '刷新</button></div></div>' +
@@ -762,7 +906,10 @@
               ? '<button class="btn btn--sm" data-fs-enter="' + esc(full) + '">打开</button>'
               : '<button class="btn btn--sm" data-fs-view="' + esc(full) + '">查看</button>' +
                 '<button class="btn btn--sm" data-fs-del="' + esc(full) + '">删除</button>') + '</div></div>';
-        }).join('') : '<div class="fs-row"><div class="tl-empty">这个目录是空的。用「新建」写第一个文件。</div></div>') +
+        }).join('') : '<div class="fs-row"><div class="empty-state"><div class="empty-ic">' + icon('folder', 30) + '</div>' +
+          '<b>这个目录是空的</b><p>写第一个文件，或从本机上传。</p>' +
+          '<div class="empty-acts"><button class="btn btn--primary" data-act="fs-new">新建文件</button>' +
+          '<button class="btn" data-act="fs-upload">上传</button></div></div></div>') +
       '</div>' +
       (fsPreview ? '<section class="panel"><div class="panel-head"><h2>' + esc(fsPreview.path) + '</h2><span class="more">' + esc(String(fsPreview.content || '').length) + ' 字</span></div>' +
         '<pre style="margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.6 var(--mono);color:var(--ink);max-height:420px;overflow:auto">' + esc((fsPreview.content || '').slice(0, 20000)) + '</pre></section>' : '') +
@@ -794,7 +941,7 @@
         '<section class="panel-block"><h2>这台机器</h2><div class="kv-row"><span>平台</span><b>' + esc(sec.platform || '—') + '</b></div>' +
           '<div class="kv-row"><span>版本</span><b>' + esc((S.health && S.health.version) || '—') + '</b></div>' +
           '<div class="kv-row"><span>仅本机</span><b>' + (S.health && S.health.lan ? '否（局域网开）' : '是') + '</b></div>' +
-          '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username + ' · ' + S.me.role : '—') + '</b></div></section>' +
+          '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username : '—') + '</b></div></section>' +
       '</div>' +
       '<section class="panel"><div class="panel-head"><h2>目录访问控制（ACL）</h2><span class="more">' + (S.acl ? S.acl.length + ' 条' : '读取中') + '</span></div>' +
         '<p class="sys-note">写 ACL 要 root key（设置里填），普通用户按这里放行。</p>' +
@@ -946,6 +1093,7 @@
       else if (r.ok) cmdProbe = 'on';
       else cmdProbe = 'err';
       if (el2) el2.textContent = cmdProbe === 'on' ? '在线' : cmdProbe === 'off' ? '命令服务未启动' : ('异常 HTTP ' + r.status);
+      if (S.view === 'system') renderSystem();
     });
   }
 
@@ -983,7 +1131,8 @@
       '<div class="view-head"><div><h1>系统</h1><p>' + CMDS.reduce(function (n, g) { return n + g[1].length; }, 0) + ' 条命令的入口，全部走 <code>/api/cmd</code>。命令服务没起时会明确报错，不会伪造状态。</p></div>' +
         '<div class="view-actions"><button class="btn" data-sys="system.status">' + icon('refresh', 16) + '系统状态</button>' +
         '<button class="btn btn--primary" data-sys="core.health">' + icon('check', 16) + '健康检查</button></div></div>' +
-      '<div class="cards"><section class="panel-block"><h2>常用</h2><p>先跑这两个看这台机器醒没醒。</p>' +
+      (cmdProbe === 'off' ? '<div class="banner" role="status"><b>命令服务未启动</b><span>系统命令要核心进程在跑；先启动 lingos，再点重试。</span><button class="btn btn--sm" data-act="probe-cmd">重试</button></div>' : '') +
+      '<div class="cards"><section class="panel-block"><h2>常用</h2><p>先跑这几条看这台机器醒没醒。</p>' +
         '<div class="cmds" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">' +
         ['core.status', 'system.status', 'health.trend', 'snapshot.list', 'repair.run'].map(function (c) {
           return '<button class="cmd' + (sysDanger(c) ? ' danger' : '') + '" data-sys="' + c + '">' + c + '</button>';
@@ -1013,20 +1162,33 @@
     ['account', '账号与安全', '用户、Token、root key、退出'],
     ['backup', '备份与恢复', '导出整机数据，或从备份恢复'],
     ['kernel', '内核设置', 'C 内核 61 项设置（options.json）'],
+    ['plugins', '插件', '查看已装插件，导入插件清单'],
     ['about', '关于', '版本、平台、后台地址']
   ];
 
+  var MOTION_LEVELS = [
+    ['off', '关闭', '所有动画立即完成，功能不变'],
+    ['lite', '精简', '只保留按压/开关等 100ms 微反馈'],
+    ['std', '标准', '进入/退出按统一时长（默认）'],
+    ['rich', '丰富', '增加 stagger、模态缩放、终端展开']
+  ];
+
   function prefs() {
-    var d = { motion: true, cards: true, compact: false };
+    var d = { motionLevel: 'std', cards: true, compact: false };
     try {
-      var raw = JSON.parse(localStorage.getItem('lo-prefs') || '{}');
-      return Object.assign(d, raw || {});
+      var raw = JSON.parse(localStorage.getItem('lo-prefs') || '{}') || {};
+      if (raw.motion === false) raw.motionLevel = 'off';
+      if (raw.motion === true && !raw.motionLevel) raw.motionLevel = 'std';
+      return Object.assign(d, raw);
     } catch (e) { return d; }
   }
 
   function applyPrefs() {
     var p = prefs();
-    document.body.classList.toggle('pref-no-motion', !p.motion);
+    ['off', 'lite', 'std', 'rich'].forEach(function (lvl) {
+      document.body.classList.toggle('motion-' + lvl, (p.motionLevel || 'std') === lvl);
+    });
+    document.body.classList.toggle('pref-no-motion', p.motionLevel === 'off');
     document.body.classList.toggle('pref-no-cards', !p.cards);
     document.body.classList.toggle('pref-compact', !!p.compact);
   }
@@ -1036,7 +1198,15 @@
     localStorage.setItem('lo-prefs', JSON.stringify(p));
     applyPrefs();
     renderSettings();
-    toast('已更新偏好');
+    toast('已更新偏好', 'ok');
+  }
+
+  function setMotionLevel(level) {
+    var p = prefs(); p.motionLevel = level;
+    localStorage.setItem('lo-prefs', JSON.stringify(p));
+    applyPrefs();
+    renderSettings();
+    toast('动效强度：' + (MOTION_LEVELS.filter(function (x) { return x[0] === level; })[0] || ['', level])[1], 'ok');
   }
 
   function setSection(id) {
@@ -1044,7 +1214,7 @@
     var board2 = $('#board'); if (board2) board2.scrollTop = 0;
     renderSettings();
     var main = $('.set-main');
-    if (main && document.body.dataset.layout === 'portrait') main.scrollIntoView({ behavior: prefs().motion ? 'smooth' : 'auto', block: 'start' });
+    if (main && document.body.dataset.layout === 'portrait') main.scrollIntoView({ behavior: prefs().motionLevel !== 'off' ? 'smooth' : 'auto', block: 'start' });
   }
 
   function settingsNavHTML(active) {
@@ -1064,8 +1234,11 @@
     if (sec === 'appearance') {
       body =
         '<section class="panel-block"><h2>外观</h2>' +
-          '<div class="pref-row"><span><b>界面动效</b><small>页面切换、卡片入场、过渡动画</small></span>' +
-            '<button class="switch' + (prefs().motion ? ' is-on' : '') + '" data-pref="motion" role="switch" aria-label="界面动效" aria-checked="' + (prefs().motion ? 'true' : 'false') + '"><i></i></button></div>' +
+          '<div class="pref-row"><span><b>动效强度</b><small>关闭 / 精简 / 标准 / 丰富，持续有效</small></span>' +
+            '<div class="seg" role="radiogroup" aria-label="动效强度">' + MOTION_LEVELS.map(function (m) {
+              var on = prefs().motionLevel === m[0];
+              return '<button class="seg-btn' + (on ? ' is-on' : '') + '" data-motion="' + m[0] + '" role="radio" aria-checked="' + (on ? 'true' : 'false') + '" title="' + esc(m[2]) + '">' + esc(m[1]) + '</button>';
+            }).join('') + '</div></div>' +
           '<div class="pref-row"><span><b>场景卡片</b><small>设备页显示夜间 / 离家 / 回家快捷卡</small></span>' +
             '<button class="switch' + (prefs().cards ? ' is-on' : '') + '" data-pref="cards" role="switch" aria-label="场景卡片" aria-checked="' + (prefs().cards ? 'true' : 'false') + '"><i></i></button></div>' +
           '<div class="pref-row"><span><b>紧凑排版</b><small>缩小间距，一屏放更多内容</small></span>' +
@@ -1073,16 +1246,19 @@
           '<div class="pref-row"><span><b>深浅色</b><small>当前：' + (document.documentElement.dataset.theme === 'night' ? '夜间' : '日间') + '</small></span>' +
             '<button class="btn btn--sm" data-act="theme">切到' + (document.documentElement.dataset.theme === 'night' ? '日间' : '夜间') + '</button></div>' +
           '<div class="pref-row"><span><b>摄像头预览</b><small>没画面时首页不会留空白</small></span>' +
-            '<button class="btn btn--sm" data-act="toggle-preview">' + (previewOn() ? '已开' : '默认关') + '</button></div>' +
+            '<button class="btn btn--sm" data-act="toggle-preview">' + (previewOn() ? '关闭预览' : '开启预览') + '</button></div>' +
         '</section>';
     } else if (sec === 'conn') {
       body =
+        '<section class="panel-block"><h2>设备</h2>' +
+          '<label class="field" style="margin-top:10px"><span>设备名</span><input id="setDisplayName" value="' + esc((S.settings && S.settings.display_name) || '') + '" placeholder="例如：客厅那台"></label>' +
+          '<label class="field"><span>语言</span><select id="setLanguage"><option value="">不设置</option><option value="zh"' + ((S.settings && S.settings.language) === 'zh' ? ' selected' : '') + '>中文</option><option value="en"' + ((S.settings && S.settings.language) === 'en' ? ' selected' : '') + '>English</option></select></label></section>' +
         '<section class="panel-block"><h2>后台</h2><p>默认同源。换地址后整个前端都走这个后台。</p>' +
           '<label class="field" style="margin-top:12px"><span>地址（留空 = 同源）</span><input id="setApi" value="' + esc(apiBase) + '" placeholder="http://127.0.0.1:8080"></label>' +
           '<button class="btn btn--primary" data-act="save-api">保存并重连</button>' +
           '<div class="kv-row" style="margin-top:12px"><span>当前</span><b>' + esc(apiBase || location.origin) + '</b></div>' +
           '<div class="kv-row"><span>健康</span><b>' + (S.health ? 'ok · ' + esc(S.health.version) : '—') + '</b></div>' +
-          '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username + ' · ' + S.me.role : '—') + '</b></div></section>' +
+          '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username : '—') + '</b></div></section>' +
         '<section class="panel-block"><h2>外接设备</h2><p>填了才会连；没填的适配器显示「未配」。</p>' +
           '<label class="field" style="margin-top:12px"><span>Home Assistant 地址</span><input id="setHaUrl" value="' + esc(s.ha_url || '') + '" placeholder="http://homeassistant.local:8123"></label>' +
           '<label class="field"><span>HA Token</span><input id="setHaToken" type="password" value="' + esc(s.ha_token || '') + '"></label>' +
@@ -1139,7 +1315,7 @@
       body =
         '<section class="panel-block"><h2>当前账号</h2>' +
           '<div class="kv-row"><span>用户</span><b>' + esc(S.me ? S.me.username : '—') + '</b></div>' +
-          '<div class="kv-row"><span>角色</span><b>' + esc(S.me ? S.me.role : '—') + '</b></div>' +
+          '<div class="kv-row"><span>角色</span><b>' + esc(S.me ? roleName(S.me.role) : '—') + '</b></div>' +
           '<div class="row" style="margin-top:12px"><span>用户与 ACL</span><button class="btn btn--sm" data-nav="security">去安全页</button></div></section>' +
         '<section class="panel-block"><h2>App Token</h2><p>App 用 Bearer 走同一套接口，只显示一次。</p>' +
           '<div class="row" style="margin-top:10px"><span>生成</span><button class="btn btn--sm" data-act="new-token">生成 Token</button></div>' +
@@ -1159,12 +1335,17 @@
         '<div id="kernelList">' + kernelHTML() + '</div></section>';
     } else if (sec === 'about') {
       body =
-        '<section class="panel-block"><h2>关于</h2>' +
-          '<div class="kv-row"><span>版本</span><b>Web ' + WEB_VERSION + ' · 后台 ' + esc(S.health ? S.health.version : '—') + '</b></div>' +
+        '<section class="panel-block">' +
+          '<div class="kv-row"><span>设备名</span><b>' + esc((S.settings && S.settings.display_name) || '未命名') + '</b></div>' +
+          '<div class="kv-row"><span>版本</span><b><button class="linkish" data-act="version-tap">Web ' + WEB_VERSION + ' · 后台 ' + esc(S.health ? S.health.version : '—') + '</button></b></div>' +
           '<div class="kv-row"><span>后台</span><b>' + esc(apiBase || location.origin) + '</b></div>' +
           '<div class="kv-row"><span>平台</span><b>' + esc(S.health ? S.health.platform : '—') + '</b></div>' +
           '<div class="kv-row"><span>局域网</span><b>' + (S.health && S.health.lan ? '开' : '仅本机') + '</b></div>' +
-          '<div class="kv-row"><span>登录</span><b>' + esc(S.me ? S.me.username + ' · ' + S.me.role : '—') + '</b></div></section>';
+          '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username : '—') + '</b></div>' +
+          '<div class="kv-row"><span>角色</span><b>' + esc(S.me ? roleName(S.me.role) : '—') + '</b></div></section>' +
+          (S.devMode ? devPanelHTML() : '');
+    } else if (sec === 'plugins') {
+      body = pluginsHTML();
     }
     el.innerHTML =
       '<div class="view-head"><div><h1>' + esc(sec ? (SET_SECTIONS.filter(function (x) { return x[0] === sec; })[0] || ['', '设置'])[1] : '设置') + '</h1>' +
@@ -1179,6 +1360,7 @@
     if (!settingsLoaded) { settingsLoaded = true; loadSettings(); }
     if (S.aiProviders === null) loadAiProviders();
     if (S.cameras === null) loadCameras();
+    if (sec === 'plugins' && S.plugins === null) loadPlugins();
     if (sec === 'kernel') {
       if (S.options === null) loadOptions();
       var flt = $('#optFilter');
@@ -1223,6 +1405,102 @@
           '</label>';
       }).join('') + '</div>';
     }).join('') + (o.path ? '<p class="muted" style="margin-top:10px">写入：' + esc(o.path) + '</p>' : '');
+  }
+
+  function pluginsHTML() {
+    if (S.plugins === null) return '<div class="skel"><i></i><i></i></div>';
+    var list = S.plugins.length ? S.plugins.map(function (p) {
+      return '<div class="adapter"><b>' + esc(p.name || p.id) + '</b><span class="badge">' + esc(p.version || '—') + '</span>' +
+        '<span class="muted">' + esc(p.id) + '</span><span class="badge ' + (p.enabled ? 'ok' : 'no') + '" style="margin-left:auto">' + (p.enabled ? '已启用' : '停用') + '</span></div>';
+    }).join('') : '<div class="tl-empty">还没有插件。选一个 JSON 清单导入。</div>';
+    return '<section class="panel-block"><h2>已装插件</h2><div id="pluginList">' + list + '</div>' +
+      '<div style="margin-top:12px"><span class="muted" style="font-size:12px">导入插件清单（JSON）</span><br>' +
+      '<label class="filebtn">选择文件<input id="pluginFile" type="file" accept="application/json" hidden></label>' +
+      '<span class="muted" id="pluginFileName" style="margin-left:8px;font-size:12px"></span></div>' +
+      '<button class="btn btn--primary" id="pluginImportBtn" data-act="plugin-import" disabled>导入</button>' +
+      '<p class="muted" style="margin-top:8px">清单字段：id（小写字母/数字/._-）、name、version、entry（可选）。</p></section>';
+  }
+
+  function loadPlugins() {
+    api('/api/plugins').then(function (r) {
+      S.plugins = (r.ok && r.data && r.data.plugins) ? r.data.plugins : [];
+      if (S.view === 'settings') renderSettings();
+    });
+  }
+
+  /** 测试工作台（GUI）：版本号连点 3 次进入。 */
+  function devPanelHTML() {
+    return '<section class="panel-block dev-panel"><h2>测试工作台</h2>' +
+      '<p>只给测试用：跑真实接口、看返回；不伪造数据。</p>' +
+      '<div class="dev-actions">' +
+      '<button class="btn btn--sm" data-dev="health">健康检查</button>' +
+      '<button class="btn btn--sm" data-dev="devices">设备</button>' +
+      '<button class="btn btn--sm" data-dev="options">内核设置</button>' +
+      '<button class="btn btn--sm" data-dev="plugins">插件</button>' +
+      '<button class="btn btn--sm" data-dev="chat">AI 后端</button>' +
+      '<button class="btn btn--primary" data-act="open-term">打开终端（Ctrl+A）</button>' +
+      '</div><pre class="cmd-out" id="devOut">选一项跑跑看。</pre></section>';
+  }
+
+  function devRun(what) {
+    var out = document.getElementById('devOut');
+    if (out) out.textContent = '执行中…';
+    var map = {
+      health: '/api/health', devices: '/api/devices', options: '/api/options',
+      plugins: '/api/plugins', chat: '/api/ai/providers'
+    };
+    api(map[what] || '/api/health').then(function (r) {
+      if (out) out.textContent = JSON.stringify({ status: r.status, data: r.data }, null, 2).slice(0, 4000);
+      toast((r.ok ? 'OK ' : '失败 ') + what, r.ok ? 'ok' : 'err');
+    });
+  }
+
+  /** 终端工作台：Ctrl+A 进入，Ctrl+Q 退出；进入后日志区隐藏，导航/设置仍可用。 */
+  function openTerminal() {
+    var t = $('#term');
+    if (!t) return;
+    S.termOpen = true;
+    t.hidden = false;
+    document.body.classList.add('term-open');
+    var i = $('#termInput');
+    if (i) { i.focus(); }
+    termPrint('LING OS 测试终端 · 输入 help 看命令 · Ctrl+Q 返回');
+  }
+  function closeTerminal() {
+    S.termOpen = false;
+    var t = $('#term');
+    if (t) t.hidden = true;
+    document.body.classList.remove('term-open');
+  }
+  function termPrint(text) {
+    var out = $('#termOut');
+    if (!out) return;
+    out.textContent += (out.textContent ? '\n' : '') + text;
+    out.scrollTop = out.scrollHeight;
+  }
+  function termExec(raw) {
+    var line = String(raw || '').trim();
+    if (!line) return;
+    termPrint('$ ' + line);
+    var parts = line.split(/\s+/);
+    var cmd = parts[0];
+    var arg = parts.slice(1).join(' ');
+    if (cmd === 'help') { termPrint('help · health · devices · options · plugins · cmd <name> · clear · quit'); return; }
+    if (cmd === 'clear') { var o = $('#termOut'); if (o) o.textContent = ''; return; }
+    if (cmd === 'quit') { closeTerminal(); return; }
+    if (cmd === 'cmd') {
+      if (!arg) { termPrint('用法：cmd system.status'); return; }
+      api('/api/cmd', { method: 'POST', body: { cmd: arg, args: {} }, timeout: 12000 }).then(function (r) {
+        termPrint((r.ok ? '' : '[HTTP ' + r.status + '] ') + JSON.stringify(r.data, null, 2).slice(0, 2000));
+      });
+      return;
+    }
+    var paths = { health: '/api/health', devices: '/api/devices', options: '/api/options', plugins: '/api/plugins' };
+    var path = paths[cmd] || (cmd.indexOf('ai') === 0 ? '/api/ai/providers' : '');
+    if (!path) { termPrint('未知命令：' + cmd + '（help）'); return; }
+    api(path).then(function (r) {
+      termPrint(JSON.stringify(r.data, null, 2).slice(0, 2000));
+    });
   }
 
   function loadOptions() {
@@ -1278,6 +1556,8 @@
     api('/api/settings').then(function (r) {
       if (r.ok && r.data && r.data.settings) {
         S.settings = r.data.settings;
+        var lang = S.settings.language;
+        if (lang === 'zh' || lang === 'en') document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
         if (S.view === 'settings') renderSettings();
       }
     });
@@ -1426,8 +1706,24 @@
       return;
     }
 
+    var devBtn = e.target.closest('[data-dev]');
+    if (devBtn) { devRun(devBtn.getAttribute('data-dev')); return; }
+
+    var vTap = e.target.closest('[data-act="version-tap"]');
+    if (vTap) {
+      var nowTs = Date.now();
+      if (nowTs - S.versionTapAt > 1500) S.versionTaps = 0;
+      S.versionTapAt = nowTs;
+      S.versionTaps++;
+      if (S.versionTaps >= 3) { S.versionTaps = 0; S.devMode = !S.devMode; renderSettings(); toast(S.devMode ? '测试工作台已打开' : '测试工作台已关闭', 'info'); }
+      return;
+    }
+
     var setBtn = e.target.closest('[data-set]');
     if (setBtn) { setSection(setBtn.getAttribute('data-set')); return; }
+
+    var motionBtn = e.target.closest('[data-motion]');
+    if (motionBtn) { setMotionLevel(motionBtn.getAttribute('data-motion')); return; }
 
     var prefBtn = e.target.closest('[data-pref]');
     if (prefBtn) {
@@ -1524,7 +1820,21 @@
         if (r.ok) { toast('已加用户'); nu.value = ''; np.value = ''; loadSettings(); renderSecurity(); }
         else toast('没加成：' + ((r.data && r.data.error) || r.status));
       });
-    } else if (act === 'events-all') { S.showAllEvents = true; renderHome(); } else if (act === 'ai-clear') { aiMsgs = []; saveAi(); renderAiThread(); var nn = $('#aiNotice'); if (nn) { nn.hidden = true; nn.innerHTML = ''; } }
+    } else if (act === 'open-term') { openTerminal(); return; }
+    else if (act === 'plugin-import') {
+      var f = ($('#pluginFile') || {}).files && ($('#pluginFile') || {}).files[0];
+      if (!f) { toast('先选一个插件清单 JSON', 'warn'); return; }
+      var rd = new FileReader();
+      rd.onload = function () {
+        try { var man = JSON.parse(String(rd.result || '{}')); } catch (e) { toast('不是合法 JSON', 'err'); return; }
+        api('/api/plugins/import', { method: 'POST', body: { manifest: man } }).then(function (r) {
+          toast(r.ok ? '插件已导入' : ('没导入：' + ((r.data && r.data.error) || r.status)), r.ok ? 'ok' : 'err');
+          if (r.ok) { S.plugins = null; loadPlugins(); }
+        });
+      };
+      rd.readAsText(f);
+    } else if (act === 'probe-cmd') { cmdProbe = null; renderSystem(); return; }
+    else if (act === 'events-all') { S.showAllEvents = true; renderHome(); } else if (act === 'ai-clear') { aiMsgs = []; saveAi(); renderAiThread(); var nn = $('#aiNotice'); if (nn) { nn.hidden = true; nn.innerHTML = ''; } }
     else if (act === 'ai-retry') { var last = aiMsgs.filter(function (m) { return m.who === 'user'; }).slice(-1)[0]; if (last) aiSend(last.text); }
     else if (act === 'ai-save') {
       var pid = ($('#aiPid') || {}).value || '';
@@ -1589,6 +1899,8 @@
       location.reload();
     } else if (act === 'save-conn') {
       var body = {
+        display_name: ($('#setDisplayName') || {}).value || '',
+        language: ($('#setLanguage') || {}).value || '',
         ha_url: ($('#setHaUrl') || {}).value || '',
         ha_token: ($('#setHaToken') || {}).value || '',
         mqtt_host: ($('#setMqttHost') || {}).value || '',
@@ -1714,6 +2026,14 @@
   });
 
   document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'pluginFile') {
+      var btn = document.getElementById('pluginImportBtn');
+      var name = document.getElementById('pluginFileName');
+      var f = e.target.files && e.target.files[0];
+      if (btn) btn.disabled = !f;
+      if (name) name.textContent = f ? f.name : '';
+      return;
+    }
     var cb = e.target.closest('[data-opt]');
     if (!cb) return;
     var key = cb.getAttribute('data-opt');

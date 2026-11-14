@@ -88,7 +88,7 @@ def _paint(text: str, code: str) -> str:
 def log(*a, level: str = "info") -> None:
     """统一日志：时间 · 级别 · 内容。级别决定颜色（ERROR 红底、WARN 黄、INFO 绿、DEBUG 灰）。"""
     ts = time.strftime("%H:%M:%S")
-    tag = _paint("%-5s" % level.upper(), {"info": "32", "warn": "33", "error": "97;41", "debug": "90"}.get(level, "32"))
+    tag = _paint("%-5s" % level.upper(), {"info": "30;42", "warn": "30;43", "error": "97;41", "debug": "37;100"}.get(level, "30;42"))
     print("%s %s %s" % (_paint(ts, "90"), tag, " ".join(str(x) for x in a)), flush=True)
 
 
@@ -176,9 +176,29 @@ class Store:
                 if "expires" not in cols:
                     c.execute("ALTER TABLE api_tokens ADD COLUMN expires REAL")
                     c.commit()
+            except Exception as e:
+                log("api_tokens migrate failed:", e, level="warn")
+            # 【0.14】不再播种演示设备：没有真实设备时列表就是空的（前端显示空态）。
+
+    def write_policy(self, level: str) -> None:
+        """原子写 security-policy.json（0600），避免截断后 fail-open。"""
+        cfg_dir = self.root / "system" / "config"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        fd, tname = tempfile.mkstemp(prefix=".policy-", suffix=".tmp", dir=str(cfg_dir))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"schema_version": 1, "privacy_level": level,
+                           "local_only": True, "flags": {}}, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tname, 0o600)
+            os.replace(tname, cfg_dir / "security-policy.json")
+        finally:
+            try:
+                if os.path.exists(tname):
+                    os.unlink(tname)
             except Exception:
                 pass
-            # 【0.14】不再播种演示设备：没有真实设备时列表就是空的（前端显示空态）。
 
     # ---- C 内核设置（options.json，61 项）----
     def options_file(self) -> Path:
@@ -266,10 +286,17 @@ class Store:
         h = hashlib.sha256(raw.encode()).hexdigest()
         with self.lock:
             exp = (now() + ttl) if ttl else None
-            self.conn.execute(
-                "INSERT INTO api_tokens(token_hash,user_id,name,created,expires) VALUES(?,?,?,?,?)",
-                (h, user_id, (name or "app")[:64], now(), exp),
-            )
+            try:
+                self.conn.execute(
+                    "INSERT INTO api_tokens(token_hash,user_id,name,created,expires) VALUES(?,?,?,?,?)",
+                    (h, user_id, (name or "app")[:64], now(), exp),
+                )
+            except sqlite3.OperationalError:
+                # 老库迁移失败时降级（无 expires 列），保证仍能签发
+                self.conn.execute(
+                    "INSERT INTO api_tokens(token_hash,user_id,name,created) VALUES(?,?,?,?)",
+                    (h, user_id, (name or "app")[:64], now()),
+                )
             self.conn.commit()
         # Mirror into the C-side token store so the same token works for
         # C HTTP 18080 and WebSocket 2939 (strict JSON format).
@@ -288,7 +315,9 @@ class Store:
             arr.append({"token": raw, "name": (name or "app")[:64],
                         "expires_at": (now() + ttl) if ttl else (now() + SESSION_TTL),
                         "revoked": 0, "hash": h})
-            arr = arr[-128:]
+            if len(arr) > 128:
+                log("token mirror truncated %d -> 128" % len(arr), level="warn")
+                arr = arr[-128:]
             tmp = tf.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(arr, ensure_ascii=False), encoding="utf-8")
             os.chmod(tmp, 0o600)
@@ -302,10 +331,16 @@ class Store:
             return None
         h = hashlib.sha256(raw.encode()).hexdigest()
         with self.lock:
-            r = self.conn.execute(
-                "SELECT u.*, t.expires AS token_expires FROM api_tokens t JOIN users u ON u.id=t.user_id "
-                "WHERE t.token_hash=? AND t.revoked=0", (h,)
-            ).fetchone()
+            try:
+                r = self.conn.execute(
+                    "SELECT u.*, t.expires AS token_expires FROM api_tokens t JOIN users u ON u.id=t.user_id "
+                    "WHERE t.token_hash=? AND t.revoked=0", (h,)
+                ).fetchone()
+            except sqlite3.OperationalError:
+                r = self.conn.execute(
+                    "SELECT u.*, NULL AS token_expires FROM api_tokens t JOIN users u ON u.id=t.user_id "
+                    "WHERE t.token_hash=? AND t.revoked=0", (h,)
+                ).fetchone()
         if r is not None and r["token_expires"] is not None and float(r["token_expires"]) < now():
             return None
         return r
@@ -803,6 +838,45 @@ class Handler(BaseHTTPRequestHandler):
             cams = [d for d in self.store.devices() if d.get("type") == "camera"]
             self._json(200, {"cameras": cams})
             return
+        if path == "/api/tokens":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            with self.store.lock:
+                try:
+                    rows = self.store.conn.execute(
+                        "SELECT name, created, expires, revoked FROM api_tokens ORDER BY created DESC LIMIT 200").fetchall()
+                except sqlite3.OperationalError:
+                    rows = self.store.conn.execute(
+                        "SELECT name, created, NULL AS expires, revoked FROM api_tokens ORDER BY created DESC LIMIT 200").fetchall()
+            self._json(200, {"tokens": [{"name": r["name"], "created": r["created"],
+                                         "expires": r["expires"], "revoked": bool(r["revoked"])} for r in rows]})
+            return
+        if path == "/api/plugins":
+            usr = self._require()
+            if not usr:
+                return
+            pdir = self.store.root / "plugins"
+            items = []
+            try:
+                if pdir.is_dir():
+                    for f in sorted(pdir.glob("*.json")):
+                        try:
+                            d = json.loads(f.read_text(encoding="utf-8"))
+                            items.append({"id": str(d.get("id") or f.stem),
+                                          "name": str(d.get("name") or f.stem),
+                                          "version": str(d.get("version") or ""),
+                                          "entry": str(d.get("entry") or ""),
+                                          "enabled": bool(d.get("enabled", True))})
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+            self._json(200, {"plugins": items})
+            return
         if path == "/api/options":
             usr = self._require()
             if not usr:
@@ -838,7 +912,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             keys = ("ha_url", "ha_token", "mqtt_host", "mqtt_port", "mqtt_user", "mqtt_pass", "mqtt_prefix", "miio_devices",
                     "notify_webhook", "notify_email_to", "smtp_host", "smtp_port", "smtp_user", "smtp_from",
-                    "sms_provider", "sms_key")
+                    "sms_provider", "sms_key", "display_name", "language")
             self._json(200, {"settings": {k: self.store.setting_get(k, "") for k in keys}})
             return
         if path == "/api/events":
@@ -1006,6 +1080,17 @@ class Handler(BaseHTTPRequestHandler):
             uid = self.store.create_user(username, pw, "admin")
             root_key = secrets.token_urlsafe(24)
             self.store.setting_set("root_key_hash", hashlib.sha256(root_key.encode()).hexdigest())
+            # 首次配置的可选项（全部可跳过）
+            display_name = str(body.get("display_name") or "").strip()[:64]
+            language = str(body.get("language") or "").strip()
+            privacy = str(body.get("privacy_level") or "").strip().upper()
+            if display_name:
+                self.store.setting_set("display_name", display_name)
+            if language in ("zh", "en"):
+                self.store.setting_set("language", language)
+            if privacy in ("L0", "L1", "L2", "L3", "L4"):
+                self.store.write_policy(privacy)
+                self.store.event("security", f"level={privacy}")
             token = self.store.new_session(uid, self.client_address[0])
             self.store.event("user", f"created admin {username}")
             self._json(200, {"ok": True, "username": username, "root_key": root_key}, cookie=token)
@@ -1020,7 +1105,8 @@ class Handler(BaseHTTPRequestHandler):
             ip = self.client_address[0] if self.client_address else "?"
             now_ts = time.time()
             fails = [t for t in Handler.login_fails.get(ip, []) if now_ts - t < 60]
-            if len(fails) >= 10:
+            limit = 30 if self._local() else 10
+            if len(fails) >= limit:
                 self._json(429, {"error": "too many attempts"})
                 return
             usr = self.store.verify_user(username, pw)
@@ -1186,10 +1272,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             allowed = ("ha_url", "ha_token", "mqtt_host", "mqtt_port", "mqtt_user", "mqtt_pass", "mqtt_prefix", "miio_devices",
                        "notify_webhook", "notify_email_to", "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from",
-                       "sms_provider", "sms_key")
+                       "sms_provider", "sms_key", "display_name", "language")
             for k, v in (body or {}).items():
-                if k in allowed:
-                    self.store.setting_set(k, str(v))
+                if k not in allowed:
+                    continue
+                if k == "language" and str(v) not in ("", "zh", "en"):
+                    self._json(400, {"error": "language 只支持 zh/en"})
+                    return
+                if k == "display_name" and len(str(v)) > 64:
+                    self._json(400, {"error": "设备名最长 64 字"})
+                    return
+                self.store.setting_set(k, str(v))
             self.store.event("settings", "updated adapters")
             self._json(200, {"ok": True})
             return
@@ -1242,13 +1335,7 @@ class Handler(BaseHTTPRequestHandler):
             if level not in LEVELS:
                 self._json(400, {"error": "invalid level"})
                 return
-            sp = self.store.root / "system" / "config" / "security-policy.json"
-            sp.parent.mkdir(parents=True, exist_ok=True)
-            sp.write_text(json.dumps({"schema_version": 1, "privacy_level": level, "local_only": True, "flags": {}}, ensure_ascii=False), encoding="utf-8")
-            try:
-                os.chmod(sp, 0o644)
-            except OSError:
-                pass
+            self.store.write_policy(level)
             self.store.event("security", f"level={level}")
             self._json(200, {"ok": True, "level": level})
             return
@@ -1350,9 +1437,57 @@ class Handler(BaseHTTPRequestHandler):
             allowed = ("notify_webhook", "notify_email_to", "smtp_host", "smtp_port", "smtp_user", "smtp_from",
                        "sms_provider", "sms_key")
             for k, v in (body or {}).items():
-                if k in allowed:
-                    self.store.setting_set(k, str(v))
+                if k not in allowed:
+                    continue
+                if k == "language" and str(v) not in ("", "zh", "en"):
+                    self._json(400, {"error": "language 只支持 zh/en"})
+                    return
+                if k == "display_name" and len(str(v)) > 64:
+                    self._json(400, {"error": "设备名最长 64 字"})
+                    return
+                self.store.setting_set(k, str(v))
             self._json(200, {"ok": True})
+            return
+        if path == "/api/plugins/import":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            man = body.get("manifest") if isinstance(body.get("manifest"), dict) else body
+            pid = str(man.get("id") or "").strip()
+            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", pid):
+                self._json(400, {"error": "插件 id 只能是小写字母/数字/._-，1-64 位"})
+                return
+            entry = str(man.get("entry") or "").strip()[:200]
+            if entry and (entry.startswith("/") or ".." in entry.split("/")
+                          or not re.fullmatch(r"[A-Za-z0-9_./-]{1,200}", entry)):
+                self._json(400, {"error": "entry 只能是相对路径，且不能含 .."})
+                return
+            pdir = self.store.root / "plugins"
+            pdir.mkdir(parents=True, exist_ok=True)
+            payload = {"id": pid, "name": str(man.get("name") or pid)[:64],
+                       "version": str(man.get("version") or "")[:32],
+                       "description": str(man.get("description") or "")[:300],
+                       "entry": entry,
+                       "enabled": man.get("enabled") if isinstance(man.get("enabled"), bool) else True}
+            fd, tname = tempfile.mkstemp(prefix=".plugin-" + pid + "-", suffix=".tmp", dir=str(pdir))
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=1)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.chmod(tname, 0o600)
+                os.replace(tname, pdir / (pid + ".json"))
+            finally:
+                try:
+                    if os.path.exists(tname):
+                        os.unlink(tname)
+                except Exception:
+                    pass
+            self.store.event("settings", "plugin imported: " + pid)
+            self._json(200, {"ok": True, "plugin": payload})
             return
         if path == "/api/options":
             usr = self._require()
@@ -1403,13 +1538,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "changed": changed, "path": saved["path"]})
             return
         if path == "/api/token/refresh":
-            # 用现有凭据换一枚新设备 token（旧的若来自 Bearer 则吊销）
-            usr = self._user()
-            if not usr:
-                self._json(401, {"error": "unauthorized"})
-                return
+            # 只给设备 Bearer token 续期；会话 cookie 不能自签长期 token
             auth = self.headers.get("Authorization", "")
             old = auth[7:].strip() if auth.startswith("Bearer ") else ""
+            usr = self.store.user_by_api_token(old) if old else None
+            if not usr:
+                self._json(401, {"error": "bearer token required"})
+                return
             new_tok = self.store.create_api_token(usr["id"], "refreshed:" + usr["username"], ttl=PAIR_TTL)
             if old:
                 h = hashlib.sha256(old.encode()).hexdigest()

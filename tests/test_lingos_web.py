@@ -58,9 +58,20 @@ class WebTest(unittest.TestCase):
         self.assertTrue(json.loads(body)["ok"])
 
     def test_02_setup_and_unauth(self):
-        st, body = self.req("POST", "/api/setup", {"username": "admin", "password": "testpass123"})
+        st, body = self.req("POST", "/api/setup", {"username": "admin", "password": "testpass123",
+                                                   "display_name": "测试家", "language": "zh",
+                                                   "privacy_level": "L2"})
         self.assertEqual(st, 200)
         WebTest.root_key = json.loads(body).get("root_key", "")
+        self.assertEqual(self.store.setting_get("display_name", ""), "测试家")
+        self.assertEqual(self.store.setting_get("language", ""), "zh")
+        policy = Path(self.tmp) / "system" / "config" / "security-policy.json"
+        self.assertTrue(policy.is_file())
+        self.assertEqual(json.loads(policy.read_text(encoding="utf-8"))["privacy_level"], "L2")
+        self.assertEqual(oct(policy.stat().st_mode & 0o777), "0o600")
+        st, sb = self.req("GET", "/api/settings")
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(sb)["settings"].get("display_name"), "测试家")
         # new connection without cookie must be 401
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         conn.request("GET", "/api/devices")
@@ -318,6 +329,54 @@ class WebTest(unittest.TestCase):
         self.assertEqual(st, 401)
         st, _ = self.req("GET", "/api/users", extra_headers={"Authorization": "Bearer " + new})
         self.assertEqual(st, 200)
+
+
+    def test_18_plugin_import(self):
+        """插件清单导入：admin、id/entry 校验、列表可见。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        st, _ = self.req("POST", "/api/plugins/import", {"manifest": {"id": "Bad ID!", "name": "x"}})
+        self.assertEqual(st, 400)
+        st, _ = self.req("POST", "/api/plugins/import", {"manifest": {"id": "demo.one", "name": "演示", "version": "0.1.0", "entry": "../../etc/passwd"}})
+        self.assertEqual(st, 400)
+        st, body = self.req("POST", "/api/plugins/import", {"manifest": {"id": "demo.one", "name": "演示", "version": "0.1.0", "entry": "plugins/demo.py"}})
+        self.assertEqual(st, 200)
+        st, body = self.req("GET", "/api/plugins")
+        self.assertEqual(st, 200)
+        ids = [p["id"] for p in json.loads(body)["plugins"]]
+        self.assertIn("demo.one", ids)
+        # 非 admin 导入 403
+        if self.store.verify_user("carol", "carolpass123") is None:
+            self.store.create_user("carol", "carolpass123", "user")
+        admin_cookie = WebTest.cookie
+        self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
+        st, _ = self.req("POST", "/api/plugins/import", {"manifest": {"id": "carol.one", "name": "x"}})
+        self.assertEqual(st, 403)
+        WebTest.cookie = admin_cookie
+
+
+    def test_19_refresh_and_token_list(self):
+        """refresh 只认 Bearer；token 列表仅 admin。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        st, _ = self.req("POST", "/api/token/refresh", {})
+        self.assertEqual(st, 401)  # cookie 不能自签
+        st, body = self.req("POST", "/api/token", {"name": "dev-refresh"})
+        self.assertEqual(st, 200)
+        tok = json.loads(body)["token"]
+        WebTest.cookie = ""
+        st, body = self.req("POST", "/api/token/refresh", {}, extra_headers={"Authorization": "Bearer " + tok})
+        self.assertEqual(st, 200)
+        self.assertNotEqual(json.loads(body)["token"], tok)
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        st, body = self.req("GET", "/api/tokens")
+        self.assertEqual(st, 200)
+        self.assertTrue(any(t["name"] for t in json.loads(body)["tokens"]))
+        if self.store.verify_user("carol", "carolpass123") is None:
+            self.store.create_user("carol", "carolpass123", "user")
+        admin_cookie = WebTest.cookie
+        self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
+        st, _ = self.req("GET", "/api/tokens")
+        self.assertEqual(st, 403)
+        WebTest.cookie = admin_cookie
 
 
 if __name__ == "__main__":

@@ -73,9 +73,16 @@
     <label class="field"><span>用户名</span><input id="authUser" autocomplete="username" value="admin" required></label>
     <label class="field"><span>密码</span><input id="authPass" type="password" autocomplete="current-password" minlength="8" placeholder="至少 8 位" required></label>
     <label class="field" id="pairField" hidden><span>配对码</span><input id="authPair" inputmode="numeric" placeholder="局域网首次访问要这 6 位"></label>
+    <details class="auth-advanced" id="setupAdvanced" hidden>
+      <summary>高级配置（可跳过）</summary>
+      <label class="field"><span>设备名（可选）</span><input id="setupName" placeholder="例如：客厅那台"></label>
+      <label class="field"><span>语言（可选）</span><select id="setupLang"><option value="">跳过</option><option value="zh">中文</option><option value="en">English</option></select></label>
+      <label class="field"><span>隐私等级（可选）</span><select id="setupPriv"><option value="">跳过</option><option value="L1">L1 常规</option><option value="L2">L2 限制</option><option value="L3">L3 严格</option><option value="L4">L4 MAX</option></select></label>
+      <div class="field"><span>导入插件清单（可选，JSON）</span><label class="filebtn">选择插件清单<input id="setupPlugin" type="file" accept="application/json" hidden></label></div>
+    </details>
     <div class="auth-error" id="authError" role="status" aria-live="polite"></div>
     <button class="btn btn--primary auth-submit" id="authSubmit" type="submit">进入</button>
-    <p class="auth-foot">本机 8080 · 首次使用会创建管理员</p>
+    <p class="auth-foot">本机 Web 桌面 · 首次使用会创建管理员</p>
   </form>
 </div>
 
@@ -139,6 +146,13 @@ setTimeout(function () {
   } catch (e) {}
 }, 6000);
 </script>
+<!-- 测试终端：Ctrl+A 打开、Ctrl+Q 关闭；打开时隐藏日志区，导航与设置仍可用 -->
+<div class="term" id="term" hidden aria-label="测试终端">
+  <div class="term-head"><b>LING OS · 测试终端</b><span>help 看命令 · Ctrl+Q 返回</span>
+    <button class="term-close" data-act="close-term" aria-label="关闭终端">×</button></div>
+  <pre class="term-out" id="termOut" aria-live="polite"></pre>
+  <form class="term-form" id="termForm"><input id="termInput" autocomplete="off" spellcheck="false" aria-label="终端命令" placeholder="输入命令，例如 health / devices / cmd system.status"></form>
+</div>
 <script src="assets/app.js"></script>
 </body>
 </html>

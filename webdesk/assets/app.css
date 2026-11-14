@@ -888,3 +888,101 @@ body[data-layout="portrait"] .switch{min-width:44px;min-height:26px}
 .set-main .pref-row{max-width:560px}
 body[data-layout="portrait"] .opt-filter{height:44px}
 body[data-layout="portrait"] .cmd,body[data-layout="portrait"] .chip{min-height:44px}
+
+/* ============ 0.14 反馈/动效/终端 ============ */
+:root{--dur-micro:100ms;--dur-local:160ms;--dur-panel:200ms;--dur-page:260ms;--ease-std:cubic-bezier(.2,0,.8,1);--ease-in:cubic-bezier(0,0,.2,1);--ease-out:cubic-bezier(.3,0,1,1)}
+body.motion-off *{animation-duration:.001ms!important;transition-duration:.001ms!important;animation-iteration-count:1!important}
+body.motion-lite *{animation-duration:.001ms!important}
+body.motion-lite .lmodal,body.motion-lite .term,body.motion-lite .toast{animation:none!important}
+body.motion-rich .lmodal-card{animation:modalIn .24s var(--ease-in)}
+body.motion-rich .cards>.panel-block,body.motion-rich .dev-card{animation:cardIn .26s var(--ease-in) both}
+
+/* toast 四类 */
+.toast{cursor:pointer;max-width:min(520px,calc(100vw - 32px));text-align:center;border:1px solid var(--line);transition:opacity var(--dur-local) var(--ease-std),transform var(--dur-local) var(--ease-std)}
+.toast--ok{border-color:var(--moss);box-shadow:0 6px 24px rgba(0,0,0,.18)}
+.toast--info{border-color:var(--line-2)}
+.toast--warn{background:#f4d58d;color:#3a2c06;border-color:#d9a93b}
+.toast--err{background:#f3c9c3;color:#5a140c;border-color:#c8543f}
+
+/* 居中模态 */
+.lmodal{position:fixed;inset:0;z-index:90;display:grid;place-items:center;background:rgba(10,14,8,.55);backdrop-filter:blur(2px);padding:20px;animation:fadeIn var(--dur-panel) var(--ease-in)}
+.lmodal-card{width:min(560px,100%);max-height:calc(100dvh - 48px);overflow:auto;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:var(--r-l);box-shadow:var(--shadow);padding:18px 20px;animation:modalIn var(--dur-panel) var(--ease-in)}
+.lmodal-card h2{margin:0 0 10px;font-size:16px}
+.lmodal-body{font-size:13px;line-height:1.7;color:var(--ink-2)}
+.lmodal-body p{margin:0 0 8px}
+.lmodal-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes modalIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+
+/* 内联横幅 */
+.banner{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--ember-line-soft);background:var(--ember-soft);color:var(--ink);border-radius:var(--r-m);padding:10px 12px;font-size:12.5px;margin:0 0 12px}
+.banner span{flex:1 1 180px;min-width:0}
+.banner .btn{flex:0 0 auto;white-space:nowrap;min-width:64px}
+.banner b{font-weight:600}
+.banner .btn{margin-left:auto}
+
+/* 测试终端 */
+.term{position:fixed;left:0;right:0;bottom:0;z-index:70;height:44vh;min-height:260px;display:flex;flex-direction:column;background:#0b0f09;color:#d8e4c9;border-top:1px solid #2d3a28;box-shadow:0 -12px 40px rgba(0,0,0,.35);animation:termIn var(--dur-panel) var(--ease-in)}
+body[data-layout="portrait"] .term{bottom:calc(62px + env(safe-area-inset-bottom));height:42vh}
+.term-head{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#11170d;border-bottom:1px solid #24301f;font-size:12px}
+.term-head span{color:#9fb191;font-size:11px}
+.term-close{margin-left:auto;background:transparent;border:1px solid #33422c;color:#cfe0bd;border-radius:6px;width:28px;height:28px;cursor:pointer}
+.term-out{flex:1;overflow:auto;margin:0;padding:10px 12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word}
+.term-form{border-top:1px solid #24301f;padding:8px 12px;display:flex}
+.term-form input{flex:1;background:transparent;border:0;outline:0;color:#e6f1d8;font:13px var(--mono);padding:6px 0}
+@keyframes termIn{from{transform:translateY(100%)}to{transform:none}}
+body.term-open .timeline,body.term-open .cmd-out{display:none}
+
+/* 开发面板/插件/首配高级 */
+.dev-panel{border-color:var(--moss)}
+.dev-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.linkish{background:none;border:0;padding:0;color:var(--moss);text-decoration:underline;text-underline-offset:2px;cursor:pointer;font:inherit}
+.seg{display:inline-flex;border:1px solid var(--line-2);border-radius:999px;overflow:hidden}
+.seg-btn{border:0;background:transparent;color:var(--ink-2);padding:6px 10px;font-size:12px;cursor:pointer}
+.seg-btn.is-on{background:var(--moss);color:#fff}
+.auth-advanced{margin-top:6px;border-top:1px dashed var(--line);padding-top:8px}
+.auth-advanced summary{cursor:pointer;color:var(--ink-2);font-size:12.5px;padding:4px 0}
+
+/* 空态五要素 */
+.empty-state{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:26px 16px}
+.empty-ic{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:var(--paper-2);color:var(--moss);margin-bottom:2px}
+.empty-state b{font-size:14.5px}
+.empty-state p{margin:0;color:var(--ink-2);font-size:12.5px;max-width:42ch}
+.empty-acts{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px}
+
+/* hidden 属性永远优先：避免组件 display 覆盖它 */
+[hidden]{display:none!important}
+.filebtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line-2);border-radius:var(--r-m);padding:8px 12px;font-size:12.5px;color:var(--ink);background:var(--card);cursor:pointer}
+.filebtn:hover{border-color:var(--moss)}
+
+/* 终端打开时 toast 抬高；终端输入占位色 */
+body.term-open .toast{bottom:calc(44vh + 16px)}
+body[data-layout="portrait"].term-open .toast{bottom:calc(42vh + 78px)}
+.term-form input::placeholder{color:#83947a}
+
+/* 表单控件统一：select 自定义箭头、首配卡可滚动 */
+.field select{appearance:none;-webkit-appearance:none;height:40px;border:1px solid var(--ink-3);border-radius:var(--r-m);background:var(--card);color:var(--ink);padding:0 32px 0 12px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%234c5749' stroke-width='1.6' stroke-linecap='round'><path d='m6 9 6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 10px center}
+.auth-card{max-height:calc(100dvh - 32px);overflow:auto}
+
+.btn--danger{background:#a13524;border-color:#a13524;color:#fff}
+.btn--danger:hover{background:#8c2b1c;border-color:#8c2b1c}
+.set-main .pref-row{max-width:520px}
+
+/* 终端输入条高一点、与面板留白 */
+.term-form{padding:8px 12px calc(8px + env(safe-area-inset-bottom))}
+.term-form input{min-height:36px;padding:8px 0}
+@media (max-width:820px){.seg-btn{min-height:40px;padding:8px 10px}}
+
+.toast--info{background:var(--card);color:var(--ink);border-color:var(--line-2)}
+
+/* P2：骨架对比、终端间距、触控尺寸 */
+.skel i{background:linear-gradient(90deg,var(--line) 25%,var(--paper-2) 37%,var(--line) 63%)}
+.term{padding-bottom:6px}
+@media (max-width:820px){.seg-btn{min-height:44px}.filebtn{min-height:44px}.term-close{width:32px;height:32px}}
+
+/* P2：文件空态占满、终端触控 44 */
+.fs-row .empty-state,.empty-state{width:100%}
+body[data-layout="portrait"] .term-close{width:44px;height:44px}
+body[data-layout="portrait"] .term-form input{min-height:44px}
+body[data-layout="portrait"] .auth-card .field input{min-height:44px}
