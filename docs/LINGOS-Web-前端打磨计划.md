@@ -116,6 +116,15 @@
 - 0.14 灾害模型文档：`docs/LINGOS-0.14-灾害预警与CAP模型.md`（CAP 1.2 字段 + severity×urgency 分级 + 数据源 + 落地顺序）。
 - 自测：14 项 Web 单测全过；webhook 实测到达本地接收端（HTTP 200，payload 正确）；设置页三面板渲染与保存通过，无 console error。
 
+**0.14 UI 批次（2026-11-14 第二轮）**
+- **去模拟数据**：后端不再播种 5 台演示设备（测试同步改为断言空列表）；空库就是空态，文案不再提"虚拟设备"。
+- **设置改二级页**：设置首页只放分类（外观与偏好 / 连接与外设 / AI 引擎 / 摄像头 / 通知 / 账号与安全 / 备份与恢复 / 内核设置 / 关于）。电脑端左栏常驻、右侧内容；手机端点分类进入、带「全部分类」返回，进入后左栏不占位。
+- **偏好**：界面动效 / 步骤卡片 / 紧凑排版三开关，存 `lo-prefs`，即时生效（`pref-no-motion` / `pref-no-cards` / `pref-compact`）；尊重 `prefers-reduced-motion`。
+- **动效与反馈**：视图切入 `viewIn`、卡片/适配器 `cardIn` stagger、骨架屏、按钮 active 缩放、toast 滑入；全部在关闭动效偏好下失效。
+- **内核设置**：新增 `GET/POST /api/options`，把 C 内核 `options.json` 的 61 项（7 条安全底线 + 54 项可调，9 组）做成开关页；固定项只读、危险项二次确认、写文件原子替换。schema 来自 `options_schema.json`（由 `src/config/options.c` 生成）。
+- **日志**：`[lingos-web]` 改为 `时间 级别 IP "方法 路径" 状态 耗时ms`，级别着色（ERROR 红底 / WARN 黄 / INFO 绿 / DEBUG 灰），非 TTY 自动去色（`NO_COLOR` 也尊重）。
+- **手机现场**：rootfs 内 `webdesk` 与 `services/lingos_web` 已同步更新并重启，日志格式与新页面在 Termux 原生模式下验证。
+
 **待做**：B4（CI 前置检查）。
 
 ## 六、风险

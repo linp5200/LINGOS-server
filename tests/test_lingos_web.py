@@ -78,9 +78,12 @@ class WebTest(unittest.TestCase):
         self.assertEqual(st, 401)
 
     def test_05_devices(self):
+        # 0.14：不再播种演示设备——空库必须返回空列表（前端显示空态，不伪造数据）
         st, body = self.req("GET", "/api/devices")
         self.assertEqual(st, 200)
-        self.assertGreaterEqual(len(json.loads(body)["devices"]), 3)
+        data = json.loads(body)
+        self.assertEqual(len(data["devices"]), 0)
+        self.assertGreaterEqual(len(data["adapters"]), 3)
 
     def test_06_traversal(self):
         st, _ = self.req("GET", "/api/fs/read?path=/../../etc/passwd")

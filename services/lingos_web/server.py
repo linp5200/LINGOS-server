@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lingos_device.manager import DeviceManager
 
 VERSION = "0.13.0"
+OPTIONS_SCHEMA_PATH = Path(__file__).with_name("options_schema.json")
 COOKIE = "lingos_session"
 SESSION_TTL = 7 * 24 * 3600
 MAX_BODY = 8 * 1024 * 1024
@@ -60,8 +61,27 @@ def iso(ts: float | None = None) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts or now()))
 
 
-def log(*a) -> None:
-    print("[lingos-web]", *a, flush=True)
+def _paint(text: str, code: str) -> str:
+    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        return text
+    return "\033[%sm%s\033[0m" % (code, text)
+
+
+def log(*a, level: str = "info") -> None:
+    """统一日志：时间 · 级别 · 内容。级别决定颜色（ERROR 红底、WARN 黄、INFO 绿、DEBUG 灰）。"""
+    ts = time.strftime("%H:%M:%S")
+    tag = _paint("%-5s" % level.upper(), {"info": "32", "warn": "33", "error": "97;41", "debug": "90"}.get(level, "32"))
+    print("%s %s %s" % (_paint(ts, "90"), tag, " ".join(str(x) for x in a)), flush=True)
+
+
+def load_options_schema():
+    try:
+        return json.loads(OPTIONS_SCHEMA_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+OPTIONS_SCHEMA = load_options_schema()
 
 
 class Store:
@@ -131,19 +151,39 @@ class Store:
                 """
             )
             c.commit()
-            if c.execute("SELECT COUNT(*) FROM devices").fetchone()[0] == 0:
-                seed = [
-                    ("light.living", "客厅灯", "light", "virtual", 1, {"on": False, "brightness": 80}),
-                    ("lock.front", "入户门锁", "lock", "virtual", 1, {"locked": True}),
-                    ("sensor.temp", "温度传感器", "sensor", "virtual", 1, {"temperature": 24.5, "humidity": 52}),
-                    ("sensor.smoke", "烟雾传感器", "sensor", "virtual", 0, {"smoke": False}),
-                    ("camera.door", "门口摄像头", "camera", "virtual", 0, {"stream": ""}),
-                ]
-                c.executemany(
-                    "INSERT INTO devices(id,name,type,protocol,online,state) VALUES(?,?,?,?,?,?)",
-                    [(i, n, t, p, o, json.dumps(s, ensure_ascii=False)) for i, n, t, p, o, s in seed],
-                )
-                c.commit()
+            # 【0.14】不再播种演示设备：没有真实设备时列表就是空的（前端显示空态）。
+
+    # ---- C 内核设置（options.json，61 项）----
+    def options_file(self) -> Path:
+        """优先 env，其次数据根，再兼容 /LINGOS 安装布局。"""
+        env = os.environ.get("LINGOS_OPTIONS")
+        if env:
+            return Path(env)
+        for c in (self.root / "system" / "config" / "options.json",
+                  Path("/LINGOS/system/config/options.json")):
+            if c.exists():
+                return c
+        return self.root / "system" / "config" / "options.json"
+
+    def options_read(self) -> dict:
+        p = self.options_file()
+        vals = {}
+        try:
+            if p.exists():
+                raw = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    vals = raw
+        except Exception:
+            pass
+        return {"path": str(p), "exists": p.exists(), "values": vals}
+
+    def options_write(self, values: dict) -> dict:
+        p = self.options_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(values, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, p)
+        return {"path": str(p), "saved": len(values)}
 
     # ---- users / sessions ----
     def user_count(self) -> int:
@@ -606,8 +646,29 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return False
 
+    def parse_request(self):
+        self._t0 = time.time()
+        return super().parse_request()
+
     def log_message(self, fmt, *args):
-        log(self.client_address[0], fmt % args)
+        """一条请求一行：时间 级别 IP "方法 路径 协议" 状态 耗时。状态码决定颜色。"""
+        try:
+            dt = (time.time() - getattr(self, "_t0", time.time())) * 1000
+        except Exception:
+            dt = 0.0
+        code = 0
+        for a in args:
+            try:
+                code = int(a)
+                break
+            except Exception:
+                continue
+        level = "error" if code >= 500 else ("warn" if code >= 400 else "info")
+        try:
+            text = fmt % args
+        except Exception:
+            text = str(args)
+        log("%s %s %.1fms" % (self.client_address[0], text, dt), level=level)
 
     # ---- HTTP verbs ----
     def do_GET(self):
@@ -678,6 +739,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             cams = [d for d in self.store.devices() if d.get("type") == "camera"]
             self._json(200, {"cameras": cams})
+            return
+        if path == "/api/options":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            meta = self.store.options_read()
+            values = dict(meta["values"])
+            for it in OPTIONS_SCHEMA:
+                values.setdefault(it["key"], bool(it.get("default")))
+            values.setdefault("_privacy_mode", False)
+            self._json(200, {"schema": OPTIONS_SCHEMA, "values": values,
+                             "exists": meta["exists"], "path": meta["path"]})
             return
         if path == "/api/notify/settings":
             usr = self._require()
@@ -1169,6 +1245,46 @@ class Handler(BaseHTTPRequestHandler):
                 if k in allowed:
                     self.store.setting_set(k, str(v))
             self._json(200, {"ok": True})
+            return
+        if path == "/api/options":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            incoming = body.get("values") if isinstance(body.get("values"), dict) else body
+            by_key = {it["key"]: it for it in OPTIONS_SCHEMA}
+            meta = self.store.options_read()
+            values = dict(meta["values"])
+            changed = 0
+            for k, v in (incoming or {}).items():
+                if k == "_privacy_mode":
+                    values[k] = bool(v)
+                    changed += 1
+                    continue
+                it = by_key.get(k)
+                if not it:
+                    continue
+                if it.get("fixed"):
+                    if not v:
+                        self._json(400, {"error": "安全底线不可关闭：" + k})
+                        return
+                    values[k] = True
+                    continue
+                # 危险项：任何偏离默认值的改动都要二次确认（开和关都算）
+                if it.get("dangerous") and bool(v) != bool(it.get("default")) and not body.get("confirm"):
+                    self._json(400, {"error": "危险开关需要二次确认：" + k, "need_confirm": True})
+                    return
+                values[k] = bool(v)
+                changed += 1
+            try:
+                saved = self.store.options_write(values)
+            except Exception as e:
+                self._json(500, {"error": "写入失败", "detail": str(e)})
+                return
+            self.store.event("settings", "options updated (%d)" % changed)
+            self._json(200, {"ok": True, "changed": changed, "path": saved["path"]})
             return
         if path == "/api/notify/test":
             usr = self._require()

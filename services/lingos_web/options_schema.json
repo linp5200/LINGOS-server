@@ -1,0 +1,612 @@
+[
+ {
+  "key": "security.token_no_log",
+  "zh": "Token/密钥不入日志",
+  "en": "Token/Key no-log",
+  "group": "security",
+  "kind": "fixed",
+  "dangerous": false,
+  "fixed": true,
+  "default": true
+ },
+ {
+  "key": "security.rand_no_downgrade",
+  "zh": "随机源不降级",
+  "en": "No RNG downgrade",
+  "group": "security",
+  "kind": "fixed",
+  "dangerous": false,
+  "fixed": true,
+  "default": true
+ },
+ {
+  "key": "security.encrypted_honest",
+  "zh": "加密状态如实上报",
+  "en": "Honest encryption status",
+  "group": "security",
+  "kind": "fixed",
+  "dangerous": false,
+  "fixed": true,
+  "default": true
+ },
+ {
+  "key": "security.skill_permission",
+  "zh": "技能执行前权限校验",
+  "en": "Skill permission check",
+  "group": "security",
+  "kind": "fixed",
+  "dangerous": false,
+  "fixed": true,
+  "default": true
+ },
+ {
+  "key": "security.danger_confirm",
+  "zh": "危险操作强制确认",
+  "en": "Mandatory confirm",
+  "group": "security",
+  "kind": "fixed",
+  "dangerous": false,
+  "fixed": true,
+  "default": true
+ },
+ {
+  "key": "security.defense_no_disable",
+  "zh": "防御系统不可自动禁用",
+  "en": "Defense cannot self-disable",
+  "group": "security",
+  "kind": "fixed",
+  "dangerous": false,
+  "fixed": true,
+  "default": true
+ },
+ {
+  "key": "security.path_normalize",
+  "zh": "路径规范化后校验",
+  "en": "Normalize paths",
+  "group": "security",
+  "kind": "fixed",
+  "dangerous": false,
+  "fixed": true,
+  "default": true
+ },
+ {
+  "key": "sec.encrypt_transport",
+  "zh": "通讯加密",
+  "en": "Transport encryption",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.api_token_public",
+  "zh": "公网访问需 Token",
+  "en": "Token for public access",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.highrisk_confirm",
+  "zh": "高风险命令二次确认",
+  "en": "Confirm high-risk",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.allow_lan_highrisk",
+  "zh": "允许局域网运行高风险命令",
+  "en": "Allow high-risk on LAN",
+  "group": "security",
+  "kind": "off",
+  "dangerous": true,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "sec.rate_limit",
+  "zh": "API 限流",
+  "en": "API rate limit",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.allow_lan_no_ratelimit",
+  "zh": "允许局域网内连接不限流",
+  "en": "No rate limit on LAN",
+  "group": "security",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "sec.cors_strict",
+  "zh": "CORS 校验来源",
+  "en": "Strict CORS",
+  "group": "security",
+  "kind": "on",
+  "dangerous": true,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.ssrf_protect",
+  "zh": "SSRF 防护",
+  "en": "SSRF protection",
+  "group": "security",
+  "kind": "on",
+  "dangerous": true,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.egress_allowlist",
+  "zh": "出口白名单",
+  "en": "Egress allowlist",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.update_signature",
+  "zh": "更新签名校验",
+  "en": "Update signature",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.audit_log",
+  "zh": "审计日志",
+  "en": "Audit log",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.encrypt_sensitive",
+  "zh": "敏感内容加密",
+  "en": "Encrypt sensitive data",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.encrypt_backup",
+  "zh": "备份加密",
+  "en": "Encrypt backups",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "sec.encrypt_apikey",
+  "zh": "API Key 加密存储",
+  "en": "Encrypt API keys",
+  "group": "security",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "priv.homomorphic",
+  "zh": "同态加密 (HE)",
+  "en": "Homomorphic encryption",
+  "group": "privacy",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "priv.diff_privacy",
+  "zh": "差分隐私 (DP)",
+  "en": "Differential privacy",
+  "group": "privacy",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "priv.federated",
+  "zh": "联邦学习 (FL)",
+  "en": "Federated learning",
+  "group": "privacy",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "priv.e2ee",
+  "zh": "端到端加密",
+  "en": "End-to-end encryption",
+  "group": "privacy",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "priv.anonymous",
+  "zh": "匿名化模式",
+  "en": "Anonymous mode",
+  "group": "privacy",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "priv.local_infer",
+  "zh": "本地推理优先",
+  "en": "Prefer local inference",
+  "group": "privacy",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "feat.typhoon_predict",
+  "zh": "台风路径预测",
+  "en": "Typhoon prediction",
+  "group": "feature",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "feat.weather_alert_link",
+  "zh": "天气↔预警联动",
+  "en": "Weather-alert link",
+  "group": "feature",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "feat.alert_subscribe",
+  "zh": "预警级别订阅",
+  "en": "Alert subscription",
+  "group": "feature",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "feat.alert_forecast",
+  "zh": "预警预告",
+  "en": "Alert forecast",
+  "group": "feature",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "feat.monitor_standalone",
+  "zh": "监控独立进程",
+  "en": "Standalone monitor",
+  "group": "feature",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "feat.camera_backend",
+  "zh": "摄像头后端",
+  "en": "Camera backend",
+  "group": "feature",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "feat.intrusion_chain",
+  "zh": "防入侵联动链",
+  "en": "Intrusion chain",
+  "group": "feature",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "feat.ai_vision_overlay",
+  "zh": "AI 识别叠加画面",
+  "en": "AI vision overlay",
+  "group": "feature",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "feat.plugin_system",
+  "zh": "插件系统",
+  "en": "Plugin system",
+  "group": "feature",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "feat.skill_market",
+  "zh": "技能市场",
+  "en": "Skill market",
+  "group": "feature",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "feat.sub_ai",
+  "zh": "子 AI 分发",
+  "en": "Sub-AI dispatch",
+  "group": "feature",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "feat.ha_integration",
+  "zh": "Home Assistant 集成",
+  "en": "HA integration",
+  "group": "feature",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "ui.show_error_icon",
+  "zh": "开启错误图标显示",
+  "en": "Show error icon",
+  "group": "ui",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "ui.theme_dynamic",
+  "zh": "动态强调色",
+  "en": "Dynamic accent",
+  "group": "ui",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "ui.start_screen",
+  "zh": "启动屏",
+  "en": "Boot screen",
+  "group": "ui",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "ui.scale_auto",
+  "zh": "界面自适应缩放",
+  "en": "Auto scaling",
+  "group": "ui",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "ui.msg_prefs",
+  "zh": "消息显示偏好",
+  "en": "Message prefs",
+  "group": "ui",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "voice.auto_read",
+  "zh": "自动朗读",
+  "en": "Auto read",
+  "group": "voice",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "voice.continuous",
+  "zh": "连续对话",
+  "en": "Continuous chat",
+  "group": "voice",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "voice.tts_stream",
+  "zh": "TTS 流式",
+  "en": "TTS streaming",
+  "group": "voice",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "voice.proxy",
+  "zh": "语音走服务端代理",
+  "en": "Voice via server",
+  "group": "voice",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "ai.thinking",
+  "zh": "思考模式",
+  "en": "Thinking mode",
+  "group": "ai",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "ai.streaming",
+  "zh": "流式输出",
+  "en": "Streaming",
+  "group": "ai",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "ai.auto_memory",
+  "zh": "自动记忆写入",
+  "en": "Auto memory write",
+  "group": "ai",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "ai.highrisk_auto",
+  "zh": "高风险自动授权",
+  "en": "High-risk auto-auth",
+  "group": "ai",
+  "kind": "off",
+  "dangerous": true,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "data.offline_cache",
+  "zh": "离线缓存",
+  "en": "Offline cache",
+  "group": "data",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "data.cross_device",
+  "zh": "跨设备修改会话",
+  "en": "Cross-device edit",
+  "group": "data",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "data.auto_sync",
+  "zh": "自动同步",
+  "en": "Auto sync",
+  "group": "data",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "data.log_to_file",
+  "zh": "日志保存到文件",
+  "en": "Log to file",
+  "group": "data",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "data.privacy_analytics",
+  "zh": "隐私分析上报",
+  "en": "Privacy analytics",
+  "group": "data",
+  "kind": "off",
+  "dangerous": false,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "conn.allow_plaintext",
+  "zh": "允许明文连接",
+  "en": "Allow plaintext",
+  "group": "conn",
+  "kind": "off",
+  "dangerous": true,
+  "fixed": false,
+  "default": false
+ },
+ {
+  "key": "dev.debug_log",
+  "zh": "开发调试日志",
+  "en": "Debug logging",
+  "group": "dev",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "dev.api_log",
+  "zh": "API 日志",
+  "en": "API logging",
+  "group": "dev",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ },
+ {
+  "key": "dev.prevent_clear",
+  "zh": "防清屏",
+  "en": "Prevent clear",
+  "group": "dev",
+  "kind": "on",
+  "dangerous": false,
+  "fixed": false,
+  "default": true
+ }
+]

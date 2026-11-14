@@ -797,3 +797,67 @@ body[data-layout="portrait"] .icon-btn{width:44px;height:44px}
 .sys-note{font-size:12px;color:var(--ink-2);margin:0}
 
 .dev-card.is-selected{border-color:var(--moss);box-shadow:0 0 0 1px var(--moss),var(--shadow)}
+
+/* ============ 0.14 设置二级页 / 偏好 / 动效 ============ */
+.settings-shell{display:grid;grid-template-columns:250px minmax(0,1fr);gap:18px;align-items:start}
+.set-nav{display:flex;flex-direction:column;gap:6px;position:sticky;top:14px}
+.set-link{display:block;text-align:left;border:1px solid var(--line);background:var(--card);border-radius:var(--r-m);padding:10px 12px;cursor:pointer;color:var(--ink);transition:border-color .16s ease,background .16s ease,transform .16s ease}
+.set-link b{font-size:13.5px;font-weight:600}
+.set-link small{font-size:11.5px;color:var(--ink-2);grid-column:1;line-height:1.4}
+
+.set-link:hover{border-color:var(--moss);transform:translateX(2px)}
+.set-link.is-active{border-color:var(--moss);background:var(--moss-soft);box-shadow:inset 3px 0 0 var(--moss)}
+
+.set-main{display:flex;flex-direction:column;gap:14px;min-width:0}
+.set-back{align-self:flex-start}
+body[data-layout="portrait"] .settings-shell{grid-template-columns:1fr}
+body[data-layout="portrait"] .set-nav{position:static;display:grid;grid-template-columns:1fr;gap:8px}
+body[data-layout="portrait"] .set-link{padding:12px 14px}
+body[data-layout="portrait"] .settings-shell.is-portrait .set-nav:empty{display:none}
+
+/* 偏好行 / 开关 */
+.pref-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 0;border-top:1px solid var(--line)}
+.pref-row:first-of-type{border-top:0}
+.pref-row span{display:flex;flex-direction:column;gap:2px}
+.pref-row b{font-size:13.5px}
+.pref-row small{font-size:11.5px;color:var(--ink-2)}
+.switch{width:44px;height:26px;border-radius:999px;border:1px solid var(--line-2);background:var(--paper-2);position:relative;cursor:pointer;transition:background .18s ease,border-color .18s ease;flex:0 0 auto}
+.switch i{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.18);transition:transform .18s ease}
+.switch.is-on{background:var(--moss);border-color:var(--moss)}
+.switch.is-on i{transform:translateX(18px);background:#fff}
+.opt-group{border-top:1px solid var(--line);padding-top:10px;margin-top:6px}
+.opt-group h3{font-size:12.5px;letter-spacing:.04em;color:var(--ink-2);margin:0 0 4px}
+.opt-toggle{width:20px;height:20px;accent-color:var(--moss);flex:0 0 auto;cursor:pointer}
+
+/* 骨架屏 */
+.skel{display:flex;flex-direction:column;gap:8px;padding:4px 0}
+.skel i{display:block;height:12px;border-radius:6px;background:linear-gradient(90deg,var(--paper-2) 25%,var(--card) 37%,var(--paper-2) 63%);background-size:400% 100%;animation:skel 1.2s ease infinite}
+.skel i:nth-child(2){width:82%}
+.skel i:nth-child(3){width:64%}
+.skel i:nth-child(4){width:74%}
+@keyframes skel{0%{background-position:100% 0}100%{background-position:0 0}}
+
+/* 入场与反馈 */
+@keyframes viewIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.view.is-enter{animation:viewIn .18s cubic-bezier(.2,.7,.3,1)}
+.cards>.panel-block,.dev-card,.adapter,.set-link{animation:cardIn .22s cubic-bezier(.2,.7,.3,1) both}
+.cards>.panel-block:nth-child(2){animation-delay:.03s}
+.cards>.panel-block:nth-child(3){animation-delay:.06s}
+.dev-card:nth-child(2),.adapter:nth-child(2){animation-delay:.03s}
+.dev-card:nth-child(3),.adapter:nth-child(3){animation-delay:.06s}
+.dev-card:nth-child(4),.adapter:nth-child(4){animation-delay:.09s}
+.btn:active{transform:scale(.97)}
+.btn,.icon-btn,.filter,.set-link,.switch{transition-duration:.16s}
+.toast{animation:toastIn .18s ease}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
+
+/* 偏好生效 */
+body.pref-no-motion *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+body.pref-no-cards .scenes{display:none}
+body.pref-compact .panel-block,body.pref-compact .dev-card,body.pref-compact .panel{padding:10px 12px}
+body.pref-compact .cards,body.pref-compact .dev-grid{gap:8px}
+body.pref-compact .view-head{margin-bottom:10px}
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}

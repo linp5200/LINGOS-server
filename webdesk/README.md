@@ -32,7 +32,7 @@ manifest.json       PWA（可添加到主屏幕）
 | `#/security` | 安全 + ACL + 用户 | `/api/security` `/api/acl` `/api/users` `/api/security/level` |
 | `#/ai` | 管家 | `POST /api/chat` |
 | `#/system` | 系统命令 | `POST /api/cmd`（转到 127.0.0.1:18080） |
-| `#/settings` | 设置 | `/api/settings` `/api/token` `/api/backup` `/api/restore`；AI 引擎 `/api/ai/providers`；摄像头 `/api/cameras`；通知 `/api/notify/*` |
+| `#/settings` | 设置（分类子页：外观与偏好/连接/AI/摄像头/通知/账号/备份/内核/关于） | `/api/settings` `/api/token` `/api/backup` `/api/restore`；AI 引擎 `/api/ai/providers`；摄像头 `/api/cameras`；通知 `/api/notify/*` |
 
 ## 布局
 
@@ -45,6 +45,7 @@ manifest.json       PWA（可添加到主屏幕）
 - `GET/POST /api/ai/providers`、`POST /api/ai/providers/remove`、`POST /api/ai/active`、`POST /api/ai/test` — 模型提供商管理，经 `run/ai.sock`，仅 admin，`api_key` 返回前脱敏。协议只有三种：openai chat（含 Ollama/DeepSeek/Kimi/GLM 等）、anthropic、gemini。
 - `GET/POST /api/cameras` — 摄像头（ONVIF/RTSP/RTMP/HTTP）写入 `camera.*` 的 `state.stream` / `state.snapshot`。
 - `GET/POST /api/notify/settings`、`POST /api/notify/test` — Webhook / SMTP 邮件 / 短信接口位（未接服务商时明确 501）。
+- `GET/POST /api/options` — C 内核 61 项设置（`options.json`）：GET 返回 schema+值+路径，POST 写文件（固定项不可关、危险项需 `confirm`）。
 
 ## 约定
 

@@ -187,6 +187,8 @@
     aiError: '',
     cameras: null,
     onvif: [],
+    setSection: '',
+    options: null,
     notifyLoaded: false
   };
 
@@ -368,7 +370,15 @@
     var m = /^#\/([a-z]+)/.exec(hash || '');
     var v = m && TITLES[m[1]] ? m[1] : 'home';
     S.view = v;
-    $all('.view').forEach(function (el) { el.hidden = el.id !== 'view-' + v; });
+    $all('.view').forEach(function (el) {
+      var on = el.id === 'view-' + v;
+      el.hidden = !on;
+      if (on && prefs().motion) {
+        el.classList.remove('is-enter');
+        void el.offsetWidth;
+        el.classList.add('is-enter');
+      }
+    });
     var where = $('#barWhere');
     if (where) where.textContent = TITLES[v];
     renderNav();
@@ -575,7 +585,7 @@
       '<div class="dev-toolbar">' + types.map(function (t) {
         return '<button class="filter' + (devFilter === t[0] ? ' is-on' : '') + '" data-devfilter="' + t[0] + '">' + t[1] + '</button>';
       }).join('') + '</div>' +
-      '<div class="cards" style="grid-template-columns:repeat(3,minmax(0,1fr))">' +
+      '<div class="cards scenes" style="grid-template-columns:repeat(3,minmax(0,1fr))">' +
         ['night', 'away', 'home'].map(function (n) {
           var label = n === 'night' ? '夜间' : n === 'away' ? '离家' : '回家';
           return '<button class="panel-block" style="text-align:left;cursor:pointer" data-scene-run="' + n + '"><h2 style="font-size:14px">' + label + '</h2><p>' + sceneSummary(n) + '</p></button>';
@@ -880,27 +890,86 @@
     probeCmd();
   }
 
-  /* ============ 设置 ============ */
+  /* ============ 设置（左侧分类 + 子页；手机为列表进入） ============ */
   var settingsLoaded = false;
+  var SET_SECTIONS = [
+    ['appearance', '外观与偏好', '主题、动效、步骤卡片、密度'],
+    ['conn', '连接与外设', '后台地址、Home Assistant、MQTT、适配器'],
+    ['ai', 'AI 引擎', '三协议、本地 Ollama、模型提供商'],
+    ['camera', '摄像头', 'ONVIF / RTSP / RTMP / HTTP 快照'],
+    ['notify', '通知', 'Webhook、邮件、短信接口'],
+    ['account', '账号与安全', '用户、Token、root key、退出'],
+    ['backup', '备份与恢复', '导出整机数据，或从备份恢复'],
+    ['kernel', '内核设置', 'C 内核 61 项设置（options.json）'],
+    ['about', '关于', '版本、平台、后台地址']
+  ];
 
-  /** 设置页：后台地址、外观、摄像头预览、外接设备、备份、App Token、root key、退出。 */
+  function prefs() {
+    var d = { motion: true, cards: true, compact: false };
+    try {
+      var raw = JSON.parse(localStorage.getItem('lo-prefs') || '{}');
+      return Object.assign(d, raw || {});
+    } catch (e) { return d; }
+  }
+
+  function applyPrefs() {
+    var p = prefs();
+    document.body.classList.toggle('pref-no-motion', !p.motion);
+    document.body.classList.toggle('pref-no-cards', !p.cards);
+    document.body.classList.toggle('pref-compact', !!p.compact);
+  }
+
+  function setPref(key, val) {
+    var p = prefs(); p[key] = !!val;
+    localStorage.setItem('lo-prefs', JSON.stringify(p));
+    applyPrefs();
+    renderSettings();
+    toast('已更新偏好');
+  }
+
+  function setSection(id) {
+    S.setSection = id;
+    renderSettings();
+    var main = $('.set-main');
+    if (main && document.body.dataset.layout === 'portrait') main.scrollIntoView({ behavior: prefs().motion ? 'smooth' : 'auto', block: 'start' });
+  }
+
+  function settingsNavHTML(active) {
+    return SET_SECTIONS.map(function (s) {
+      return '<button class="set-link' + (active === s[0] ? ' is-active' : '') + '" data-set="' + s[0] + '">' +
+        '<b>' + esc(s[1]) + '</b><small>' + esc(s[2]) + '</small></button>';
+    }).join('');
+  }
+
   function renderSettings() {
     var el = $('#view-settings');
     var s = S.settings || {};
-    el.innerHTML =
-      '<div class="view-head"><div><h1>设置</h1><p>后台地址、外接设备、备份和这个前端的扩展项。主界面只留每天要用的。</p></div>' +
-        '<div class="view-actions"><button class="btn" data-act="settings-reload">' + icon('refresh', 16) + '重读</button></div></div>' +
-      '<div class="cards">' +
+    var portrait = document.body.dataset.layout === 'portrait';
+    if (!portrait && !S.setSection) S.setSection = 'appearance';
+    var sec = S.setSection || '';
+    var body = '';
+    if (sec === 'appearance') {
+      body =
+        '<section class="panel-block"><h2>外观</h2>' +
+          '<div class="pref-row"><span><b>界面动效</b><small>页面切换、卡片入场、过渡动画</small></span>' +
+            '<button class="switch' + (prefs().motion ? ' is-on' : '') + '" data-pref="motion" role="switch" aria-checked="' + (prefs().motion ? 'true' : 'false') + '"><i></i></button></div>' +
+          '<div class="pref-row"><span><b>步骤卡片</b><small>首页展示步骤卡片与外勤分组</small></span>' +
+            '<button class="switch' + (prefs().cards ? ' is-on' : '') + '" data-pref="cards" role="switch" aria-checked="' + (prefs().cards ? 'true' : 'false') + '"><i></i></button></div>' +
+          '<div class="pref-row"><span><b>紧凑排版</b><small>缩小间距，一屏放更多内容</small></span>' +
+            '<button class="switch' + (prefs().compact ? ' is-on' : '') + '" data-pref="compact" role="switch" aria-checked="' + (prefs().compact ? 'true' : 'false') + '"><i></i></button></div>' +
+          '<div class="pref-row"><span><b>深浅色</b><small>当前：' + (document.documentElement.dataset.theme === 'night' ? '夜间' : '日间') + '</small></span>' +
+            '<button class="btn btn--sm" data-act="theme">切到' + (document.documentElement.dataset.theme === 'night' ? '日间' : '夜间') + '</button></div>' +
+          '<div class="pref-row"><span><b>摄像头预览</b><small>没画面时首页不会留空白</small></span>' +
+            '<button class="btn btn--sm" data-act="toggle-preview">' + (previewOn() ? '已开' : '默认关') + '</button></div>' +
+        '</section>';
+    } else if (sec === 'conn') {
+      body =
         '<section class="panel-block"><h2>后台</h2><p>默认同源。换地址后整个前端都走这个后台。</p>' +
           '<label class="field" style="margin-top:12px"><span>地址（留空 = 同源）</span><input id="setApi" value="' + esc(apiBase) + '" placeholder="http://127.0.0.1:8080"></label>' +
           '<button class="btn btn--primary" data-act="save-api">保存并重连</button>' +
           '<div class="kv-row" style="margin-top:12px"><span>当前</span><b>' + esc(apiBase || location.origin) + '</b></div>' +
           '<div class="kv-row"><span>健康</span><b>' + (S.health ? 'ok · ' + esc(S.health.version) : '—') + '</b></div>' +
-          '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username + ' · ' + S.me.role : '—') + '</b></div>' +
-        '</section>' +
-        '<section class="panel-block"><h2>外观</h2><div class="row"><label>深浅色<button class="btn btn--sm" data-act="theme">' + (document.documentElement.dataset.theme === 'night' ? '切到日间' : '切到夜间') + '</button></label></div>' +
-          '<div class="row"><span>摄像头预览</span><button class="btn btn--sm" data-act="toggle-preview">' + (previewOn() ? '已开' : '默认关') + '</button></div>' +
-          '<p style="margin-top:8px">摄像头预览默认关。没接画面时首页不会留一块空白。</p></section>' +
+          '<div class="kv-row"><span>账号</span><b>' + esc(S.me ? S.me.username + ' · ' + S.me.role : '—') + '</b></div></section>' +
         '<section class="panel-block"><h2>外接设备</h2><p>填了才会连；没填的适配器显示「未配」。</p>' +
           '<label class="field" style="margin-top:12px"><span>Home Assistant 地址</span><input id="setHaUrl" value="' + esc(s.ha_url || '') + '" placeholder="http://homeassistant.local:8123"></label>' +
           '<label class="field"><span>HA Token</span><input id="setHaToken" type="password" value="' + esc(s.ha_token || '') + '"></label>' +
@@ -909,25 +978,24 @@
           '<label class="field"><span>MQTT 用户</span><input id="setMqttUser" value="' + esc(s.mqtt_user || '') + '"></label>' +
           '<label class="field"><span>MQTT 密码</span><input id="setMqttPass" type="password" value="' + esc(s.mqtt_pass || '') + '"></label>' +
           '<button class="btn btn--primary" data-act="save-conn">保存连接</button></section>' +
-        '<section class="panel-block"><h2>备份</h2><p>备份包含数据库、文件和隐私策略。</p>' +
-          '<div class="row"><span>导出</span><a class="btn btn--sm" href="' + esc(apiBase) + '/api/backup">' + icon('download', 14) + '下载备份</a></div>' +
-          '<div class="row"><span>恢复</span><button class="btn btn--sm" data-act="restore">选择备份文件</button></div>' +
-          '<input id="restoreFile" type="file" hidden accept=".gz,.tgz,.tar">' +
-        '</section>' +
         '<section class="panel-block"><h2>适配器</h2>' +
           (S.adapters.length ? S.adapters.map(function (a) {
             return '<div class="adapter"><span class="badge ' + (a.available ? 'ok' : 'no') + '">' + (a.available ? '可用' : '未配') + '</span><b>' + esc(a.protocol) + '</b><span class="muted">' + esc(a.detail || '') + '</span></div>';
-          }).join('') : '<div class="tl-empty">后台没有返回适配器。</div>') + '</section>' +
-        '<section class="panel-block"><h2>AI 引擎</h2><p>云端三协议（openai / anthropic / gemini）+ 本地 Ollama；Key 只显示脱敏。</p>' +
+          }).join('') : '<div class="tl-empty">后台没有返回适配器。</div>') + '</section>';
+    } else if (sec === 'ai') {
+      body =
+        '<section class="panel-block"><h2>AI 引擎</h2><p>只有三种协议：openai chat（含 Ollama / DeepSeek / Kimi / GLM）、anthropic、gemini。Key 只显示脱敏。</p>' +
           '<div id="aiProviderList">' + aiProvidersHTML() + '</div>' +
           '<label class="field" style="margin-top:10px"><span>id</span><input id="aiPid" placeholder="deepseek"></label>' +
           '<label class="field"><span>名称</span><input id="aiName" placeholder="DeepSeek"></label>' +
-          '<label class="field"><span>协议</span><select id="aiFormat" style="height:38px;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;background:var(--paper);color:var(--ink)"><option value="openai">openai（兼容）</option><option value="anthropic">anthropic</option><option value="gemini">gemini</option></select></label>' +
+          '<label class="field"><span>协议</span><select id="aiFormat" style="height:38px;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;background:var(--paper);color:var(--ink)"><option value="openai">openai chat（兼容）</option><option value="anthropic">anthropic</option><option value="gemini">gemini</option></select></label>' +
           '<label class="field"><span>Base URL</span><input id="aiBase" placeholder="https://api.deepseek.com/v1"></label>' +
           '<label class="field"><span>模型</span><input id="aiModel" placeholder="deepseek-chat"></label>' +
           '<label class="field"><span>API Key（留空=不改）</span><input id="aiKey" type="password"></label>' +
-          '<button class="btn btn--primary" data-act="ai-save">保存提供商</button></section>' +
-        '<section class="panel-block"><h2>摄像头</h2><p>支持 ONVIF / RTSP / RTMP / HTTP 快照。保存后写进 camera 设备的 stream，首页预览只读它。</p>' +
+          '<button class="btn btn--primary" data-act="ai-save">保存提供商</button></section>';
+    } else if (sec === 'camera') {
+      body =
+        '<section class="panel-block"><h2>摄像头</h2><p>支持 ONVIF / RTSP / RTMP / HTTP 快照。保存后写进 camera 设备，首页预览只读它。</p>' +
           '<div id="cameraList">' + camerasHTML() + '</div>' +
           '<label class="field" style="margin-top:10px"><span>名称</span><input id="camName" placeholder="门口摄像头"></label>' +
           '<label class="field"><span>协议</span><select id="camProto" style="height:38px;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;background:var(--paper);color:var(--ink)"><option>rtsp</option><option>rtmp</option><option>onvif</option><option>http</option></select></label>' +
@@ -938,7 +1006,9 @@
           (S.onvif.length ? '<div style="margin-top:10px">' + S.onvif.map(function (d, i) {
             return '<div class="adapter"><b>' + esc(d.ip) + '</b><span class="muted">' + esc((d.xaddrs || []).join(' ')) + '</span>' +
               '<button class="btn btn--sm" style="margin-left:auto" data-onvif-fill="' + i + '">填入</button></div>';
-          }).join('') + '</div>' : '') + '</section>' +
+          }).join('') + '</div>' : '') + '</section>';
+    } else if (sec === 'notify') {
+      body =
         '<section class="panel-block"><h2>通知</h2><p>Webhook / 邮件 / 短信。邮件用 SMTP，短信只要服务商接口位（未接就如实报错）。</p>' +
           '<label class="field" style="margin-top:10px"><span>Webhook 地址</span><input id="ntWebhook" value="' + esc((S.settings && S.settings.notify_webhook) || '') + '" placeholder="https://…"></label>' +
           '<label class="field"><span>收件邮箱</span><input id="ntEmail" value="' + esc((S.settings && S.settings.notify_email_to) || '') + '"></label>' +
@@ -951,24 +1021,86 @@
           '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn--primary" data-act="notify-save">保存通知</button>' +
           '<button class="btn" data-act="notify-test" data-channel="webhook">测 Webhook</button>' +
           '<button class="btn" data-act="notify-test" data-channel="email">测邮件</button>' +
-          '<button class="btn" data-act="notify-test" data-channel="sms">测短信</button></div></section>' +
+          '<button class="btn" data-act="notify-test" data-channel="sms">测短信</button></div></section>';
+    } else if (sec === 'account') {
+      body =
+        '<section class="panel-block"><h2>当前账号</h2>' +
+          '<div class="kv-row"><span>用户</span><b>' + esc(S.me ? S.me.username : '—') + '</b></div>' +
+          '<div class="kv-row"><span>角色</span><b>' + esc(S.me ? S.me.role : '—') + '</b></div>' +
+          '<div class="row" style="margin-top:12px"><span>用户与 ACL</span><button class="btn btn--sm" data-nav="security">去安全页</button></div></section>' +
         '<section class="panel-block"><h2>App Token</h2><p>App 用 Bearer 走同一套接口，只显示一次。</p>' +
           '<div class="row" style="margin-top:10px"><span>生成</span><button class="btn btn--sm" data-act="new-token">生成 Token</button></div>' +
           '<pre class="cmd-out" id="tokenOut" style="margin-top:10px"></pre></section>' +
-        '<section class="panel-block"><h2>安全操作</h2><p>ACL 改目录权限要 root key，它只在创建管理员那次显示。</p>' +
+        '<section class="panel-block"><h2>root key</h2><p>ACL 改目录权限要 root key，它只在创建管理员那次显示。</p>' +
           '<label class="field" style="margin-top:12px"><span>root key（只存在这台浏览器）</span><input id="setRootKey" type="password" value="' + esc(localStorage.getItem('lo-rootkey') || '') + '"></label>' +
           '<button class="btn" data-act="save-rootkey">记住 root key</button>' +
-          '<div class="row" style="margin-top:12px"><span>退出登录</span><button class="btn btn--sm" data-act="logout">退出</button></div>' +
-        '</section>' +
+          '<div class="row" style="margin-top:12px"><span>退出登录</span><button class="btn btn--sm" data-act="logout">退出</button></div></section>';
+    } else if (sec === 'backup') {
+      body =
+        '<section class="panel-block"><h2>备份</h2><p>备份包含数据库、文件和隐私策略。恢复会覆盖当前数据。</p>' +
+          '<div class="row"><span>导出</span><a class="btn btn--sm" href="' + esc(apiBase) + '/api/backup">' + icon('download', 14) + '下载备份</a></div>' +
+          '<div class="row"><span>恢复</span><button class="btn btn--sm" data-act="restore">选择备份文件</button></div>' +
+          '<input id="restoreFile" type="file" hidden accept=".gz,.tgz,.tar"></section>';
+    } else if (sec === 'kernel') {
+      body = '<section class="panel-block"><h2>内核设置</h2><p>来自 C 内核 <code>options.json</code> 的 61 项：7 条安全底线（固定开）+ 54 项可调。改了写入内核配置文件。</p>' +
+        '<div id="kernelList">' + kernelHTML() + '</div></section>';
+    } else if (sec === 'about') {
+      body =
+        '<section class="panel-block"><h2>关于</h2>' +
+          '<div class="kv-row"><span>版本</span><b>' + esc(S.health ? S.health.version : '—') + '</b></div>' +
+          '<div class="kv-row"><span>后台</span><b>' + esc(apiBase || location.origin) + '</b></div>' +
+          '<div class="kv-row"><span>平台</span><b>' + esc(S.health ? S.health.platform : '—') + '</b></div>' +
+          '<div class="kv-row"><span>局域网</span><b>' + (S.health && S.health.lan ? '开' : '仅本机') + '</b></div>' +
+          '<div class="kv-row"><span>登录</span><b>' + esc(S.me ? S.me.username + ' · ' + S.me.role : '—') + '</b></div></section>';
+    }
+    el.innerHTML =
+      '<div class="view-head"><div><h1>设置</h1><p>按分类进入子页；电脑端分类在左侧，手机端点进去。</p></div>' +
+        '<div class="view-actions"><button class="btn" data-act="settings-reload">' + icon('refresh', 16) + '重读</button></div></div>' +
+      '<div class="settings-shell' + (portrait ? ' is-portrait' : '') + '">' +
+        ((!portrait || !sec) ? '<nav class="set-nav" aria-label="设置分类">' + settingsNavHTML(sec) + '</nav>' : '') +
+        (sec ? '<div class="set-main">' +
+          (portrait ? '<button class="btn btn--sm set-back" data-set="">' + icon('back', 14) + '全部分类</button>' : '') +
+          body + '</div>' : '') +
       '</div>';
     if (!settingsLoaded) { settingsLoaded = true; loadSettings(); }
     if (S.aiProviders === null) loadAiProviders();
     if (S.cameras === null) loadCameras();
+    if (sec === 'kernel' && S.options === null) loadOptions();
   }
 
   /** 设置与用户列表只有 admin 能读；403 时保持空状态由页面提示。 */
+  var OPT_GROUPS = { security: '安全', privacy: '隐私', feature: '功能', ui: '界面', voice: '语音', ai: 'AI', data: '数据', conn: '连接', dev: '开发' };
+
+  function kernelHTML() {
+    if (S.options === null) return '<div class="skel"><i></i><i></i><i></i><i></i></div>';
+    var o = S.options;
+    if (o.error) return '<div class="tl-empty">' + esc(o.error) + '</div>';
+    var by = {};
+    (o.schema || []).forEach(function (it) { (by[it.group] = by[it.group] || []).push(it); });
+    return Object.keys(by).map(function (g) {
+      return '<div class="opt-group"><h3>' + esc(OPT_GROUPS[g] || g) + '</h3>' + by[g].map(function (it) {
+        var v = !!o.values[it.key];
+        return '<div class="pref-row"><span><b>' + esc(it.zh) + '</b><small>' + esc(it.en || '') +
+          (it.fixed ? ' · 安全底线，固定开' : (it.dangerous ? ' · 危险项，关闭要二次确认' : '')) + '</small></span>' +
+          (it.fixed
+            ? '<span class="badge ok">固定</span>'
+            : '<input type="checkbox" class="opt-toggle" data-opt="' + esc(it.key) + '"' + (v ? ' checked' : '') +
+              (it.dangerous ? ' data-danger="1"' : '') + ' aria-label="' + esc(it.zh) + '">') +
+          '</div>';
+      }).join('') + '</div>';
+    }).join('') + (o.path ? '<p class="muted" style="margin-top:10px">写入：' + esc(o.path) + '</p>' : '');
+  }
+
+  function loadOptions() {
+    api('/api/options').then(function (r) {
+      if (r.ok && r.data) S.options = r.data;
+      else S.options = { error: '读不到内核设置：' + ((r.data && (r.data.error || r.data.detail)) || r.status) };
+      if (S.view === 'settings') renderSettings();
+    });
+  }
+
   function aiProvidersHTML() {
-    if (S.aiProviders === null) return '<div class="tl-empty">读取中…</div>';
+    if (S.aiProviders === null) return '<div class="skel"><i></i><i></i><i></i></div>';
     if (S.aiError) return '<div class="tl-empty">AI 引擎未连接：' + esc(S.aiError) + '</div>';
     if (!S.aiProviders.length) return '<div class="tl-empty">还没有提供商。下面加一个（云端或本地 Ollama）。</div>';
     return S.aiProviders.map(function (p) {
@@ -983,7 +1115,7 @@
   }
 
   function camerasHTML() {
-    if (S.cameras === null) return '<div class="tl-empty">读取中…</div>';
+    if (S.cameras === null) return '<div class="skel"><i></i><i></i><i></i></div>';
     if (!S.cameras.length) return '<div class="tl-empty">还没有摄像头。下面填一个 RTSP/RTMP/HTTP 快照源。</div>';
     return S.cameras.map(function (c) {
       var st = c.state || {};
@@ -1157,6 +1289,17 @@
       if (sysDanger(c)) {
         confirmBox({ title: '执行 ' + c + '？', body: '这条会改系统状态，确认后再跑。', okText: '执行', onOk: function () { sysCall(c, sys); } });
       } else sysCall(c, sys);
+      return;
+    }
+
+    var setBtn = e.target.closest('[data-set]');
+    if (setBtn) { setSection(setBtn.getAttribute('data-set')); return; }
+
+    var prefBtn = e.target.closest('[data-pref]');
+    if (prefBtn) {
+      var pk = prefBtn.getAttribute('data-pref');
+      var pv = !prefs()[pk];
+      setPref(pk, pv);
       return;
     }
 
@@ -1425,6 +1568,27 @@
     } });
   });
 
+  document.addEventListener('change', function (e) {
+    var cb = e.target.closest('[data-opt]');
+    if (!cb) return;
+    var key = cb.getAttribute('data-opt');
+    var val = cb.checked;
+    var send = function (confirm) {
+      api('/api/options', { method: 'POST', body: { values: (function () { var o = {}; o[key] = val; return o; })(), confirm: !!confirm } })
+        .then(function (r) {
+          if (r.ok) { toast('已保存：' + key); if (S.options) S.options.values[key] = val; }
+          else if (r.status === 400 && r.data && r.data.need_confirm) {
+            cb.checked = !val;
+            confirmBox({ title: '关闭危险开关？', body: key + ' 关掉会降低安全强度。', okText: '仍然关闭', onOk: function () { send(true); } });
+          } else { cb.checked = !val; toast('没保存：' + ((r.data && r.data.error) || r.status)); }
+        });
+    };
+    if (cb.hasAttribute('data-danger') && !val) {
+      cb.checked = !val;
+      confirmBox({ title: '关闭危险开关？', body: key + ' 关掉会降低安全强度。', okText: '仍然关闭', onOk: function () { send(true); } });
+    } else send(false);
+  });
+
   window.addEventListener('hashchange', function () { route(location.hash); });
   window.addEventListener('resize', function () {
     var before = document.body.dataset.layout;
@@ -1442,6 +1606,7 @@
   setInterval(tickClock, 20000);
 
   /* 启动 */
+  applyPrefs();
   applyTheme(document.documentElement.dataset.theme || 'day');
   detectLayout();
   paintIcons();
