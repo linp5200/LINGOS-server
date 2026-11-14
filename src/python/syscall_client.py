@@ -18,7 +18,8 @@ from typing import Dict, Any, Tuple, Optional
 logger = logging.getLogger("SyscallClient")
 
 # ========== 常量 ==========
-DAEMON_SOCKET_PATH = "/LINGOS/run/daemon.sock"
+LINGOS_ROOT = os.environ.get("LINGOS_ROOT", "/LINGOS")
+DAEMON_SOCKET_PATH = os.environ.get("LINGOS_DAEMON_SOCKET", os.path.join(LINGOS_ROOT, "run/daemon.sock"))
 DEFAULT_TIMEOUT = 30
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB 文件大小限制
 

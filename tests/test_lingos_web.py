@@ -251,10 +251,42 @@ class WebTest(unittest.TestCase):
         """AI 能以 daemon 身份执行工具：普通 user 不允许走 /api/chat。"""
         self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
         admin_cookie = WebTest.cookie
+        if self.store.verify_user("carol", "carolpass123") is None:
+            self.store.create_user("carol", "carolpass123", "user")
         self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
         st, _ = self.req("POST", "/api/chat", {"text": "hi"})
         self.assertEqual(st, 403)
         WebTest.cookie = admin_cookie
+
+
+    def test_16_pair_and_notify_guards(self):
+        """loopback 配对不再免密；通知设置 GET 仅 admin。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        admin_cookie = WebTest.cookie
+        # 无会话/无配对码/无 root key：loopback 也应 403
+        WebTest.cookie = ""
+        st, _ = self.req("POST", "/api/pair", {"name": "x"})
+        self.assertEqual(st, 403)
+        if self.store.verify_user("carol", "carolpass123") is None:
+            self.store.create_user("carol", "carolpass123", "user")
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        st, _ = self.req("POST", "/api/pair", {"name": "ok", "code": ""})
+        self.assertEqual(st, 200)  # admin 会话可直接配对
+        self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
+        st, _ = self.req("GET", "/api/notify/settings")
+        self.assertEqual(st, 403)
+        WebTest.cookie = admin_cookie
+        st, _ = self.req("GET", "/api/notify/settings")
+        self.assertEqual(st, 200)
+        # token 吊销端点存在且 admin 可用
+        st, body = self.req("POST", "/api/token", {"name": "to-revoke"})
+        self.assertEqual(st, 200)
+        tok = json.loads(body)["token"]
+        st, _ = self.req("POST", "/api/token/revoke", {"token": tok})
+        self.assertEqual(st, 200)
+        WebTest.cookie = ""
+        st, _ = self.req("GET", "/api/users", extra_headers={"Authorization": "Bearer " + tok})
+        self.assertEqual(st, 401)
 
 
 if __name__ == "__main__":

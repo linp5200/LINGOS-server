@@ -629,7 +629,7 @@ def start_auth_service():
 
     try:
         subprocess.Popen(
-            ["python3", "/LINGOS/bin/authorization_service.py"],
+            ["python3", os.path.join(LINGOS_ROOT, "bin/authorization_service.py")],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -5871,7 +5871,7 @@ def _http_auth_ok(token: str) -> bool:
     if not token:
         return False
     try:
-        tf = "/LINGOS/state/tokens.json"
+        tf = os.path.join(LINGOS_ROOT, "state/tokens.json")
         if os.path.exists(tf):
             with open(tf, encoding="utf-8") as f:
                 data = json.load(f)

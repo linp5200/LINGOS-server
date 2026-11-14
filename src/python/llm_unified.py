@@ -34,7 +34,7 @@ def _provider_file_path() -> str:
 
 
 PROVIDER_FILE = _provider_file_path()
-DEBUG_DIR = "/LINGOS/logs/api_debug"
+DEBUG_DIR = os.environ.get("LINGOS_DEBUG_DIR", os.path.join(os.environ.get("LINGOS_ROOT", "/LINGOS"), "logs", "api_debug"))
 
 # 内置上下文窗口映射表（token）——模型名小写匹配，/v1/models 获取失败时兜底
 CONTEXT_WINDOW_MAP = {
@@ -266,14 +266,23 @@ def save_providers(providers: List[LLMProvider], active_id: str = "",
                 else:
                     d["key_plain"] = True        # 诚实标注：加密不可用时明文存储
             out_list.append(d)
-        with open(PROVIDER_FILE, "w", encoding="utf-8") as f:
-            json.dump({"providers": out_list, "active": active_id},
-                      f, ensure_ascii=False, indent=2)
-        # 权限收紧（仅属主可读）
+        # 原子写：同目录临时文件 → fsync → 0600 → replace；崩溃不会截断 provider.json
+        _dir = os.path.dirname(PROVIDER_FILE) or "."
+        fd, _tmp = tempfile.mkstemp(prefix=".provider-", suffix=".tmp", dir=_dir)
         try:
-            os.chmod(PROVIDER_FILE, 0o600)
-        except Exception:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"providers": out_list, "active": active_id},
+                          f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(_tmp, 0o600)
+            os.replace(_tmp, PROVIDER_FILE)
+        finally:
+            try:
+                if os.path.exists(_tmp):
+                    os.unlink(_tmp)
+            except Exception:
+                pass
         logger.info("llm_unified: saved %d providers (keys %s), active=%s",
                     len(providers),
                     "encrypted" if any(d.get("api_key_enc") for d in out_list) else "plain",

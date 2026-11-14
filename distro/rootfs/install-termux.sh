@@ -14,7 +14,10 @@ TMP="$(mktemp -d "$BASE/tmp.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 if echo "$SRC" | grep -qE '^https?://'; then
   echo "下载 rootfs..."
+  echo "$SRC" | grep -q '^https://' || { echo "只接受 HTTPS 安装源"; exit 5; }
   curl -fL --retry 2 -o "$TMP/rootfs.tar.zst" "$SRC"
+  # URL 安装必须带 .sha256，下载不到就拒绝安装（防止静默跳过校验）
+  curl -fL --retry 2 -o "$TMP/rootfs.tar.zst.sha256" "$SRC.sha256" || { echo "缺少 ${SRC}.sha256，拒绝安装"; exit 6; }
 else
   cp -f "$SRC" "$TMP/rootfs.tar.zst"
 fi

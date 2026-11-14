@@ -146,11 +146,20 @@ class Store:
                   user_id INTEGER NOT NULL,
                   name TEXT NOT NULL,
                   created REAL NOT NULL,
-                  revoked INTEGER NOT NULL DEFAULT 0
+                  revoked INTEGER NOT NULL DEFAULT 0,
+                  expires REAL
                 );
                 """
             )
             c.commit()
+            # 旧库迁移：api_tokens 补 expires 列
+            try:
+                cols = [r[1] for r in c.execute("PRAGMA table_info(api_tokens)").fetchall()]
+                if "expires" not in cols:
+                    c.execute("ALTER TABLE api_tokens ADD COLUMN expires REAL")
+                    c.commit()
+            except Exception:
+                pass
             # 【0.14】不再播种演示设备：没有真实设备时列表就是空的（前端显示空态）。
 
     # ---- C 内核设置（options.json，61 项）----
@@ -234,7 +243,7 @@ class Store:
         with self.lock:
             return self.conn.execute("SELECT * FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
 
-    def create_api_token(self, user_id: int, name: str) -> str:
+    def create_api_token(self, user_id: int, name: str, ttl: float | None = None) -> str:
         raw = secrets.token_urlsafe(32)
         h = hashlib.sha256(raw.encode()).hexdigest()
         with self.lock:
@@ -273,9 +282,11 @@ class Store:
         h = hashlib.sha256(raw.encode()).hexdigest()
         with self.lock:
             r = self.conn.execute(
-                "SELECT u.* FROM api_tokens t JOIN users u ON u.id=t.user_id "
+                "SELECT u.*, t.expires AS token_expires FROM api_tokens t JOIN users u ON u.id=t.user_id "
                 "WHERE t.token_hash=? AND t.revoked=0", (h,)
             ).fetchone()
+        if r is not None and r["token_expires"] is not None and float(r["token_expires"]) < now():
+            return None
         return r
 
     def session_user(self, token: str):
@@ -770,6 +781,9 @@ class Handler(BaseHTTPRequestHandler):
             usr = self._require()
             if not usr:
                 return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
             keys = ("notify_webhook", "notify_email_to", "smtp_host", "smtp_port", "smtp_user", "smtp_from",
                     "sms_provider", "sms_key")
             self._json(200, {"settings": {k: self.store.setting_get(k, "") for k in keys}})
@@ -975,14 +989,23 @@ class Handler(BaseHTTPRequestHandler):
             if not (self.lan or self._local()):
                 self._json(403, {"error": "pairing only on local/LAN"})
                 return
-            if not self._pair_ok(body):
+            # 防 DNS rebinding：Host 只能是本机名
+            host = (self.headers.get("Host") or "").split(":")[0].strip("[]").lower()
+            if host not in ("127.0.0.1", "localhost", "::1"):
+                self._json(403, {"error": "bad host"})
+                return
+            # loopback 不再免配对：必须已有 admin 会话、root key，或配过码
+            usr0 = self.store.session_user(self._cookie())
+            trusted = bool(usr0 and usr0["role"] == "admin") or bool(self._require_root()) or self._pair_ok(body)
+            if not trusted:
                 self._json(403, {"error": "pair code required"})
                 return
             admin = self.store.admin_user()
             if not admin:
                 self._json(409, {"error": "not initialized"})
                 return
-            token = self.store.create_api_token(admin["id"], "paired:" + str(body.get("name") or "device"))
+            # 配对 token 短 TTL（1 小时），避免“永久管理员”
+            token = self.store.create_api_token(admin["id"], "paired:" + str(body.get("name") or "device"), ttl=3600)
             self.store.event("auth", "issued paired API token")
             self._json(200, {"ok": True, "token": token, "user": admin["username"], "role": admin["role"]})
             return
@@ -1309,6 +1332,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.store.event("settings", "options updated (%d)" % changed)
             self._json(200, {"ok": True, "changed": changed, "path": saved["path"]})
+            return
+        if path == "/api/token/revoke":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            target = str(body.get("token") or "")
+            name = str(body.get("name") or "")
+            with self.store.lock:
+                if target:
+                    h = hashlib.sha256(target.encode()).hexdigest()
+                    cur = self.store.conn.execute("UPDATE api_tokens SET revoked=1 WHERE token_hash=?", (h,))
+                elif name:
+                    cur = self.store.conn.execute("UPDATE api_tokens SET revoked=1 WHERE name=?", (name,))
+                else:
+                    self._json(400, {"error": "需要 token 或 name"})
+                    return
+                self.store.conn.commit()
+            self._json(200, {"ok": True, "revoked": cur.rowcount})
             return
         if path == "/api/notify/test":
             usr = self._require()
