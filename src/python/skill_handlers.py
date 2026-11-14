@@ -8,6 +8,13 @@ LING OS Skill Handlers
       含记忆系统、帮助生成、默认配置创建
 """
 
+import os as _os
+LINGOS_ROOT = _os.environ.get("LINGOS_ROOT", "/LINGOS")
+
+
+def _cfg_path(name: str) -> str:
+    return _os.path.join(LINGOS_ROOT, "system", "config", name)
+
 import os
 import sys
 import json
@@ -1047,7 +1054,7 @@ register_skill("sys_command", sys_command, risk="critical", need_confirm=True)
 #   运行时**生效**状态由 C 守护 permission_list 上报（defense_mode/shadow_active）——
 #   本技能同时报告两者，不猜测、不假装。
 # =============================================================
-_SECURITY_CFG_PATH = "/LINGOS/system/config/security.json"
+_SECURITY_CFG_PATH = _cfg_path("security.json")
 _DEFENSE_USAGE = "system defense shadow|dark|absolute on|off"
 
 
@@ -1157,7 +1164,7 @@ register_skill("defense_mode", defense_mode, risk="medium")
 #   · 权限名 = ai_server.AI_PERMS 18 项（= permission_gateway.USER_PERMS）
 #     ——此前 perm_set 不校验：拼错的名字写进文件后无人读取 = 假成功。
 #   · 模式 = deny|allow_once|allow_while|allow_always|shadow（与 ai_server 一致）
-_AI_PERM_FILE = "/LINGOS/system/config/ai_permissions.json"
+_AI_PERM_FILE = _cfg_path("ai_permissions.json")
 _AI_PERM_NAMES = (
     "location", "camera", "record_audio", "record_screen", "accelerometer",
     "phone_state", "installed_apps", "external_storage", "network_control",
@@ -1790,7 +1797,7 @@ register_skill("rule_query", rule_query, risk="low")
 
 def ensure_risk_policy() -> bool:
     """确保 risk_policy.json 存在"""
-    path = "/LINGOS/system/config/risk_policy.json"
+    path = _cfg_path("risk_policy.json")
     if os.path.exists(path):
         return True
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1821,7 +1828,7 @@ def ensure_risk_policy() -> bool:
 
 def ensure_repair_strategies() -> bool:
     """确保 repair_strategies.json 存在"""
-    path = "/LINGOS/system/config/repair_strategies.json"
+    path = _cfg_path("repair_strategies.json")
     if os.path.exists(path):
         return True
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1848,7 +1855,7 @@ def ensure_repair_strategies() -> bool:
 
 def ensure_skill_help() -> bool:
     """确保 skill_help.json 存在"""
-    path = "/LINGOS/system/config/skill_help.json"
+    path = _cfg_path("skill_help.json")
     if os.path.exists(path):
         return True
     os.makedirs(os.path.dirname(path), exist_ok=True)

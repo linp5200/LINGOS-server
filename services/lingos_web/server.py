@@ -1654,7 +1654,7 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 self._json(400, {"error": "empty"})
                 return
-            ok, reply = self._chat(text, session_id="web-" + str(_cu.get("username") or "admin"))
+            ok, reply = self._chat(text, session_id="web-" + str(_cu["username"] or "admin"))
             if not ok:
                 self._json(502, {"error": "ai_unavailable", "detail": reply})
                 return

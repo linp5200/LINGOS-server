@@ -986,3 +986,17 @@ body[data-layout="portrait"].term-open .toast{bottom:calc(42vh + 78px)}
 body[data-layout="portrait"] .term-close{width:44px;height:44px}
 body[data-layout="portrait"] .term-form input{min-height:44px}
 body[data-layout="portrait"] .auth-card .field input{min-height:44px}
+
+/* 主题切换统一过渡；夜间 toast 不再盖掉语义色 */
+html.theme-anim *{transition:background-color .28s ease,color .28s ease,border-color .28s ease,fill .28s ease,stroke .28s ease!important}
+html[data-theme="night"] .toast{background:var(--moss);color:#16220f}
+html[data-theme="night"] .toast--ok{background:#2f5d43;color:#fff;border-color:#4c8a63}
+html[data-theme="night"] .toast--err{background:#6a241c;color:#ffe9e4;border-color:#a84433}
+html[data-theme="night"] .toast--warn{background:#6b531a;color:#ffeec2;border-color:#b08a2e}
+html[data-theme="night"] .toast--info{background:#1f2718;color:#e6efd9;border-color:#3e4c33}
+.toast{max-width:min(360px,calc(100vw - 40px));border-radius:16px;line-height:1.5;text-align:center}
+/* 开始三步 */
+.start-steps ol{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.start-steps li{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:var(--r-m);padding:8px 10px}
+.start-steps li b{font-size:13px;flex:0 0 auto}
+.start-steps li span{flex:1;min-width:0;color:var(--ink-2);font-size:12px}

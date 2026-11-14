@@ -244,6 +244,11 @@
   /* ============ 测试终端快捷键 ============ */
   document.addEventListener('keydown', function (e) {
     var inField = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || '');
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === '`') {
+      e.preventDefault();
+      if (S.termOpen) closeTerminal(); else openTerminal();
+      return;
+    }
     if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'a' || e.key === 'A') && !inField) {
       if (!S.termOpen) { e.preventDefault(); openTerminal(); }
     } else if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'q' || e.key === 'Q')) {
@@ -349,7 +354,13 @@
     if (btn) btn.innerHTML = icon(t === 'night' ? 'sun' : 'moon', 17);
   }
   function toggleTheme() {
-    applyTheme(document.documentElement.dataset.theme === 'night' ? 'day' : 'night');
+    var root = document.documentElement;
+    root.classList.add('theme-anim');
+    // 先让所有颜色过渡跑起来，再切主题，避免背景先闪、组件后到
+    requestAnimationFrame(function () {
+      applyTheme(root.dataset.theme === 'night' ? 'day' : 'night');
+      setTimeout(function () { root.classList.remove('theme-anim'); }, 320);
+    });
   }
 
   /* 摄像头预览：默认关闭，只有设置里打开才渲染，且必须真的有在线摄像头 */
@@ -699,6 +710,10 @@
         '<div class="view-actions"><button class="btn btn--primary" data-act="refresh">' + icon('refresh', 16) + '刷新</button></div>' +
       '</div>' +
       (S.loadError ? '<div class="errorbar" role="alert"><span>暂时读不到：' + esc(S.loadError) + '</span><button class="btn btn--sm" data-act="refresh">重试</button></div>' : '') +
+      (!S.devices.length ? '<section class="panel start-steps"><div class="panel-head"><h2>开始三步</h2><span class="more">可跳过</span></div>' +
+        '<ol><li><b>加设备</b><span>点「加一台」或局域网发现。</span><button class="btn btn--sm" data-nav="devices">去设备</button></li>' +
+        '<li><b>接 AI</b><span>设置 → AI 引擎，填云端 key 或用本地 Ollama。</span><button class="btn btn--sm" data-nav="settings" data-set-target="ai">去设置</button></li>' +
+        '<li><b>定隐私等级</b><span>安全页选 L1–L4，默认 L1。</span><button class="btn btn--sm" data-nav="security">去安全</button></li></ol></section>' : '') +
       '<div class="home-grid">' +
         '<div class="home-main">' +
           '<div class="summary">' +
@@ -1129,7 +1144,8 @@
     var el = $('#view-system');
     el.innerHTML =
       '<div class="view-head"><div><h1>系统</h1><p>' + CMDS.reduce(function (n, g) { return n + g[1].length; }, 0) + ' 条命令的入口，全部走 <code>/api/cmd</code>。命令服务没起时会明确报错，不会伪造状态。</p></div>' +
-        '<div class="view-actions"><button class="btn" data-sys="system.status">' + icon('refresh', 16) + '系统状态</button>' +
+        '<div class="view-actions"><button class="btn" data-act="open-term">' + icon('chat', 16) + '控制台</button>' +
+        '<button class="btn" data-sys="system.status">' + icon('refresh', 16) + '系统状态</button>' +
         '<button class="btn btn--primary" data-sys="core.health">' + icon('check', 16) + '健康检查</button></div></div>' +
       (cmdProbe === 'off' ? '<div class="banner" role="status"><b>命令服务未启动</b><span>系统命令要核心进程在跑；先启动 lingos，再点重试。</span><button class="btn btn--sm" data-act="probe-cmd">重试</button></div>' : '') +
       '<div class="cards"><section class="panel-block"><h2>常用</h2><p>先跑这几条看这台机器醒没醒。</p>' +
@@ -1572,7 +1588,9 @@
   document.addEventListener('click', function (e) {
     var nav = e.target.closest('[data-nav]');
     if (nav) {
+      var target = nav.getAttribute('data-set-target');
       location.hash = '#/' + nav.getAttribute('data-nav');
+      if (target) { S.setSection = target; setTimeout(function () { if (S.view === 'settings') renderSettings(); }, 50); }
       return;
     }
     var f = e.target.closest('[data-devfilter]');
@@ -1818,7 +1836,8 @@
       if (!nu || !np || !nu.value.trim() || np.value.length < 8) { toast('用户名要有，密码至少 8 位'); return; }
       api('/api/users', { method: 'POST', body: { username: nu.value.trim(), password: np.value, role: 'user' } }).then(function (r) {
         if (r.ok) { toast('已加用户'); nu.value = ''; np.value = ''; loadSettings(); renderSecurity(); }
-        else toast('没加成：' + ((r.data && r.data.error) || r.status));
+        else if (r.status === 409) toast('这个用户名已经存在', 'err');
+        else toast('没加成：' + ((r.data && r.data.error) || r.status), 'err');
       });
     } else if (act === 'open-term') { openTerminal(); return; }
     else if (act === 'plugin-import') {
