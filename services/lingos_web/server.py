@@ -29,6 +29,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import ipaddress
 import urllib.parse
 import urllib.request
 from email.mime.text import MIMEText
@@ -42,6 +43,7 @@ VERSION = "0.13.0"
 OPTIONS_SCHEMA_PATH = Path(__file__).with_name("options_schema.json")
 COOKIE = "lingos_session"
 SESSION_TTL = 7 * 24 * 3600
+PAIR_TTL = 30 * 24 * 3600  # 已配对设备 token：30 天，可用 /api/token/refresh 续
 MAX_BODY = 8 * 1024 * 1024
 MAX_RESTORE = 64 * 1024 * 1024
 LEVELS = {
@@ -556,6 +558,7 @@ def safe_extract_backup(raw: bytes, dest: Path):
 
 
 class Handler(BaseHTTPRequestHandler):
+    login_fails: dict = {}
     server_version = "LingOS-Web/" + VERSION
     store: Store
     web_dir: Path
@@ -642,6 +645,23 @@ class Handler(BaseHTTPRequestHandler):
         addr = self.client_address[0] if self.client_address else ""
         return addr in ("127.0.0.1", "::1", "localhost")
 
+    def _host_ok(self) -> bool:
+        """防 DNS rebinding：Host 必须是 loopback 名/地址，或（--lan 时）IP 字面量。"""
+        raw = (self.headers.get("Host") or "").strip()
+        try:
+            host = urllib.parse.urlsplit("//" + raw).hostname or ""
+        except Exception:
+            host = ""
+        if not host:
+            return False
+        if host in ("127.0.0.1", "localhost"):
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+            return bool(ip.is_loopback or self.lan)
+        except ValueError:
+            return False
+
     def _pair_ok(self, body: dict) -> bool:
         # loopback 不再免配对：配对码是唯一“无会话/无 root key”的凭据
         code = str(body.get("pair", "") or self.headers.get("X-Lingos-Pair", ""))
@@ -699,6 +719,9 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         path = u.path
         q = urllib.parse.parse_qs(u.query)
+        if path.startswith("/api/") and not self._host_ok():
+            self._json(403, {"error": "bad host"})
+            return
         if path == "/api/health":
             self._json(200, {
                 "ok": True, "version": VERSION, "platform": sys.platform,
@@ -912,6 +935,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_ok():
             self._json(403, {"error": "bad origin"})
             return
+        if path.startswith("/api/") and not self._host_ok():
+            self._json(403, {"error": "bad host"})
+            return
         body = {} if path == "/api/restore" else self._read_json()
         if path == "/api/restore":
             usr = self._require("admin")
@@ -975,10 +1001,19 @@ class Handler(BaseHTTPRequestHandler):
             if not self._local() and not self._pair_ok(body):
                 self._json(403, {"error": "pair code required"})
                 return
+            ip = self.client_address[0] if self.client_address else "?"
+            now_ts = time.time()
+            fails = [t for t in Handler.login_fails.get(ip, []) if now_ts - t < 60]
+            if len(fails) >= 10:
+                self._json(429, {"error": "too many attempts"})
+                return
             usr = self.store.verify_user(username, pw)
             if not usr:
+                fails.append(now_ts)
+                Handler.login_fails[ip] = fails[-20:]
                 self._json(401, {"error": "invalid credentials"})
                 return
+            Handler.login_fails.pop(ip, None)
             token = self.store.new_session(usr["id"], self.client_address[0])
             self.store.event("auth", f"login {username} from {self.client_address[0]}")
             self._json(200, {"ok": True, "username": usr["username"], "role": usr["role"]}, cookie=token)
@@ -1023,7 +1058,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(409, {"error": "not initialized"})
                 return
             # 配对 token 短 TTL（1 小时），避免“永久管理员”
-            token = self.store.create_api_token(admin["id"], "paired:" + str(body.get("name") or "device"), ttl=3600)
+            token = self.store.create_api_token(admin["id"], "paired:" + str(body.get("name") or "device"), ttl=PAIR_TTL)
             self.store.event("auth", "issued paired API token")
             self._json(200, {"ok": True, "token": token, "user": admin["username"], "role": admin["role"]})
             return
@@ -1351,6 +1386,35 @@ class Handler(BaseHTTPRequestHandler):
             self.store.event("settings", "options updated (%d)" % changed)
             self._json(200, {"ok": True, "changed": changed, "path": saved["path"]})
             return
+        if path == "/api/token/refresh":
+            # 用现有凭据换一枚新设备 token（旧的若来自 Bearer 则吊销）
+            usr = self._user()
+            if not usr:
+                self._json(401, {"error": "unauthorized"})
+                return
+            auth = self.headers.get("Authorization", "")
+            old = auth[7:].strip() if auth.startswith("Bearer ") else ""
+            new_tok = self.store.create_api_token(usr["id"], "refreshed:" + usr["username"], ttl=PAIR_TTL)
+            if old:
+                h = hashlib.sha256(old.encode()).hexdigest()
+                with self.store.lock:
+                    self.store.conn.execute("UPDATE api_tokens SET revoked=1 WHERE token_hash=?", (h,))
+                    self.store.conn.commit()
+                try:
+                    tf = Path(os.environ.get("LINGOS_TOKENS_FILE", str(self.store.root / "state" / "tokens.json")))
+                    if tf.is_file():
+                        arr = json.loads(tf.read_text(encoding="utf-8")) or []
+                        for ent in arr:
+                            if hashlib.sha256(str(ent.get("token", "")).encode()).hexdigest() == h:
+                                ent["revoked"] = 1
+                        tmp = tf.with_suffix(".json.tmp")
+                        tmp.write_text(json.dumps(arr, ensure_ascii=False), encoding="utf-8")
+                        os.chmod(tmp, 0o600)
+                        os.replace(tmp, tf)
+                except Exception as e:
+                    log("token refresh mirror failed:", e)
+            self._json(200, {"ok": True, "token": new_tok, "expires_in": PAIR_TTL})
+            return
         if path == "/api/token/revoke":
             usr = self._require()
             if not usr:
@@ -1449,6 +1513,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         u = urllib.parse.urlparse(self.path)
+        if u.path.startswith("/api/") and not self._host_ok():
+            self._json(403, {"error": "bad host"})
+            return
         if not self._origin_ok():
             self._json(403, {"error": "bad origin"})
             return

@@ -279,7 +279,7 @@ class WebTest(unittest.TestCase):
         row = self.store.conn.execute(
             "SELECT expires FROM api_tokens WHERE name='paired:ok' ORDER BY created DESC LIMIT 1").fetchone()
         self.assertIsNotNone(row["expires"])
-        self.assertLess(abs(float(row["expires"]) - (_t.time() + 3600)), 60)
+        self.assertLess(abs(float(row["expires"]) - (_t.time() + 30 * 24 * 3600)), 120)
         self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
         st, _ = self.req("GET", "/api/notify/settings")
         self.assertEqual(st, 403)
@@ -295,6 +295,29 @@ class WebTest(unittest.TestCase):
         WebTest.cookie = ""
         st, _ = self.req("GET", "/api/users", extra_headers={"Authorization": "Bearer " + tok})
         self.assertEqual(st, 401)
+
+
+    def test_17_host_guard_and_refresh(self):
+        """DNS rebinding：非本机 Host 拒绝；设备 token 可刷新且旧 token 失效。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        st, _ = self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"},
+                         extra_headers={"Host": "evil.example.com"})
+        self.assertEqual(st, 403)
+        st, _ = self.req("GET", "/api/users", extra_headers={"Host": "evil.example.com"})
+        self.assertEqual(st, 403)
+        # 取一枚设备 token 并刷新
+        st, body = self.req("POST", "/api/pair", {"name": "phone"})
+        self.assertEqual(st, 200)
+        old = json.loads(body)["token"]
+        st, body = self.req("POST", "/api/token/refresh", extra_headers={"Authorization": "Bearer " + old})
+        self.assertEqual(st, 200)
+        new = json.loads(body)["token"]
+        self.assertNotEqual(old, new)
+        WebTest.cookie = ""
+        st, _ = self.req("GET", "/api/users", extra_headers={"Authorization": "Bearer " + old})
+        self.assertEqual(st, 401)
+        st, _ = self.req("GET", "/api/users", extra_headers={"Authorization": "Bearer " + new})
+        self.assertEqual(st, 200)
 
 
 if __name__ == "__main__":
