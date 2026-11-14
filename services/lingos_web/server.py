@@ -1657,7 +1657,10 @@ class Handler(BaseHTTPRequestHandler):
                     return False, str(obj.get("content") or obj.get("msg") or obj)[:300]
                 for k in ("reply", "content", "message", "text"):
                     if isinstance(obj.get(k), str) and obj[k].strip():
-                        return True, obj[k]
+                        txt = obj[k].strip()
+                        if txt.startswith("AI Error:") or txt.startswith("AI Error："):
+                            return False, "模型服务没连上（" + txt[:200] + "）"
+                        return True, txt
                 # 兼容 {status, data:{reply}} 包装（部分版本/AI 服务会这样回）
                 data = obj.get("data")
                 if isinstance(data, dict):
