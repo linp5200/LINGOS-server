@@ -892,7 +892,7 @@
     var time = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
     var send = $('#aiSend');
     if (send) { send.disabled = true; send.classList.add('is-busy'); }
-    api('/api/chat', { method: 'POST', body: { text: text } }).then(function (r) {
+    api('/api/chat', { method: 'POST', body: { text: text }, timeout: 120000 }).then(function (r) {
       if (send) { send.disabled = false; send.classList.remove('is-busy'); }
       if (!r.ok) {
         var code = r.data && r.data.error;

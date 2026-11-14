@@ -159,10 +159,7 @@ class Store:
         env = os.environ.get("LINGOS_OPTIONS")
         if env:
             return Path(env)
-        for c in (self.root / "system" / "config" / "options.json",
-                  Path("/LINGOS/system/config/options.json")):
-            if c.exists():
-                return c
+        # 只认本数据根：回退宿主 /LINGOS 会让自定义 --root 串环境
         return self.root / "system" / "config" / "options.json"
 
     def options_read(self) -> dict:
@@ -1348,11 +1345,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "channel 只支持 webhook/email/sms"})
             return
         if path == "/api/chat":
+            # AI 能以 daemon 身份读写文件/执行工具，普通 user 可绕过 Web ACL：
+            # 0.14 起只对管理员开放（后续可做角色化工具白名单）。
+            _cu = self._require()
+            if not _cu:
+                return
+            if _cu["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
             text = str(body.get("text") or "").strip()
             if not text:
                 self._json(400, {"error": "empty"})
                 return
-            ok, reply = self._chat(text)
+            ok, reply = self._chat(text, session_id="web-" + str(_cu.get("username") or "admin"))
             if not ok:
                 self._json(502, {"error": "ai_unavailable", "detail": reply})
                 return
@@ -1633,15 +1638,18 @@ class Handler(BaseHTTPRequestHandler):
             "audit": self.store.events(30),
         }
 
-    def _chat(self, text: str) -> tuple[bool, str]:
-        """返回 (ok, text)。连不上 AI 服务时 ok=False，由调用方映射 502，不按文本猜。"""
+    def _chat(self, text: str, session_id: str = "default") -> tuple[bool, str]:
+        """返回 (ok, text)。连不上 AI 服务时 ok=False，由调用方映射 502，不按文本猜。
+
+        nook_ask 是同步 LLM + 工具轮，可能跑几十秒：socket 与前端请求都放宽到 120s。
+        """
         sock_path = self.chat_sock or str(self.store.root / "run" / "ai.sock")
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(8)
+            s.settimeout(120)
             s.connect(sock_path)
             # ai_server 的对话入口是 nook_ask（参数 prompt），不是 chat
-            s.sendall((json.dumps({"cmd": "nook_ask", "params": {"prompt": text}}, ensure_ascii=False) + "\n").encode())
+            s.sendall((json.dumps({"cmd": "nook_ask", "params": {"prompt": text, "session_id": session_id}}, ensure_ascii=False) + "\n").encode())
             data = b""
             while len(data) < 2 * 1024 * 1024:
                 chunk = s.recv(65536)
@@ -1658,7 +1666,7 @@ class Handler(BaseHTTPRequestHandler):
                 for k in ("reply", "content", "message", "text"):
                     if isinstance(obj.get(k), str) and obj[k].strip():
                         txt = obj[k].strip()
-                        if txt.startswith("AI Error:") or txt.startswith("AI Error："):
+                        if txt.startswith(("AI Error:", "AI Error：", "AI 错误：", "AI处理错误：")):
                             return False, "模型服务没连上（" + txt[:200] + "）"
                         return True, txt
                 # 兼容 {status, data:{reply}} 包装（部分版本/AI 服务会这样回）

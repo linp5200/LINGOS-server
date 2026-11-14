@@ -17,6 +17,7 @@ LING OS 统一 LLM 调用层（0.2.0——AI-AGENT#7 定稿）
 import json
 import os
 import time
+import tempfile
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Generator, Tuple

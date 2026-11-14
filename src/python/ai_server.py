@@ -261,12 +261,12 @@ for _mod in ("LLMUnified", "VoiceService", "SkillHandlers", "MemoryRetrieval",
 CRASH_LOG = os.path.join(LOG_DIR, "ai_server_crash.log")
 
 # ========== 常量 ==========
-AUTH_SOCKET_PATH = "/LINGOS/run/auth.sock"
 # 【0.14】Termux 原生模式允许用环境变量改根，不写死 /LINGOS（Android 根分区只读）
 LINGOS_ROOT = os.environ.get("LINGOS_ROOT", "/LINGOS")
 CONFIG_PATH = os.environ.get("LINGOS_AI_CONFIG", os.path.join(LINGOS_ROOT, "system/config/ai_config.json"))
 AI_SOCKET_PATH = os.environ.get("LINGOS_AI_SOCKET", os.path.join(LINGOS_ROOT, "run/ai.sock"))
-DAEMON_SOCKET_PATH = "/LINGOS/run/daemon.sock"
+AUTH_SOCKET_PATH = os.path.join(LINGOS_ROOT, "run/auth.sock")
+DAEMON_SOCKET_PATH = os.path.join(LINGOS_ROOT, "run/daemon.sock")
 
 # 【0.2.1】HA 事件广播：活跃连接集合（线程安全——锁保护增删/遍历）
 _ACTIVE_CONNS = set()
@@ -346,7 +346,7 @@ def _weather_city_config() -> Dict:
     """读取天气城市配置（/LINGOS/system/config/weather.json——可被 config set 管理）"""
     cfg = {"city": "上海", "lat": 31.2304, "lon": 121.4737, "api": "open-meteo", "custom_url": ""}
     try:
-        with open("/LINGOS/system/config/weather.json", encoding="utf-8") as f:
+        with open(os.path.join(LINGOS_ROOT, "system/config/weather.json"), encoding="utf-8") as f:
             c = json.load(f)
         if isinstance(c, dict):
             cfg.update(c)
@@ -4792,8 +4792,7 @@ def cmd_ai_config_set(provider: str = "", api_key: str = "", base_url: str = "",
     if provider not in ("deepseek", "ollama"):
         return {"status": "error", "msg": "provider 仅支持 deepseek/ollama"}
     try:
-        cfg_path = os.environ.get("LINGOS_LEGACY_AI_CONFIG",
-                                  os.path.join(LINGOS_ROOT, "config/ai_config.json"))
+        cfg_path = CONFIG_PATH
         cfg = {}
         if os.path.exists(cfg_path):
             with open(cfg_path) as f:
@@ -6142,9 +6141,12 @@ def main():
         logger.info(f"  ollama model: {ollama_model}")
     # ---- 配置摘要日志结束 ----
 
-    # 确保目录存在
-    os.makedirs("/LINGOS/system/config", exist_ok=True)
-    os.makedirs("/LINGOS/run", exist_ok=True)
+    # 确保目录存在（原生 Termux 下 /LINGOS 只读，必须走 LINGOS_ROOT）
+    for _d in (os.path.join(LINGOS_ROOT, "system/config"), os.path.join(LINGOS_ROOT, "run")):
+        try:
+            os.makedirs(_d, exist_ok=True)
+        except Exception as _e:
+            logger.warning("mkdir failed (ignored): %s: %s", _d, _e)
     # 【0.2.0】语音服务初始化（清理过期音频）+ HTTP 音频端点（8088——音频本体不走 WS）
     try:
         voice_service.voice_service_init()
@@ -6176,7 +6178,7 @@ def main():
 
 
     # 创建默认 sub_ai.conf
-    sub_ai_conf = "/LINGOS/system/config/sub_ai.conf"
+    sub_ai_conf = os.path.join(LINGOS_ROOT, "system/config/sub_ai.conf")
     if not os.path.exists(sub_ai_conf):
         with open(sub_ai_conf, "w") as f:
             f.write("max_workers = 0\nresult_wait_timeout = 30\nresult_retry_count = 3\n")

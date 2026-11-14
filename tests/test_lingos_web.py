@@ -247,5 +247,15 @@ class WebTest(unittest.TestCase):
         self.assertIn(st, (200, 502))  # 有权限：可能连不上核心，但不是 403
 
 
+    def test_15_chat_admin_only(self):
+        """AI 能以 daemon 身份执行工具：普通 user 不允许走 /api/chat。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        admin_cookie = WebTest.cookie
+        self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
+        st, _ = self.req("POST", "/api/chat", {"text": "hi"})
+        self.assertEqual(st, 403)
+        WebTest.cookie = admin_cookie
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
