@@ -24,6 +24,7 @@ class WebTest(unittest.TestCase):
         server.Handler.web_dir = HERE / "webdesk"
         server.Handler.lan = False
         server.Handler.pair_code = ""
+        os.environ["LINGOS_BACKEND_HTTP"] = "http://127.0.0.1:1"  # 测试里不让命令代理等 20s
         cls.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         cls.port = cls.httpd.server_address[1]
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
@@ -248,9 +249,11 @@ class WebTest(unittest.TestCase):
     def test_14_cmd_requires_admin(self):
         """普通 user 不能打 /api/cmd 的 C 命令面。"""
         self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
-        self.req("POST", "/api/users", {"username": "carol", "password": "carolpass123", "role": "user"})
+        st, _ = self.req("POST", "/api/users", {"username": "carol", "password": "carolpass123", "role": "user"})
+        self.assertIn(st, (200, 409))
         admin_cookie = WebTest.cookie
-        self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
+        st, _ = self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
+        self.assertEqual(st, 200)
         st, _ = self.req("POST", "/api/cmd", {"cmd": "system.status", "args": {}})
         self.assertEqual(st, 403)
         WebTest.cookie = admin_cookie
@@ -375,6 +378,26 @@ class WebTest(unittest.TestCase):
         admin_cookie = WebTest.cookie
         self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
         st, _ = self.req("GET", "/api/tokens")
+        self.assertEqual(st, 403)
+        WebTest.cookie = admin_cookie
+
+
+    def test_20_plugin_toggle(self):
+        """插件启停：admin 可切，普通用户 403，未知 404。"""
+        self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
+        st, _ = self.req("POST", "/api/plugins/import", {"manifest": {"id": "demo.toggle", "name": "开关", "version": "0.1.0"}})
+        self.assertEqual(st, 200)
+        st, body = self.req("POST", "/api/plugins/toggle", {"id": "demo.toggle", "enabled": False})
+        self.assertEqual(st, 200)
+        self.assertFalse(json.loads(body)["enabled"])
+        st, body = self.req("GET", "/api/plugins")
+        item = [p for p in json.loads(body)["plugins"] if p["id"] == "demo.toggle"][0]
+        self.assertFalse(item["enabled"])
+        st, _ = self.req("POST", "/api/plugins/toggle", {"id": "nope.plugin", "enabled": True})
+        self.assertEqual(st, 404)
+        admin_cookie = WebTest.cookie
+        self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
+        st, _ = self.req("POST", "/api/plugins/toggle", {"id": "demo.toggle", "enabled": True})
         self.assertEqual(st, 403)
         WebTest.cookie = admin_cookie
 

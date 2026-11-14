@@ -1000,3 +1000,68 @@ html[data-theme="night"] .toast--info{background:#1f2718;color:#e6efd9;border-co
 .start-steps li{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:var(--r-m);padding:8px 10px}
 .start-steps li b{font-size:13px;flex:0 0 auto}
 .start-steps li span{flex:1;min-width:0;color:var(--ink-2);font-size:12px}
+
+/* ============ 0.15 流畅度：View Transitions ============ */
+@view-transition{navigation:auto}
+::view-transition{pointer-events:none}
+::view-transition-old(root){animation:vtOut .15s cubic-bezier(.3,0,1,1) both}
+::view-transition-new(root){animation:vtIn .21s cubic-bezier(0,0,.2,1) both}
+@keyframes vtOut{to{opacity:0;transform:translateX(-8px)}}
+@keyframes vtIn{from{opacity:0;transform:translateX(8px)}}
+html[data-navdir="back"]::view-transition-old(root){animation-name:vtOutBack}
+html[data-navdir="back"]::view-transition-new(root){animation-name:vtInBack}
+@keyframes vtOutBack{to{opacity:0;transform:translateX(8px)}}
+@keyframes vtInBack{from{opacity:0;transform:translateX(-8px)}}
+::view-transition-group(appbar),::view-transition-group(tabbar){animation:none}
+::view-transition-old(appbar),::view-transition-new(appbar),::view-transition-old(tabbar),::view-transition-new(tabbar){animation:none}
+.bar{view-transition-name:appbar}
+.tabbar{view-transition-name:tabbar}
+html.theme-anim::view-transition-old(root),html.theme-anim::view-transition-new(root){animation:none}
+@media (prefers-reduced-motion:reduce){
+  ::view-transition-old(*),::view-transition-new(*),::view-transition-group(*){animation-duration:.001ms!important;animation-delay:0s!important}
+}
+
+/* 版本号 44px 命中区 + 按压反馈 */
+.version-hit{min-height:44px;display:inline-flex;align-items:center;padding:0 6px;border-radius:8px}
+:where(button,.btn,.dev-card,.adapter,.fs-row,.cmd):active{transform:scale(.985)}
+:where(button,.btn,.dev-card,.adapter,.fs-row,.cmd){transition:transform 90ms ease,background-color 140ms ease,border-color 140ms ease}
+
+/* 容器查询：卡片按容器宽度自适应 */
+.cards{container-type:inline-size}
+@container (min-width:720px){
+  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@container (min-width:1080px){
+  .cards{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+.dev-grid{container-type:inline-size}
+@container (min-width:760px){.dev-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* 骨架→内容交接 */
+.skel{transition:opacity 120ms ease}
+.cards,.dev-grid,.fs-list,.tl-list{animation:contentIn 180ms cubic-bezier(0,0,.2,1) both}
+@keyframes contentIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* 列表只前 5 项 stagger */
+.tl-list>li:nth-child(-n+5),.cards>.panel-block:nth-child(-n+5){animation:contentIn 180ms cubic-bezier(0,0,.2,1) both}
+.tl-list>li:nth-child(1),.cards>.panel-block:nth-child(1){animation-delay:0ms}
+.tl-list>li:nth-child(2),.cards>.panel-block:nth-child(2){animation-delay:40ms}
+.tl-list>li:nth-child(3),.cards>.panel-block:nth-child(3){animation-delay:80ms}
+.tl-list>li:nth-child(4),.cards>.panel-block:nth-child(4){animation-delay:120ms}
+.tl-list>li:nth-child(5),.cards>.panel-block:nth-child(5){animation-delay:160ms}
+
+/* 强制色彩/高对比：用系统色和边框，不靠背景色区分状态 */
+@media (forced-colors:active){
+  .btn,.dev-card,.panel-block,.toast,.lmodal-card,.adapter{border:1px solid CanvasText!important;box-shadow:none!important}
+  .toast--err,.toast--warn,.toast--ok{border-width:2px!important}
+  .tabbar button[aria-current="page"],.rail-btn.is-active{outline:2px solid Highlight!important;outline-offset:-2px}
+  .seg-btn.is-on{background:Highlight!important;color:HighlightText!important}
+}
+@media (prefers-contrast:more){
+  :root{--line:color-mix(in oklab,var(--ink) 45%,transparent);--line-2:color-mix(in oklab,var(--ink) 65%,transparent)}
+}
+
+/* 路由切换的轻量交叉（不依赖 View Transition API） */
+.board.view-swap{animation:viewSwap .22s cubic-bezier(0,0,.2,1)}
+@keyframes viewSwap{from{opacity:.35;transform:translateY(4px)}to{opacity:1;transform:none}}
+html[data-navdir="back"] .board.view-swap{animation-name:viewSwapBack}
+@keyframes viewSwapBack{from{opacity:.35;transform:translateY(-4px)}to{opacity:1;transform:none}}

@@ -1448,6 +1448,43 @@ class Handler(BaseHTTPRequestHandler):
                 self.store.setting_set(k, str(v))
             self._json(200, {"ok": True})
             return
+        if path == "/api/plugins/toggle":
+            usr = self._require()
+            if not usr:
+                return
+            if usr["role"] != "admin":
+                self._json(403, {"error": "admin required"})
+                return
+            pid = str(body.get("id") or "").strip()
+            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,63}", pid):
+                self._json(400, {"error": "非法插件 id"})
+                return
+            pdir = self.store.root / "plugins"
+            target = pdir / (pid + ".json")
+            if not target.is_file():
+                self._json(404, {"error": "插件不存在"})
+                return
+            try:
+                man = json.loads(target.read_text(encoding="utf-8"))
+            except Exception:
+                self._json(500, {"error": "插件清单损坏"})
+                return
+            man["enabled"] = bool(body.get("enabled", True))
+            fd, tname = tempfile.mkstemp(prefix=".plugin-" + pid + "-", suffix=".tmp", dir=str(pdir))
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(man, f, ensure_ascii=False, indent=1)
+                    f.flush(); os.fsync(f.fileno())
+                os.chmod(tname, 0o600)
+                os.replace(tname, target)
+            finally:
+                try:
+                    if os.path.exists(tname): os.unlink(tname)
+                except Exception:
+                    pass
+            self.store.event("plugin", "toggle %s=%s" % (pid, man["enabled"]))
+            self._json(200, {"ok": True, "id": pid, "enabled": man["enabled"]})
+            return
         if path == "/api/plugins/import":
             usr = self._require()
             if not usr:

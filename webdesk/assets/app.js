@@ -355,11 +355,33 @@
   }
   function toggleTheme() {
     var root = document.documentElement;
-    root.classList.add('theme-anim');
-    // 先让所有颜色过渡跑起来，再切主题，避免背景先闪、组件后到
-    requestAnimationFrame(function () {
-      applyTheme(root.dataset.theme === 'night' ? 'day' : 'night');
+    var nextTheme = root.dataset.theme === 'night' ? 'day' : 'night';
+    var btn = $('#themeBtn');
+    var r = btn ? btn.getBoundingClientRect() : { left: innerWidth - 40, top: 30, width: 32, height: 32 };
+    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+    var radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+    if (!document.startViewTransition || prefs().motionLevel === 'off') {
+      root.classList.add('theme-anim');
+      applyTheme(nextTheme);
       setTimeout(function () { root.classList.remove('theme-anim'); }, 320);
+      return;
+    }
+    root.classList.add('theme-anim');
+    var applied = false;
+    var doApply = function () { applied = true; applyTheme(nextTheme); };
+    var t;
+    try { t = document.startViewTransition(doApply); } catch (e) { doApply(); return; }
+    setTimeout(function () { if (!applied) doApply(); }, 120);
+    t.ready.then(function () {
+      try {
+        document.documentElement.animate(
+          { clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + radius + 'px at ' + x + 'px ' + y + 'px)'] },
+          { duration: 320, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' }
+        );
+      } catch (e) {}
+    }).catch(function () {});
+    t.finished.catch(function () {}).finally(function () {
+      setTimeout(function () { root.classList.remove('theme-anim'); }, 80);
     });
   }
 
@@ -572,7 +594,17 @@
     });
     var where = $('#barWhere');
     if (where) where.textContent = TITLES[v];
-    var board = $('#board'); if (board) board.scrollTop = 0;
+    var board = $('#board');
+    if (board) {
+      board.scrollTop = 0;
+      if (prefs().motionLevel !== 'off') {
+        board.classList.remove('view-swap');
+        void board.offsetWidth;
+        board.classList.add('view-swap');
+        clearTimeout(board._swapTimer);
+        board._swapTimer = setTimeout(function () { board.classList.remove('view-swap'); }, 240);
+      }
+    }
     renderNav();
     if (v === 'home') renderHome();
     else if (v === 'devices') renderDevices();
@@ -1144,8 +1176,7 @@
     var el = $('#view-system');
     el.innerHTML =
       '<div class="view-head"><div><h1>系统</h1><p>' + CMDS.reduce(function (n, g) { return n + g[1].length; }, 0) + ' 条命令的入口，全部走 <code>/api/cmd</code>。命令服务没起时会明确报错，不会伪造状态。</p></div>' +
-        '<div class="view-actions"><button class="btn" data-act="open-term">' + icon('chat', 16) + '控制台</button>' +
-        '<button class="btn" data-sys="system.status">' + icon('refresh', 16) + '系统状态</button>' +
+        '<div class="view-actions"><button class="btn" data-sys="system.status">' + icon('refresh', 16) + '系统状态</button>' +
         '<button class="btn btn--primary" data-sys="core.health">' + icon('check', 16) + '健康检查</button></div></div>' +
       (cmdProbe === 'off' ? '<div class="banner" role="status"><b>命令服务未启动</b><span>系统命令要核心进程在跑；先启动 lingos，再点重试。</span><button class="btn btn--sm" data-act="probe-cmd">重试</button></div>' : '') +
       '<div class="cards"><section class="panel-block"><h2>常用</h2><p>先跑这几条看这台机器醒没醒。</p>' +
@@ -1730,10 +1761,32 @@
     var vTap = e.target.closest('[data-act="version-tap"]');
     if (vTap) {
       var nowTs = Date.now();
-      if (nowTs - S.versionTapAt > 1500) S.versionTaps = 0;
+      if (nowTs - S.versionTapAt > 3000) S.versionTaps = 0;
       S.versionTapAt = nowTs;
       S.versionTaps++;
-      if (S.versionTaps >= 3) { S.versionTaps = 0; S.devMode = !S.devMode; renderSettings(); toast(S.devMode ? '测试工作台已打开' : '测试工作台已关闭', 'info'); }
+      if (S.versionTaps >= 3) {
+        S.versionTaps = 0;
+        S.devMode = !S.devMode;
+        renderSettings();
+        toast(S.devMode ? '测试工作台已打开' : '测试工作台已关闭', 'info');
+        if (S.devMode) setTimeout(function () {
+          var p = document.querySelector('.dev-panel');
+          if (p && p.scrollIntoView) p.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 60);
+      }
+      return;
+    }
+
+    var plugT = e.target.closest('[data-plugin-toggle]');
+    if (plugT) {
+      var pid = plugT.getAttribute('data-plugin-toggle');
+      var en = plugT.getAttribute('data-enabled') === '1';
+      plugT.disabled = true;
+      api('/api/plugins/toggle', { method: 'POST', body: { id: pid, enabled: en } }).then(function (r) {
+        toast(r.ok ? (en ? '插件已启用' : '插件已停用') : ('没切换：' + ((r.data && r.data.error) || r.status)), r.ok ? 'ok' : 'err');
+        if (r.ok) { S.plugins = null; loadPlugins(); }
+        else plugT.disabled = false;
+      });
       return;
     }
 
@@ -2045,6 +2098,22 @@
   });
 
   document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'fsFile') {
+      var f = e.target.files && e.target.files[0];
+      if (!f) return;
+      if (f.size > 512 * 1024) { toast('文件太大（上限 512KB）', 'err'); e.target.value = ''; return; }
+      var rd = new FileReader();
+      rd.onload = function () {
+        var full = (fsPath === '/' ? '/' : fsPath.replace(/\/+$/, '') + '/') + f.name.replace(/[\\/]/g, '_');
+        api('/api/fs/write', { method: 'POST', body: { path: full, content: String(rd.result || '') } }).then(function (r) {
+          if (r.ok) { toast('已上传 ' + f.name); loadFs(fsPath); }
+          else toast('没上传成功：' + ((r.data && r.data.error) || r.status), 'err');
+        });
+        e.target.value = '';
+      };
+      rd.readAsText(f);
+      return;
+    }
     if (e.target && e.target.id === 'pluginFile') {
       var btn = document.getElementById('pluginImportBtn');
       var name = document.getElementById('pluginFileName');
