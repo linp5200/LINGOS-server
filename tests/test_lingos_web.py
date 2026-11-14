@@ -399,6 +399,9 @@ class WebTest(unittest.TestCase):
         self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
         st, _ = self.req("POST", "/api/plugins/toggle", {"id": "demo.toggle", "enabled": True})
         self.assertEqual(st, 403)
+        st, body = self.req("GET", "/api/plugins")
+        self.assertEqual(st, 200)
+        self.assertTrue(all("entry" not in p for p in json.loads(body)["plugins"]))
         WebTest.cookie = admin_cookie
 
 

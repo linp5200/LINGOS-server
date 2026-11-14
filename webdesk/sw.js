@@ -20,9 +20,10 @@ self.addEventListener('fetch', function(e){
     }).catch(function(){ return caches.match('/index.html'); }));
     return;
   }
-  e.respondWith(caches.match(e.request).then(function(r){ return r || fetch(e.request).then(function(resp){
+  // 网络优先：避免发版后客户端长期用旧 JS/CSS；失败再回缓存。
+  e.respondWith(fetch(e.request).then(function(resp){
     var copy = resp.clone();
     caches.open(CACHE).then(function(c){ c.put(e.request, copy).catch(function(){}); });
     return resp;
-  }).catch(function(){ return caches.match(e.request); }); }));
+  }).catch(function(){ return caches.match(e.request); }));
 });

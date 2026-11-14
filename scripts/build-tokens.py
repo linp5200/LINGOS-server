@@ -36,6 +36,8 @@ def main():
             if len(path) == 2 and path[0] == "duration":
                 lines.append(f"  --dur-{path[1]}: {val};")
         elif typ == "typography" and isinstance(val, dict):
+            if len(path) == 2:
+                lines.append(f"  --typography-{path[1]}: {val.get('fontSize', '13px')};")
             lines.append(f"  {name}-size: {val.get('fontSize', '13px')};")
             lines.append(f"  {name}-weight: {val.get('fontWeight', 400)};")
             lines.append(f"  {name}-line: {val.get('lineHeight', 1.5)};")

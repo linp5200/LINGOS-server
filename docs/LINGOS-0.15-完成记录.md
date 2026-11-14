@@ -40,3 +40,9 @@
 - 独立 UI 审查 4 轮：6.5 → 7.4 → 8.3；代码审查：7.5 → 8.2 → 8.9。P0/P1 已清零；剩余为 P2（space/typography token 未消费、SW cache-first 手工版本、部分历史加固项）。
 - 修正：tokens 单一事实源（颜色/圆角/时长，夜间 night 组）、容器查询、SW 一次性迁移与注册、版本热区 151×44、动效四档 52×44、骨架 120ms 淡出、导航方向、插件启停 UI、文件上传去重、插件请求校验、23 项测试。
 - UI 检查脚本重写：7 视图 + appearance/plugins/about + 终端 + 确认条 + 版本热区 + SW；日/夜均 badCount=0、sw=1。
+
+## 终版（0.15.2）
+- 主题切换最终采用“立即换肤 + 280ms 颜色过渡”（不再用 View Transition 圆形扩散；VT 在部分环境会挂起，稳定优先）。
+- 清理全部 view-transition 死规则；tokens 增加 display/title 字号与夜间次要色；更多组件使用 space/typography token。
+- ui_check：7 视图 + 设置子页 + 终端 + 确认条 + 1440 列数/3 卡探针 + 版本热区 + 主题一致性 + SW 门槛；日/夜 badCount=0、sw=1。
+- 独立审查终轮：UI 9.0 / 代码 9.0，P0/P1=0，各剩 3 / 10 条 P2。

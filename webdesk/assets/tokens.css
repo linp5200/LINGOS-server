@@ -50,15 +50,22 @@
   --dur-panel: 200ms;
   --duration-page: 260ms;
   --dur-page: 260ms;
-  --typography-body-size: 13px;
+  --typography-body: 13.5px;
+  --typography-body-size: 13.5px;
   --typography-body-weight: 400;
   --typography-body-line: 1.5;
+  --typography-body-lg: 14px;
   --typography-body-lg-size: 14px;
   --typography-body-lg-weight: 400;
   --typography-body-lg-line: 1.55;
+  --typography-title: 21px;
   --typography-title-size: 21px;
   --typography-title-weight: 600;
   --typography-title-line: 1.25;
+  --typography-display: 26px;
+  --typography-display-size: 26px;
+  --typography-display-weight: 600;
+  --typography-display-line: 1.2;
   --night-paper: #15180f;
   --night-paper-2: #1b2015;
   --night-card: #242a1c;
@@ -73,4 +80,9 @@
   --night-ember: #f0a46a;
   --night-ember-2: #f7bf92;
   --night-ok: #9dd3a6;
+  --night-moss-soft: rgba(157,211,166,.12);
+  --night-ember-soft: rgba(240,164,106,.13);
+  --night-switch-track: rgba(157,211,166,.18);
+  --night-bar-bg: rgba(21,24,15,.88);
+  --night-card-veil: rgba(32,37,26,.94);
 }

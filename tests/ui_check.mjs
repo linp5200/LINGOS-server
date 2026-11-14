@@ -80,8 +80,41 @@ await p.evaluate(() => { const b = document.querySelector('[data-act="close-term
 await p.evaluate(() => { location.hash = '#/devices'; }); await p.waitForTimeout(400);
 await p.evaluate(() => { const b = document.querySelector('[data-act="add-device"]'); if (b) b.click(); }); await p.waitForTimeout(400);
 await measure('confirm');
+// 主题切换一致性：不能停在旧快照，theme-anim 必须清掉
+await p.evaluate(() => { const b = document.getElementById('themeBtn'); if (b) b.click(); });
+await p.waitForTimeout(1100);
+const themeOK = await p.evaluate(() => {
+  const dark = (document.documentElement.dataset.theme === 'night');
+  const bg = getComputedStyle(document.body).backgroundColor.match(/\d+/g).map(Number);
+  const isDark = (0.2126*bg[0] + 0.7152*bg[1] + 0.0722*bg[2]) < 90;
+  return { dark, isDark, anim: document.documentElement.classList.contains('theme-anim') };
+});
+if (themeOK.dark !== themeOK.isDark || themeOK.anim) results.push({ view: 'theme' , small: [{ text: 'theme-inconsistent', w: 0, h: 0 }], contrast: [], overflow: false });
+// 1440：容器查询列数应与卡片数一致（2 卡 2 列，不空列）
+const d = await b.newPage({ viewport: { width: 1440, height: 900 } });
+await d.goto(BASE + '/'); await d.waitForTimeout(700);
+if (await d.evaluate(() => !document.getElementById('auth').hidden)) {
+  await d.fill('#authUser', USER); await d.fill('#authPass', PASS); await d.click('#authSubmit'); await d.waitForTimeout(1500);
+}
+await d.evaluate(() => { location.hash = '#/security'; }); await d.waitForTimeout(700);
+const wide = await d.evaluate(() => {
+  const c = document.querySelector('#view-security .cards');
+  if (!c) return { ok: false, why: 'no cards' };
+  const cs = getComputedStyle(c).gridTemplateColumns;
+  const tracks = cs.startsWith('repeat(') ? parseInt(cs.slice(7), 10) : cs.split(' ').filter(Boolean).length;
+  const cards = c.querySelectorAll('.panel-block').length;
+  // 3 卡场景：追加一张临时卡，应换行而不是溢出
+  const probe = document.createElement('section'); probe.className = 'panel-block'; probe.textContent = 'probe';
+  c.appendChild(probe);
+  const tracks3 = getComputedStyle(c).gridTemplateColumns;
+  probe.remove();
+  return { ok: tracks === cards && tracks3 === cs, tracks, cards };
+});
+if (!wide.ok) results.push({ view: '1440/security', small: [{ text: 'grid ' + wide.tracks + ' tracks / ' + wide.cards + ' cards', w: 0, h: 0 }], contrast: [], overflow: false });
+await d.close();
 const regs = await p.evaluate(() => navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then((r) => r.length) : -1);
 await b.close();
 const bad = results.filter((x) => x.overflow || x.small.length || x.contrast.length);
+if (regs !== 1) bad.push({ view: 'service-worker', sw: regs });
 console.log(JSON.stringify({ base: BASE, dark: !!process.env.DARK, sw: regs, badCount: bad.length, results }, null, 1));
 process.exit(bad.length ? 1 : 0);

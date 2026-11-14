@@ -356,33 +356,10 @@
   function toggleTheme() {
     var root = document.documentElement;
     var nextTheme = root.dataset.theme === 'night' ? 'day' : 'night';
-    var btn = $('#themeBtn');
-    var r = btn ? btn.getBoundingClientRect() : { left: innerWidth - 40, top: 30, width: 32, height: 32 };
-    var x = r.left + r.width / 2, y = r.top + r.height / 2;
-    var radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
-    if (!document.startViewTransition || prefs().motionLevel === 'off') {
-      root.classList.add('theme-anim');
-      applyTheme(nextTheme);
-      setTimeout(function () { root.classList.remove('theme-anim'); }, 320);
-      return;
-    }
     root.classList.add('theme-anim');
-    var applied = false;
-    var doApply = function () { applied = true; applyTheme(nextTheme); };
-    var t;
-    try { t = document.startViewTransition(doApply); } catch (e) { doApply(); return; }
-    setTimeout(function () { if (!applied) doApply(); }, 120);
-    t.ready.then(function () {
-      try {
-        document.documentElement.animate(
-          { clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + radius + 'px at ' + x + 'px ' + y + 'px)'] },
-          { duration: 320, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' }
-        );
-      } catch (e) {}
-    }).catch(function () {});
-    t.finished.catch(function () {}).finally(function () {
-      setTimeout(function () { root.classList.remove('theme-anim'); }, 80);
-    });
+    applyTheme(nextTheme);  // 立即生效：避免 VT 挂起造成“点了没反应”
+    if (S.view === 'settings') renderSettings();
+    setTimeout(function () { root.classList.remove('theme-anim'); }, 300);
   }
 
   /* 摄像头预览：默认关闭，只有设置里打开才渲染，且必须真的有在线摄像头 */

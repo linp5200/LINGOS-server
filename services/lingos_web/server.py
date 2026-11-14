@@ -699,6 +699,8 @@ class Handler(BaseHTTPRequestHandler):
     def _host_ok(self) -> bool:
         """防 DNS rebinding：Host 必须是 loopback 名/地址，或（--lan 时）IP 字面量。"""
         raw = (self.headers.get("Host") or "").strip()
+        if "@" in raw:  # 拒绝 userinfo 形式，避免 Host 混淆
+            return False
         try:
             host = urllib.parse.urlsplit("//" + raw).hostname or ""
         except Exception:
@@ -875,6 +877,8 @@ class Handler(BaseHTTPRequestHandler):
                             continue
             except Exception:
                 pass
+            if usr["role"] != "admin":
+                items = [{k: v for k, v in it.items() if k != "entry"} for it in items]
             self._json(200, {"plugins": items})
             return
         if path == "/api/options":
