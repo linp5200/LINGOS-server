@@ -26,6 +26,9 @@ jobs:
         run: make -j"$(nproc)"
       - name: 构建 rootfs
         run: |
+          # 版本 = VERSION + 提交短 SHA（build-rootfs.sh 读 LINGOS_VER）
+          export LINGOS_VER="$(cat VERSION)+${GITHUB_SHA::7}"
+          echo "LINGOS_VER=$LINGOS_VER"
           set -o pipefail
           set +e
           sudo bash distro/rootfs/build-rootfs.sh 2>&1 | tee /tmp/rootfs-build.log

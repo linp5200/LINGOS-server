@@ -5,7 +5,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${1:-$ROOT/dist/rootfs}"
-VER="$(cat "$ROOT/VERSION" 2>/dev/null | head -1 | tr -d '[:space:]')"
+VER="${LINGOS_VER:-$(cat "$ROOT/VERSION" 2>/dev/null | head -1 | tr -d '[:space:]')}"
 [ -n "$VER" ] || VER=0.13.0
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -61,6 +61,8 @@ chmod 755 "$R/LINGOS/lingos.sh" "$R/LINGOS/start-web.sh" 2>/dev/null || true
 chmod 755 "$R/LINGOS/bin/"* 2>/dev/null || true
 printf '%s\n' '{"system_configured": true, "last_config_time": "1970-01-01T00:00:00Z"}' > "$R/LINGOS/system/config/state.json"
 printf '%s\n' '{"schema_version":1,"privacy_level":"L1","local_only":true,"flags":{}}' > "$R/LINGOS/system/config/security-policy.json"
+# 版本落盘：运行时 /api/health 与 UI 都读它
+printf '%s\n' "$VER" > "$R/LINGOS/version"
 chmod 644 "$R/LINGOS/system/config/security-policy.json"
 
 cat > "$R/LINGOS/start-web.sh" <<'EOF'

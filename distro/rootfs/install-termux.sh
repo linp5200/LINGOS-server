@@ -84,6 +84,9 @@ PY="${LINGOS_PYTHON:-${PREFIX:-/data/data/com.termux/files/usr}/bin/python3}"
 [ -x "$PY" ] || PY="$(command -v python3 || echo python3)"
 DATA="${LINGOS_DATA:-$HOME/.lingos/data}"
 mkdir -p "$DATA" || { echo "无法创建数据目录：$DATA"; exit 3; }
+# 版本落盘在 rootfs/LINGOS/version，导出给 Web/AI 统一上报
+LINGOS_VER="$(cat "$ROOTFS/LINGOS/version" 2>/dev/null || true)"
+[ -n "$LINGOS_VER" ] && export LINGOS_VERSION="$LINGOS_VER"
 # 【0.14】原生模式下把 AI 服务一并拉起（ai.sock 放在数据根，不写死 /LINGOS）
 mkdir -p "$DATA/run" "$DATA/system/config"
 AI_PIDFILE="$DATA/run/ai_server.pid"

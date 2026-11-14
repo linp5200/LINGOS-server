@@ -52,7 +52,11 @@ jobs:
           make 2>&1 | tail -40
 
       - name: 全捆打包（lib/ 全捆 + venv + manifest）
-        run: RELEASE_VER="$(cat VERSION)" bash scripts/bundle.sh dist
+        run: |
+          # 版本 = VERSION + 提交短 SHA：每次推送的产物文件名都不同
+          RELEASE_VER="$(cat VERSION)+${GITHUB_SHA::7}"
+          echo "RELEASE_VER=$RELEASE_VER"
+          RELEASE_VER="$RELEASE_VER" bash scripts/bundle.sh dist
 
       - name: 产物清单
         run: |

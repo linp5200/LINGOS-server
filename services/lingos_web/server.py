@@ -39,7 +39,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lingos_device.manager import DeviceManager
 
-VERSION = "0.13.0"
+def _detect_version() -> str:
+    """版本单一事实源：env LINGOS_VERSION > 仓库 VERSION > /LINGOS/version。"""
+    env = os.environ.get("LINGOS_VERSION", "").strip()
+    if env:
+        return env
+    for cand in (Path(__file__).resolve().parents[2] / "VERSION", Path("/LINGOS/version")):
+        try:
+            text = cand.read_text(encoding="utf-8").strip().splitlines()[0]
+            if text:
+                return text
+        except Exception:
+            pass
+    return "0.13.1"
+
+
+VERSION = _detect_version()
 OPTIONS_SCHEMA_PATH = Path(__file__).with_name("options_schema.json")
 COOKIE = "lingos_session"
 SESSION_TTL = 7 * 24 * 3600
