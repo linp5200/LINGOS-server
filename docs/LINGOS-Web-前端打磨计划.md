@@ -136,7 +136,12 @@
   - api_key 只留后 4；options confirm 必须 `is True`、未知键 400、schema 空 503、写入 fsync+0600+唯一 tmp；
   - 日志控制符清洗、`_chat` 返回 (ok,text)、`_static` 异常兜底；
   - launcher 改 pidfile + 等 socket；新增 options 守卫与 /api/cmd 越权测试（16 项全过）。
-- 待做：代码复审分数、日间主题与键盘全路径复测。
+- 代码复审第二轮 6.3/10（新 P0：ai_server main() 仍无 LINGOS_ROOT 建 /LINGOS；P1：nook_ask 超时 8s、weather 读写路径不一致、/api/chat 未限 admin 可绕过 ACL）。已修并推送 `62a63a2`：
+  - main 目录/子配置走 LINGOS_ROOT + try/except；auth/daemon/weather/DEBUG_DIR/ai_config_set 路径统一；
+  - `/api/chat` admin-only + `session_id=web-<user>` + 120s 超时；AI Error 前缀映射 502；
+  - `provider.json` 原子写；options 只认数据根；新增 chat 权限测试（17 项全过）；
+  - ci 43566601968 success，rootfs 43566604728 success（artifact 14103270696，108MB）。
+- 待做：终审分数（子代理额度中断，恢复中）；日间主题与键盘全路径复测。
 
 **待做**：B4（CI 前置检查）。
 
