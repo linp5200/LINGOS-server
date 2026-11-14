@@ -247,9 +247,10 @@ class Store:
         raw = secrets.token_urlsafe(32)
         h = hashlib.sha256(raw.encode()).hexdigest()
         with self.lock:
+            exp = (now() + ttl) if ttl else None
             self.conn.execute(
-                "INSERT INTO api_tokens(token_hash,user_id,name,created) VALUES(?,?,?,?)",
-                (h, user_id, (name or "app")[:64], now()),
+                "INSERT INTO api_tokens(token_hash,user_id,name,created,expires) VALUES(?,?,?,?,?)",
+                (h, user_id, (name or "app")[:64], now(), exp),
             )
             self.conn.commit()
         # Mirror into the C-side token store so the same token works for
@@ -257,7 +258,7 @@ class Store:
         try:
             state = self.root / "state"
             state.mkdir(parents=True, exist_ok=True)
-            tf = state / "tokens.json"
+            tf = Path(os.environ.get("LINGOS_TOKENS_FILE", str(state / "tokens.json")))
             arr = []
             if tf.is_file():
                 try:
@@ -266,9 +267,11 @@ class Store:
                         arr = val
                 except Exception:
                     arr = []
-            arr.append({"token": raw, "expires_at": now() + SESSION_TTL, "revoked": 0})
+            arr.append({"token": raw, "name": (name or "app")[:64],
+                        "expires_at": (now() + ttl) if ttl else (now() + SESSION_TTL),
+                        "revoked": 0, "hash": h})
             arr = arr[-128:]
-            tmp = state / "tokens.json.tmp"
+            tmp = tf.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(arr, ensure_ascii=False), encoding="utf-8")
             os.chmod(tmp, 0o600)
             os.replace(tmp, tf)
@@ -613,7 +616,7 @@ class Handler(BaseHTTPRequestHandler):
     def _root_ok(self) -> bool:
         expected = self.store.setting_get("root_key_hash", "")
         if not expected:
-            return True   # legacy installs without a root key
+            return False  # 未配置 root key 时拒绝，避免“无密钥即万能”
         key = self.headers.get("X-Lingos-Root-Key", "")
         if not key:
             return False
@@ -640,8 +643,7 @@ class Handler(BaseHTTPRequestHandler):
         return addr in ("127.0.0.1", "::1", "localhost")
 
     def _pair_ok(self, body: dict) -> bool:
-        if self._local():
-            return True
+        # loopback 不再免配对：配对码是唯一“无会话/无 root key”的凭据
         code = str(body.get("pair", "") or self.headers.get("X-Lingos-Pair", ""))
         if not self.pair_code:
             return False
@@ -949,7 +951,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.store.user_count() > 0:
                 self._json(409, {"error": "already initialized"})
                 return
-            if not self._pair_ok(body):
+            # 首次引导：本机 loopback 允许直接创建管理员（无账号可保护）；
+            # 局域网/已初始化都必须配过码。
+            if not (self._local() and self.store.user_count() == 0) and not self._pair_ok(body):
                 self._json(403, {"error": "pair code required"})
                 return
             username = str(body.get("username") or "admin").strip()
@@ -967,7 +971,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/login":
             username = str(body.get("username") or "")
             pw = str(body.get("password") or "")
-            if not self._pair_ok(body):
+            # 本机登录不需要配对码（仍需密码）；局域网首次访问需要配对码
+            if not self._local() and not self._pair_ok(body):
                 self._json(403, {"error": "pair code required"})
                 return
             usr = self.store.verify_user(username, pw)
@@ -989,14 +994,27 @@ class Handler(BaseHTTPRequestHandler):
             if not (self.lan or self._local()):
                 self._json(403, {"error": "pairing only on local/LAN"})
                 return
-            # 防 DNS rebinding：Host 只能是本机名
-            host = (self.headers.get("Host") or "").split(":")[0].strip("[]").lower()
-            if host not in ("127.0.0.1", "localhost", "::1"):
+            # 防 DNS rebinding：Host 必须是本机名或（LAN 模式下）IP 字面量
+            import ipaddress
+            raw_host = (self.headers.get("Host") or "").strip()
+            host = ""
+            try:
+                host = urllib.parse.urlsplit("//" + raw_host).hostname or ""
+            except Exception:
+                host = ""
+            allowed = host in ("127.0.0.1", "localhost")
+            try:
+                if host:
+                    ip = ipaddress.ip_address(host)
+                    allowed = allowed or ip.is_loopback or self.lan
+            except ValueError:
+                pass
+            if not allowed:
                 self._json(403, {"error": "bad host"})
                 return
-            # loopback 不再免配对：必须已有 admin 会话、root key，或配过码
+            # 信任链：admin 会话 OR root key OR 配对码（loopback 不再自动放行）
             usr0 = self.store.session_user(self._cookie())
-            trusted = bool(usr0 and usr0["role"] == "admin") or bool(self._require_root()) or self._pair_ok(body)
+            trusted = bool(usr0 and usr0["role"] == "admin") or self._root_ok() or self._pair_ok(body)
             if not trusted:
                 self._json(403, {"error": "pair code required"})
                 return
@@ -1352,6 +1370,26 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(400, {"error": "需要 token 或 name"})
                     return
                 self.store.conn.commit()
+            # 同步镜像：按 hash 找到明文条目并置 revoked=1，让 C/AI 侧也失效
+            try:
+                tf = Path(os.environ.get("LINGOS_TOKENS_FILE", str(self.store.root / "state" / "tokens.json")))
+                if tf.is_file():
+                    arr = json.loads(tf.read_text(encoding="utf-8")) or []
+                    marked = 0
+                    for ent in arr:
+                        tok = ent.get("token", "")
+                        if target and hashlib.sha256(tok.encode()).hexdigest() == hashlib.sha256(target.encode()).hexdigest():
+                            ent["revoked"] = 1
+                            marked += 1
+                        elif not target and name and ent.get("name") == name:
+                            ent["revoked"] = 1
+                            marked += 1
+                    tmp = tf.with_suffix(".json.tmp")
+                    tmp.write_text(json.dumps(arr, ensure_ascii=False), encoding="utf-8")
+                    os.chmod(tmp, 0o600)
+                    os.replace(tmp, tf)
+            except Exception as e:
+                log("token mirror revoke failed:", e)
             self._json(200, {"ok": True, "revoked": cur.rowcount})
             return
         if path == "/api/notify/test":

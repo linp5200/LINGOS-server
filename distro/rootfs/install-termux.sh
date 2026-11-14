@@ -15,9 +15,10 @@ trap 'rm -rf "$TMP"' EXIT
 if echo "$SRC" | grep -qE '^https?://'; then
   echo "下载 rootfs..."
   echo "$SRC" | grep -q '^https://' || { echo "只接受 HTTPS 安装源"; exit 5; }
-  curl -fL --retry 2 -o "$TMP/rootfs.tar.zst" "$SRC"
+  # 禁止 302 降级到 http
+  curl -fL --proto '=https' --proto-redir '=https' --retry 2 -o "$TMP/rootfs.tar.zst" "$SRC"
   # URL 安装必须带 .sha256，下载不到就拒绝安装（防止静默跳过校验）
-  curl -fL --retry 2 -o "$TMP/rootfs.tar.zst.sha256" "$SRC.sha256" || { echo "缺少 ${SRC}.sha256，拒绝安装"; exit 6; }
+  curl -fL --proto '=https' --proto-redir '=https' --retry 2 -o "$TMP/rootfs.tar.zst.sha256" "$SRC.sha256" || { echo "缺少 ${SRC}.sha256，拒绝安装"; exit 6; }
 else
   cp -f "$SRC" "$TMP/rootfs.tar.zst"
 fi
@@ -93,7 +94,8 @@ fi
 if [ -f "$ROOTFS/LINGOS/bin/ai_server.py" ] && [ "$AI_RUNNING" = "0" ]; then
   echo "启动 AI 引擎（ai.sock + 8088）..."
   LINGOS_ROOT="$ROOTFS/LINGOS" LINGOS_AI_SOCKET="$DATA/run/ai.sock" \
-    LINGOS_AI_CONFIG="$DATA/system/config/ai_config.json" LINGOS_NO_PARENT_MONITOR=1 \
+    LINGOS_AI_CONFIG="$DATA/system/config/ai_config.json" LINGOS_TOKENS_FILE="$DATA/state/tokens.json" \
+    LINGOS_NO_PARENT_MONITOR=1 \
     nohup "$PY" "$ROOTFS/LINGOS/bin/ai_server.py" >>"$HOME/.lingos/ai.log" 2>&1 &
   echo $! >"$AI_PIDFILE"
   # 等 socket 出现（最多 8 秒），起不来就如实提示，不假装已启动
@@ -104,6 +106,7 @@ if [ -f "$ROOTFS/LINGOS/bin/ai_server.py" ] && [ "$AI_RUNNING" = "0" ]; then
     tail -6 "$HOME/.lingos/ai.log" 2>/dev/null
   fi
 fi
+export LINGOS_TOKENS_FILE="$DATA/state/tokens.json"
 if [ "$LAN" = "1" ]; then
   exec "$PY" "$ROOTFS/LINGOS/services/lingos_web/server.py" --root "$DATA" --web "$ROOTFS/LINGOS/webdesk" --lan
 fi

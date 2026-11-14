@@ -263,15 +263,23 @@ class WebTest(unittest.TestCase):
         """loopback 配对不再免密；通知设置 GET 仅 admin。"""
         self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
         admin_cookie = WebTest.cookie
-        # 无会话/无配对码/无 root key：loopback 也应 403
+        # 无会话/无配对码/无 root key：loopback 也应 403，且不能签发 token
         WebTest.cookie = ""
+        before = self.store.conn.execute("SELECT COUNT(*) FROM api_tokens").fetchone()[0]
         st, _ = self.req("POST", "/api/pair", {"name": "x"})
         self.assertEqual(st, 403)
+        after = self.store.conn.execute("SELECT COUNT(*) FROM api_tokens").fetchone()[0]
+        self.assertEqual(before, after)
         if self.store.verify_user("carol", "carolpass123") is None:
             self.store.create_user("carol", "carolpass123", "user")
         self.req("POST", "/api/login", {"username": "admin", "password": "testpass123"})
-        st, _ = self.req("POST", "/api/pair", {"name": "ok", "code": ""})
+        st, body = self.req("POST", "/api/pair", {"name": "ok"})
         self.assertEqual(st, 200)  # admin 会话可直接配对
+        import time as _t
+        row = self.store.conn.execute(
+            "SELECT expires FROM api_tokens WHERE name='paired:ok' ORDER BY created DESC LIMIT 1").fetchone()
+        self.assertIsNotNone(row["expires"])
+        self.assertLess(abs(float(row["expires"]) - (_t.time() + 3600)), 60)
         self.req("POST", "/api/login", {"username": "carol", "password": "carolpass123"})
         st, _ = self.req("GET", "/api/notify/settings")
         self.assertEqual(st, 403)

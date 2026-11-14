@@ -5871,7 +5871,7 @@ def _http_auth_ok(token: str) -> bool:
     if not token:
         return False
     try:
-        tf = os.path.join(LINGOS_ROOT, "state/tokens.json")
+        tf = os.environ.get("LINGOS_TOKENS_FILE", os.path.join(LINGOS_ROOT, "state/tokens.json"))
         if os.path.exists(tf):
             with open(tf, encoding="utf-8") as f:
                 data = json.load(f)
