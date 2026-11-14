@@ -1069,8 +1069,11 @@ def _gemini_stream(provider: LLMProvider, messages: List[Dict], tools: Optional[
                     return
                 usage = None
                 tool_calls: List[Dict] = []
-                for line in resp.iter_lines(decode_unicode=True):
-                    if not line or not line.startswith("data:"):
+                for bline in resp.iter_lines(decode_unicode=False):
+                    if not bline:
+                        continue
+                    line = bline.decode("utf-8", "replace")
+                    if not line.startswith("data:"):
                         continue
                     raw = line[5:].strip()
                     if not raw or raw == "[DONE]":
